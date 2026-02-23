@@ -14,6 +14,8 @@ It is a deliberately small, Rust-based spreadsheet calculation core that exists 
 - Basic function set and cell/range references.
 - Deterministic recalculation with explicit tests.
 
+See `docs/SPEC_v0.md` for the normative initial scope and implementation plan.
+
 ## Out of scope (for now)
 - Full Excel compatibility.
 - OOXML import/export.
