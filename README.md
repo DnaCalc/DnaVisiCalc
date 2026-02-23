@@ -16,6 +16,22 @@ It is a deliberately small, Rust-based spreadsheet calculation core that exists 
 
 See `docs/SPEC_v0.md` for the normative initial scope and implementation plan.
 
+## Implemented in v0.1.0
+- VisiCalc-sized bounds: `A1` through `BK254`.
+- Formula parser with arithmetic, comparison operators, `A1` refs, and ranges (`A1...B7`, `A1:B7`).
+- Function support: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT` (`@` prefix accepted).
+- Dependency graph + deterministic calc ordering + cycle detection.
+- Manual and automatic recalc modes.
+- Epoch tracking: `committed_epoch`, `stabilized_epoch`, and per-cell staleness.
+- Integration tests covering parser/evaluator/engine behaviors.
+
+## Development
+Prerequisite: Rust toolchain (stable) with `cargo`.
+
+```bash
+cargo test
+```
+
 ## Out of scope (for now)
 - Full Excel compatibility.
 - OOXML import/export.
