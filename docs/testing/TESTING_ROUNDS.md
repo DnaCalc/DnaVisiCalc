@@ -242,3 +242,25 @@
   - Added deterministic parity property over value grid + spill metadata.
 - Open questions:
   - Should CI split strategy parity tests into a dedicated fast lane (required) and a longer nightly stress lane?
+
+## Round 17
+- Status: completed
+- Scope: TUI surface friendliness pass (help UX, status persistence, file/save context).
+- Suites:
+  - `CARGO_TARGET_DIR=target_tmp cargo test -p dnavisicalc-tui`
+  - `cargo test -p dnavisicalc-tui --lib`
+  - `cargo test -p dnavisicalc-core`
+  - `cargo test -p dnavisicalc-file`
+- Result:
+  - Added inline key hints and full help popup (`?`/`F1`) in navigate mode.
+  - Added workbook header with file path, save-state indicator, and recalc mode.
+  - Status messages now persist while navigating (save/open feedback no longer immediately overwritten).
+  - Added tests for help toggling, save-state transitions, and status persistence after save.
+- Fixes:
+  - Mapped `?` and `F1` to help toggle in keymap.
+  - Added save-state tracking via committed-epoch snapshots at save/open.
+  - Updated action fuzz to include help-toggle action.
+- Notes:
+  - Used alternate `CARGO_TARGET_DIR` to avoid Windows lock from a concurrently running interactive binary.
+- Open questions:
+  - Should full-help popup include a compact command examples section with live current path substitution?

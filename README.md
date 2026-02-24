@@ -43,6 +43,9 @@ The `dnavisicalc-file` crate provides a deterministic text format and adapters:
 The `dnavisicalc-tui` crate provides a modern TUI using `ratatui` and `crossterm`:
 - Grid navigation and cell editing.
 - Command mode (`:w`, `:o`, `:mode`, `:recalc`, `:set`, `:q`).
+- Inline keyboard help and full help popup (`?` or `F1`).
+- Workbook header showing current file, save state, and recalc mode.
+- Status messages that persist during navigation.
 - Layered I/O abstraction so TUI behavior can be tested without real files or real terminals.
 
 Run:

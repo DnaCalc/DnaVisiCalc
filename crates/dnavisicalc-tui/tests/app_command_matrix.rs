@@ -45,7 +45,7 @@ fn unknown_and_help_commands_set_status() {
     let mut io = MemoryWorkbookIo::new();
 
     run_command(&mut app, &mut io, "help");
-    assert!(app.status().contains("Commands:"));
+    assert!(app.status().contains("Help shown"));
 
     run_command(&mut app, &mut io, "nope");
     assert!(app.status().contains("Unknown command"));

@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::{App, AppMode, SpillRole};
 
@@ -11,13 +11,28 @@ pub fn render_app(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(3),
             Constraint::Min(5),
             Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(4),
         ])
         .split(frame.area());
 
-    let (grid_width, grid_height) = compute_grid_dimensions(chunks[0]);
+    let file_name = app.current_path().unwrap_or("[new workbook]");
+    let recalc_mode = match app.engine().recalc_mode() {
+        dnavisicalc_core::RecalcMode::Automatic => "auto",
+        dnavisicalc_core::RecalcMode::Manual => "manual",
+    };
+    frame.render_widget(
+        Paragraph::new(format!(
+            "File: {file_name} | Save: {} | Recalc: {recalc_mode}",
+            app.save_state_label()
+        ))
+        .block(Block::default().title("Workbook").borders(Borders::ALL)),
+        chunks[0],
+    );
+
+    let (grid_width, grid_height) = compute_grid_dimensions(chunks[1]);
     let grid = app.visible_grid(grid_width, grid_height);
     let mut lines: Vec<Line> = Vec::new();
 
@@ -56,7 +71,7 @@ pub fn render_app(frame: &mut Frame, app: &App) {
 
     let grid_block =
         Paragraph::new(lines).block(Block::default().title("DNA VisiCalc").borders(Borders::ALL));
-    frame.render_widget(grid_block, chunks[0]);
+    frame.render_widget(grid_block, chunks[1]);
 
     let mode_text = match app.mode() {
         AppMode::Navigate => "Mode: NAV",
@@ -81,17 +96,31 @@ pub fn render_app(frame: &mut Frame, app: &App) {
             spill_text
         ))
         .block(Block::default().title("Context").borders(Borders::ALL)),
-        chunks[1],
-    );
-
-    frame.render_widget(
-        Paragraph::new(format!("{}\n{}", input_text, app.status())).block(
-            Block::default()
-                .title("Input / Status")
-                .borders(Borders::ALL),
-        ),
         chunks[2],
     );
+
+    let hints = quick_help(app.mode());
+    frame.render_widget(
+        Paragraph::new(format!("{input_text}\nStatus: {}\n{}", app.status(), hints))
+            .block(
+                Block::default()
+                    .title("Input / Status / Help")
+                    .borders(Borders::ALL),
+            )
+            .wrap(Wrap { trim: false }),
+        chunks[3],
+    );
+
+    if app.help_visible() {
+        let popup = centered_rect(80, 75, frame.area());
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new(help_text())
+                .block(Block::default().title("Help").borders(Borders::ALL))
+                .wrap(Wrap { trim: false }),
+            popup,
+        );
+    }
 }
 
 pub fn compute_grid_dimensions(area: Rect) -> (u16, u16) {
@@ -111,6 +140,66 @@ fn truncate_cell_text(input: &str, width: usize) -> String {
         out.push(ch);
     }
     out
+}
+
+fn quick_help(mode: AppMode) -> &'static str {
+    match mode {
+        AppMode::Navigate => {
+            "Nav: arrows/hjkl move | Enter/e edit | : command | r recalc | ?/F1 help | q quit"
+        }
+        AppMode::Edit => "Edit: type value/formula | Backspace delete | Enter apply | Esc cancel",
+        AppMode::Command => {
+            "Command: type command | Enter run | Esc cancel | help command or ?/F1 for full help"
+        }
+    }
+}
+
+fn help_text() -> &'static str {
+    "DNA VisiCalc\n\
+\n\
+Navigation keys\n\
+- Arrows or h/j/k/l: move selection\n\
+- Enter or e: edit selected cell\n\
+- : enter command mode\n\
+- r: recalculate\n\
+- q: quit\n\
+- ? or F1: toggle this help\n\
+\n\
+Command mode\n\
+- w <path> or write <path>: save workbook\n\
+- o <path> or open <path>: open workbook\n\
+- w with no path: write to last saved path\n\
+- set <A1> <value|formula>: assign a cell\n\
+- mode auto|manual: recalc mode\n\
+- r or recalc: recalculate now\n\
+- q or quit: quit\n\
+\n\
+Notes\n\
+- File/Save status is shown in the top bar.\n\
+- Status messages persist while navigating.\n\
+- Spill child cells are read-only; edit the anchor cell.\n\
+\n\
+Press ? or F1 to close help."
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 #[cfg(test)]

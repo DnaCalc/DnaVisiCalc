@@ -12,7 +12,7 @@ fn key(code: KeyCode) -> KeyEvent {
 
 #[test]
 fn unknown_key_in_navigation_is_none() {
-    let action = action_from_key(AppMode::Navigate, key(KeyCode::F(1)));
+    let action = action_from_key(AppMode::Navigate, key(KeyCode::F(2)));
     assert_eq!(action, None);
 }
 
@@ -60,5 +60,9 @@ fn vim_and_command_keys_map_in_navigation_mode() {
     assert_eq!(
         action_from_key(AppMode::Navigate, key(KeyCode::Char('r'))),
         Some(Action::Recalculate)
+    );
+    assert_eq!(
+        action_from_key(AppMode::Navigate, key(KeyCode::F(1))),
+        Some(Action::ToggleHelp)
     );
 }

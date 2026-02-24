@@ -17,6 +17,7 @@ pub enum Action {
     MoveRight,
     MoveUp,
     MoveDown,
+    ToggleHelp,
     StartEdit,
     StartCommand,
     InputChar(char),
@@ -53,6 +54,8 @@ pub struct App {
     command_buffer: String,
     status: String,
     last_path: Option<String>,
+    last_saved_epoch: Option<u64>,
+    help_visible: bool,
 }
 
 impl Default for App {
@@ -77,12 +80,15 @@ impl App {
             command_buffer: String::new(),
             status: "Ready".to_string(),
             last_path: None,
+            last_saved_epoch: None,
+            help_visible: false,
         }
     }
 
     pub fn from_engine(engine: Engine) -> Self {
         let mut app = Self::new();
         app.engine = engine;
+        app.last_saved_epoch = Some(app.engine.committed_epoch());
         app
     }
 
@@ -100,6 +106,23 @@ impl App {
 
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    pub fn current_path(&self) -> Option<&str> {
+        self.last_path.as_deref()
+    }
+
+    pub fn help_visible(&self) -> bool {
+        self.help_visible
+    }
+
+    pub fn save_state_label(&self) -> &'static str {
+        match (self.last_saved_epoch, self.is_dirty()) {
+            (None, false) => "never saved",
+            (None, true) => "unsaved changes",
+            (Some(_), false) => "saved",
+            (Some(_), true) => "modified",
+        }
     }
 
     pub fn viewport_dimensions(&self) -> (u16, u16) {
@@ -122,6 +145,13 @@ impl App {
 
     pub fn set_status(&mut self, status: impl Into<String>) {
         self.status = status.into();
+    }
+
+    fn is_dirty(&self) -> bool {
+        match self.last_saved_epoch {
+            Some(saved_epoch) => self.engine.committed_epoch() != saved_epoch,
+            None => self.engine.committed_epoch() > 0,
+        }
     }
 
     pub fn apply(&mut self, action: Action, io: &mut dyn WorkbookIo) -> CommandOutcome {
@@ -205,6 +235,14 @@ impl App {
             Action::MoveRight => self.move_selection(1, 0),
             Action::MoveUp => self.move_selection(0, -1),
             Action::MoveDown => self.move_selection(0, 1),
+            Action::ToggleHelp => {
+                self.help_visible = !self.help_visible;
+                self.status = if self.help_visible {
+                    "Help shown (press ? to close)".to_string()
+                } else {
+                    "Help hidden".to_string()
+                };
+            }
             Action::StartEdit => {
                 if let Some(reason) = self.editing_block_reason(self.selected) {
                     self.status = reason;
@@ -228,16 +266,6 @@ impl App {
         }
 
         self.ensure_visible();
-        if matches!(
-            action,
-            Action::MoveLeft | Action::MoveRight | Action::MoveUp | Action::MoveDown
-        ) {
-            self.status = format!(
-                "{} = {}",
-                self.selected,
-                self.evaluate_display_for_selected()
-            );
-        }
         let _ = io;
         CommandOutcome::Continue
     }
@@ -263,6 +291,7 @@ impl App {
             | Action::MoveRight
             | Action::MoveUp
             | Action::MoveDown
+            | Action::ToggleHelp
             | Action::StartEdit
             | Action::StartCommand
             | Action::Recalculate
@@ -291,6 +320,7 @@ impl App {
             | Action::MoveRight
             | Action::MoveUp
             | Action::MoveDown
+            | Action::ToggleHelp
             | Action::StartEdit
             | Action::StartCommand
             | Action::Recalculate
@@ -352,6 +382,7 @@ impl App {
                 match io.save(&path, &self.engine) {
                     Ok(()) => {
                         self.last_path = Some(path.clone());
+                        self.last_saved_epoch = Some(self.engine.committed_epoch());
                         self.status = format!("Saved {path}");
                     }
                     Err(err) => self.status = format!("Save error: {err}"),
@@ -366,6 +397,7 @@ impl App {
                     Ok(engine) => {
                         self.engine = engine;
                         self.last_path = Some(path.to_string());
+                        self.last_saved_epoch = Some(self.engine.committed_epoch());
                         self.status = format!("Loaded {path}");
                     }
                     Err(err) => self.status = format!("Open error: {err}"),
@@ -398,8 +430,9 @@ impl App {
                     self.status = format!("Set {cell}");
                 }
             }
-            "help" => {
-                self.status = "Commands: q, r, mode auto|manual, w <path>, o <path>, set <A1> <value|formula>".to_string();
+            "help" | "?" => {
+                self.help_visible = true;
+                self.status = "Help shown (press ? to close)".to_string();
             }
             _ => {
                 self.status = format!("Unknown command: {name}");
@@ -676,5 +709,60 @@ mod tests {
         assert_eq!(grid.rows[0].cells[1].spill_role, SpillRole::Member);
         assert_eq!(grid.rows[1].cells[0].spill_role, SpillRole::Member);
         assert_eq!(grid.rows[1].cells[1].spill_role, SpillRole::Member);
+    }
+
+    #[test]
+    fn status_persists_after_save_and_navigation() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        app.apply(Action::StartCommand, &mut io);
+        for ch in "set A1 1".chars() {
+            app.apply(Action::InputChar(ch), &mut io);
+        }
+        app.apply(Action::Submit, &mut io);
+        app.apply(Action::StartCommand, &mut io);
+        for ch in "w demo.dvc".chars() {
+            app.apply(Action::InputChar(ch), &mut io);
+        }
+        app.apply(Action::Submit, &mut io);
+
+        let saved_status = app.status().to_string();
+        app.apply(Action::MoveRight, &mut io);
+        app.apply(Action::MoveDown, &mut io);
+        assert_eq!(app.status(), saved_status);
+    }
+
+    #[test]
+    fn toggle_help_changes_visibility() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+        assert!(!app.help_visible());
+
+        app.apply(Action::ToggleHelp, &mut io);
+        assert!(app.help_visible());
+
+        app.apply(Action::ToggleHelp, &mut io);
+        assert!(!app.help_visible());
+    }
+
+    #[test]
+    fn save_state_label_tracks_modifications_and_writes() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+        assert_eq!(app.save_state_label(), "never saved");
+
+        app.apply(Action::StartEdit, &mut io);
+        app.apply(Action::InputChar('1'), &mut io);
+        app.apply(Action::Submit, &mut io);
+        assert_eq!(app.save_state_label(), "unsaved changes");
+
+        app.apply(Action::StartCommand, &mut io);
+        for ch in "w state.dvc".chars() {
+            app.apply(Action::InputChar(ch), &mut io);
+        }
+        app.apply(Action::Submit, &mut io);
+        assert_eq!(app.current_path(), Some("state.dvc"));
+        assert_eq!(app.save_state_label(), "saved");
     }
 }

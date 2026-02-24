@@ -7,6 +7,7 @@ fn action_strategy() -> impl Strategy<Value = Action> {
         Just(Action::MoveRight),
         Just(Action::MoveUp),
         Just(Action::MoveDown),
+        Just(Action::ToggleHelp),
         Just(Action::StartEdit),
         Just(Action::StartCommand),
         Just(Action::Backspace),

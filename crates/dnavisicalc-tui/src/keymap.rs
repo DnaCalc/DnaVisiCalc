@@ -24,6 +24,7 @@ fn map_navigate_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('j') => Some(Action::MoveDown),
         KeyCode::Char('e') | KeyCode::Enter => Some(Action::StartEdit),
         KeyCode::Char(':') => Some(Action::StartCommand),
+        KeyCode::Char('?') | KeyCode::F(1) => Some(Action::ToggleHelp),
         KeyCode::Char('r') => Some(Action::Recalculate),
         KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
@@ -86,6 +87,10 @@ mod tests {
         assert_eq!(
             action_from_key(AppMode::Navigate, key(KeyCode::Char(':'))),
             Some(Action::StartCommand)
+        );
+        assert_eq!(
+            action_from_key(AppMode::Navigate, key(KeyCode::Char('?'))),
+            Some(Action::ToggleHelp)
         );
     }
 
