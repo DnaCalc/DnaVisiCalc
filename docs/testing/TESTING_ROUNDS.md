@@ -79,3 +79,29 @@
   - Added property-based command-input fuzz suite.
 - Open questions:
   - Should command parsing adopt quoted argument support for paths with spaces?
+
+## Round 7
+- Status: completed
+- Scope: file round-trip stress and malformed-input fuzzing.
+- Suites:
+  - `cargo test -p dnavisicalc-file --test roundtrip_prop`
+- Result:
+  - Randomized workbook snapshots round-tripped successfully.
+  - Random text inputs did not panic the loader.
+- Fixes:
+  - Added property-based round-trip tests for mixed numeric/formula cells and mode persistence.
+  - Added random malformed-text fuzz suite for file parser panic resistance.
+- Open questions:
+  - Should numeric serialization be canonicalized (fixed precision/format) for stricter cross-platform diff stability?
+
+## Round 8
+- Status: completed
+- Scope: end-to-end TUI action fuzzing.
+- Suites:
+  - `cargo test -p dnavisicalc-tui --test action_fuzz_prop`
+- Result:
+  - Random action sequences maintained in-bounds cursor invariants and did not panic.
+- Fixes:
+  - Added randomized UI action sequence fuzz tests over mixed navigation/edit/command actions.
+- Open questions:
+  - Should quit actions be ignored while in edit mode unless explicitly confirmed?
