@@ -7,12 +7,21 @@ use crate::address::{
 use crate::ast::Expr;
 use crate::deps::{CalcTree, DependencyError, build_calc_tree};
 use crate::eval::{CellError, EvalContext, RuntimeValue, Value};
+use crate::experiments::spill_overlay::{SpillOverlayError, SpillOverlayPlanner};
+use crate::experiments::spill_rewrite::{RewriteError, materialize_array_values};
 use crate::parser::{ParseError, parse_formula};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecalcMode {
     Automatic,
     Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynamicArrayStrategy {
+    OverlayInline,
+    OverlayPlanner,
+    RewriteMaterialize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +67,7 @@ pub struct Engine {
     spill_ranges: HashMap<CellRef, CellRange>,
     calc_tree: Option<CalcTree>,
     recalc_serial: u64,
+    dynamic_array_strategy: DynamicArrayStrategy,
 }
 
 impl Default for Engine {
@@ -83,6 +93,7 @@ impl Engine {
             spill_ranges: HashMap::new(),
             calc_tree: None,
             recalc_serial: 0,
+            dynamic_array_strategy: DynamicArrayStrategy::OverlayInline,
         }
     }
 
@@ -96,6 +107,14 @@ impl Engine {
 
     pub fn set_recalc_mode(&mut self, mode: RecalcMode) {
         self.mode = mode;
+    }
+
+    pub fn dynamic_array_strategy(&self) -> DynamicArrayStrategy {
+        self.dynamic_array_strategy
+    }
+
+    pub fn set_dynamic_array_strategy(&mut self, strategy: DynamicArrayStrategy) {
+        self.dynamic_array_strategy = strategy;
     }
 
     pub fn clear(&mut self) {
@@ -189,8 +208,6 @@ impl Engine {
         let mut evaluator = EvalContext::new(&formulas, &literals, self.bounds, self.recalc_serial);
         let mut new_values: HashMap<CellRef, StoredValue> = HashMap::new();
         let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
-        let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();
-        let mut spill_ranges: HashMap<CellRef, CellRange> = HashMap::new();
 
         for (cell, number) in &literals {
             new_values.insert(
@@ -215,92 +232,35 @@ impl Engine {
             );
         }
 
-        for cell in &tree.order {
-            let Some(runtime) = runtime_values.get(cell) else {
-                continue;
-            };
-            let Some(array) = runtime.as_array() else {
-                continue;
-            };
-            if !array.is_spill() {
-                continue;
-            }
-
-            let end_col = cell.col as usize + array.cols() - 1;
-            let end_row = cell.row as usize + array.rows() - 1;
-            if end_col > self.bounds.max_columns as usize || end_row > self.bounds.max_rows as usize
-            {
-                new_values.insert(
-                    *cell,
-                    StoredValue {
-                        value: Value::Error(CellError::Spill(
-                            "spill range exceeds sheet bounds".to_string(),
-                        )),
-                        value_epoch: self.committed_epoch,
-                    },
+        let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();
+        let mut spill_ranges: HashMap<CellRef, CellRange> = HashMap::new();
+        match self.dynamic_array_strategy {
+            DynamicArrayStrategy::OverlayInline => {
+                self.apply_spills_overlay_inline(
+                    &tree.order,
+                    &runtime_values,
+                    &mut new_values,
+                    &mut spill_owners,
+                    &mut spill_ranges,
                 );
-                continue;
             }
-
-            let end = CellRef {
-                col: end_col as u16,
-                row: end_row as u16,
-            };
-            let spill_range = CellRange::new(*cell, end);
-
-            let mut blocked_by_input: Option<CellRef> = None;
-            let mut blocked_by_spill: Option<CellRef> = None;
-            for target in spill_range.iter() {
-                if target != *cell && self.cells.contains_key(&target) {
-                    blocked_by_input = Some(target);
-                    break;
-                }
-                if target != *cell && spill_owners.contains_key(&target) {
-                    blocked_by_spill = Some(target);
-                    break;
-                }
-            }
-
-            if let Some(blocked) = blocked_by_input {
-                new_values.insert(
-                    *cell,
-                    StoredValue {
-                        value: Value::Error(CellError::Spill(format!(
-                            "spill blocked by existing cell {blocked}"
-                        ))),
-                        value_epoch: self.committed_epoch,
-                    },
+            DynamicArrayStrategy::OverlayPlanner => {
+                self.apply_spills_overlay_planner(
+                    &tree.order,
+                    &runtime_values,
+                    &mut new_values,
+                    &mut spill_owners,
+                    &mut spill_ranges,
                 );
-                continue;
             }
-            if let Some(blocked) = blocked_by_spill {
-                new_values.insert(
-                    *cell,
-                    StoredValue {
-                        value: Value::Error(CellError::Spill(format!(
-                            "spill blocked by another spilled range at {blocked}"
-                        ))),
-                        value_epoch: self.committed_epoch,
-                    },
+            DynamicArrayStrategy::RewriteMaterialize => {
+                self.apply_spills_rewrite_materialize(
+                    &tree.order,
+                    &runtime_values,
+                    &mut new_values,
+                    &mut spill_owners,
+                    &mut spill_ranges,
                 );
-                continue;
-            }
-
-            spill_ranges.insert(*cell, spill_range.clone());
-            for target in spill_range.iter() {
-                let row = (target.row - cell.row) as usize;
-                let col = (target.col - cell.col) as usize;
-                let value = array.value_at(row, col);
-                new_values.insert(
-                    target,
-                    StoredValue {
-                        value,
-                        value_epoch: self.committed_epoch,
-                    },
-                );
-                if target != *cell {
-                    spill_owners.insert(target, *cell);
-                }
             }
         }
 
@@ -443,6 +403,297 @@ impl Engine {
             return Err(EngineError::OutOfBounds(cell));
         }
         Ok(())
+    }
+
+    fn apply_spills_overlay_inline(
+        &self,
+        order: &[CellRef],
+        runtime_values: &HashMap<CellRef, RuntimeValue>,
+        values: &mut HashMap<CellRef, StoredValue>,
+        spill_owners: &mut HashMap<CellRef, CellRef>,
+        spill_ranges: &mut HashMap<CellRef, CellRange>,
+    ) {
+        for cell in order {
+            let Some(runtime) = runtime_values.get(cell) else {
+                continue;
+            };
+            let Some(array) = runtime.as_array() else {
+                continue;
+            };
+            if !array.is_spill() {
+                continue;
+            }
+
+            let spill_range = match self.spill_range_for_array(*cell, array.rows(), array.cols()) {
+                Ok(range) => range,
+                Err(err) => {
+                    values.insert(
+                        *cell,
+                        StoredValue {
+                            value: Value::Error(err),
+                            value_epoch: self.committed_epoch,
+                        },
+                    );
+                    continue;
+                }
+            };
+
+            let mut blocked_by_input: Option<CellRef> = None;
+            let mut blocked_by_spill: Option<CellRef> = None;
+            for target in spill_range.iter() {
+                if target != *cell && self.cells.contains_key(&target) {
+                    blocked_by_input = Some(target);
+                    break;
+                }
+                if target != *cell && spill_owners.contains_key(&target) {
+                    blocked_by_spill = Some(target);
+                    break;
+                }
+            }
+
+            if let Some(blocked) = blocked_by_input {
+                values.insert(
+                    *cell,
+                    StoredValue {
+                        value: Value::Error(CellError::Spill(format!(
+                            "spill blocked by existing cell {blocked}"
+                        ))),
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                continue;
+            }
+            if let Some(blocked) = blocked_by_spill {
+                values.insert(
+                    *cell,
+                    StoredValue {
+                        value: Value::Error(CellError::Spill(format!(
+                            "spill blocked by another spilled range at {blocked}"
+                        ))),
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                continue;
+            }
+
+            self.write_spill_values(
+                *cell,
+                array,
+                spill_range,
+                values,
+                spill_owners,
+                spill_ranges,
+            );
+        }
+    }
+
+    fn apply_spills_overlay_planner(
+        &self,
+        order: &[CellRef],
+        runtime_values: &HashMap<CellRef, RuntimeValue>,
+        values: &mut HashMap<CellRef, StoredValue>,
+        spill_owners: &mut HashMap<CellRef, CellRef>,
+        spill_ranges: &mut HashMap<CellRef, CellRange>,
+    ) {
+        let mut planner = SpillOverlayPlanner::with_inputs(self.cells.keys().copied());
+        for cell in order {
+            let Some(runtime) = runtime_values.get(cell) else {
+                continue;
+            };
+            let Some(array) = runtime.as_array() else {
+                continue;
+            };
+            if !array.is_spill() {
+                continue;
+            }
+
+            let plan = match planner.plan_spill(*cell, array.rows(), array.cols(), self.bounds) {
+                Ok(plan) => plan,
+                Err(err) => {
+                    values.insert(
+                        *cell,
+                        StoredValue {
+                            value: Value::Error(Self::spill_overlay_error_to_cell_error(err)),
+                            value_epoch: self.committed_epoch,
+                        },
+                    );
+                    continue;
+                }
+            };
+
+            self.write_spill_values(*cell, array, plan.range, values, spill_owners, spill_ranges);
+        }
+    }
+
+    fn apply_spills_rewrite_materialize(
+        &self,
+        order: &[CellRef],
+        runtime_values: &HashMap<CellRef, RuntimeValue>,
+        values: &mut HashMap<CellRef, StoredValue>,
+        spill_owners: &mut HashMap<CellRef, CellRef>,
+        spill_ranges: &mut HashMap<CellRef, CellRange>,
+    ) {
+        for cell in order {
+            let Some(runtime) = runtime_values.get(cell) else {
+                continue;
+            };
+            let Some(array) = runtime.as_array() else {
+                continue;
+            };
+            if !array.is_spill() {
+                continue;
+            }
+
+            let values_vec: Vec<Value> = array.iter().cloned().collect();
+            let materialized = match materialize_array_values(
+                *cell,
+                array.rows(),
+                array.cols(),
+                &values_vec,
+                self.bounds,
+            ) {
+                Ok(cells) => cells,
+                Err(err) => {
+                    values.insert(
+                        *cell,
+                        StoredValue {
+                            value: Value::Error(Self::rewrite_error_to_cell_error(err)),
+                            value_epoch: self.committed_epoch,
+                        },
+                    );
+                    continue;
+                }
+            };
+
+            let mut blocked_by_input: Option<CellRef> = None;
+            let mut blocked_by_spill: Option<CellRef> = None;
+            for materialized_cell in &materialized {
+                let target = materialized_cell.target;
+                if target != *cell && self.cells.contains_key(&target) {
+                    blocked_by_input = Some(target);
+                    break;
+                }
+                if target != *cell && spill_owners.contains_key(&target) {
+                    blocked_by_spill = Some(target);
+                    break;
+                }
+            }
+
+            if let Some(blocked) = blocked_by_input {
+                values.insert(
+                    *cell,
+                    StoredValue {
+                        value: Value::Error(CellError::Spill(format!(
+                            "spill blocked by existing cell {blocked}"
+                        ))),
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                continue;
+            }
+            if let Some(blocked) = blocked_by_spill {
+                values.insert(
+                    *cell,
+                    StoredValue {
+                        value: Value::Error(CellError::Spill(format!(
+                            "spill blocked by another spilled range at {blocked}"
+                        ))),
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                continue;
+            }
+
+            let spill_range = self
+                .spill_range_for_array(*cell, array.rows(), array.cols())
+                .expect("materialized cells already validated bounds");
+            spill_ranges.insert(*cell, spill_range.clone());
+            for materialized_cell in materialized {
+                let target = materialized_cell.target;
+                values.insert(
+                    target,
+                    StoredValue {
+                        value: materialized_cell.value,
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                if target != *cell {
+                    spill_owners.insert(target, *cell);
+                }
+            }
+        }
+    }
+
+    fn spill_range_for_array(
+        &self,
+        anchor: CellRef,
+        rows: usize,
+        cols: usize,
+    ) -> Result<CellRange, CellError> {
+        let end_col = anchor.col as usize + cols - 1;
+        let end_row = anchor.row as usize + rows - 1;
+        if end_col > self.bounds.max_columns as usize || end_row > self.bounds.max_rows as usize {
+            return Err(CellError::Spill(
+                "spill range exceeds sheet bounds".to_string(),
+            ));
+        }
+        let end = CellRef {
+            col: end_col as u16,
+            row: end_row as u16,
+        };
+        Ok(CellRange::new(anchor, end))
+    }
+
+    fn write_spill_values(
+        &self,
+        anchor: CellRef,
+        array: &crate::eval::ArrayValue,
+        spill_range: CellRange,
+        values: &mut HashMap<CellRef, StoredValue>,
+        spill_owners: &mut HashMap<CellRef, CellRef>,
+        spill_ranges: &mut HashMap<CellRef, CellRange>,
+    ) {
+        spill_ranges.insert(anchor, spill_range.clone());
+        for target in spill_range.iter() {
+            let row = (target.row - anchor.row) as usize;
+            let col = (target.col - anchor.col) as usize;
+            let value = array.value_at(row, col);
+            values.insert(
+                target,
+                StoredValue {
+                    value,
+                    value_epoch: self.committed_epoch,
+                },
+            );
+            if target != anchor {
+                spill_owners.insert(target, anchor);
+            }
+        }
+    }
+
+    fn spill_overlay_error_to_cell_error(err: SpillOverlayError) -> CellError {
+        match err {
+            SpillOverlayError::OutOfBounds(_) => {
+                CellError::Spill("spill range exceeds sheet bounds".to_string())
+            }
+            SpillOverlayError::BlockedByInput(cell) => {
+                CellError::Spill(format!("spill blocked by existing cell {cell}"))
+            }
+            SpillOverlayError::BlockedBySpill(cell) => {
+                CellError::Spill(format!("spill blocked by another spilled range at {cell}"))
+            }
+        }
+    }
+
+    fn rewrite_error_to_cell_error(err: RewriteError) -> CellError {
+        match err {
+            RewriteError::OutOfBounds(_) => {
+                CellError::Spill("spill range exceeds sheet bounds".to_string())
+            }
+            RewriteError::ShapeMismatch => {
+                CellError::Spill("internal rewrite shape mismatch".to_string())
+            }
+        }
     }
 }
 

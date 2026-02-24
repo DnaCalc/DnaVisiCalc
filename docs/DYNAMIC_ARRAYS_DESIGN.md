@@ -33,7 +33,7 @@ This pathfinder intentionally implements a smaller subset than Excel, while matc
 
 ## Three architecture options
 
-### Option A: Spill Overlay on Existing Scalar Engine (implemented)
+### Option A: Spill Overlay on Existing Scalar Engine (implemented, default)
 
 - Keep existing formula graph and evaluation pipeline.
 - Extend expression runtime value from scalar-only to scalar-or-array.
@@ -90,6 +90,23 @@ Prototype:
 - It is compatible with existing core test corpus and layering.
 - It leaves clear seams for migration toward Option B later if needed.
 
+## Strategy-swappable execution in engine
+
+To keep design-space exploration active while maintaining one production core, the engine now supports runtime strategy selection:
+
+- `DynamicArrayStrategy::OverlayInline` (default): direct spill placement in engine.
+- `DynamicArrayStrategy::OverlayPlanner`: same write path, but conflict/range planning delegated to `spill_overlay` planner.
+- `DynamicArrayStrategy::RewriteMaterialize`: materialize array results through rewrite-oriented mapping before writeback.
+
+API seam:
+
+- `crates/dnavisicalc-core/src/engine.rs`
+  - `Engine::set_dynamic_array_strategy(...)`
+  - `Engine::dynamic_array_strategy(...)`
+- Re-export: `dnavisicalc_core::DynamicArrayStrategy`
+
+This lets us run identical behavioral tests across strategies and compare semantics without changing public spreadsheet behavior.
+
 ## Implemented experimental modules
 
 - Overlay planner prototype:
@@ -99,7 +116,7 @@ Prototype:
 - Rewrite/desugar prototype:
   - `crates/dnavisicalc-core/src/experiments/spill_rewrite.rs`
 
-These are intentionally isolated from production engine flow, but compile and test as concrete experiments.
+`spill_overlay` and `spill_rewrite` are now exercised by selectable engine strategies; `array_graph` remains exploratory and isolated.
 
 ## Known limits and open questions
 
@@ -116,6 +133,9 @@ These are intentionally isolated from production engine flow, but compile and te
   - spill reference behavior (`A1#`),
   - arrayified binary operations,
   - `RANDARRAY` bounds and shape.
+- Added strategy parity tests:
+  - same dynamic-array scenarios executed under all three strategies,
+  - strategy switching on an already-populated engine instance.
 - Added TUI tests for:
   - non-editable spill child cells,
   - spill anchor/member grid role marking.

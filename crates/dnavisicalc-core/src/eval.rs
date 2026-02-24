@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::address::{CellRange, SheetBounds};
 use crate::address::CellRef;
+use crate::address::{CellRange, SheetBounds};
 use crate::ast::{BinaryOp, Expr, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -315,7 +315,11 @@ impl<'a> EvalContext<'a> {
         None
     }
 
-    fn spill_range_if_input_unblocked(&self, anchor: CellRef, array: &ArrayValue) -> Option<CellRange> {
+    fn spill_range_if_input_unblocked(
+        &self,
+        anchor: CellRef,
+        array: &ArrayValue,
+    ) -> Option<CellRange> {
         let end_col = anchor.col as usize + array.cols() - 1;
         let end_row = anchor.row as usize + array.rows() - 1;
         if end_col > self.bounds.max_columns as usize || end_row > self.bounds.max_rows as usize {
@@ -328,7 +332,9 @@ impl<'a> EvalContext<'a> {
         };
         let range = CellRange::new(anchor, end);
         for cell in range.iter() {
-            if cell != anchor && (self.formulas.contains_key(&cell) || self.literals.contains_key(&cell)) {
+            if cell != anchor
+                && (self.formulas.contains_key(&cell) || self.literals.contains_key(&cell))
+            {
                 return None;
             }
         }
