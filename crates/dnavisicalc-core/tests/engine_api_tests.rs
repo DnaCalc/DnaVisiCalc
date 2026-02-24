@@ -21,9 +21,14 @@ fn cell_input_accessors_roundtrip() {
     engine
         .set_cell_input_a1("C3", CellInput::Formula("=1+2".to_string()))
         .expect("set C3");
+    engine
+        .set_cell_input_a1("C4", CellInput::Text("abc".to_string()))
+        .expect("set C4");
 
-    let input = engine.cell_input_a1("C3").expect("query C3");
-    assert_eq!(input, Some(CellInput::Formula("=1+2".to_string())));
+    let input_c3 = engine.cell_input_a1("C3").expect("query C3");
+    assert_eq!(input_c3, Some(CellInput::Formula("=1+2".to_string())));
+    let input_c4 = engine.cell_input_a1("C4").expect("query C4");
+    assert_eq!(input_c4, Some(CellInput::Text("abc".to_string())));
     assert_eq!(
         engine
             .formula_source_a1("C3")

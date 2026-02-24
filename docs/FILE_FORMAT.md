@@ -21,11 +21,13 @@ MODE	MANUAL
 ### Cell
 ```text
 CELL	<A1>	N	<number>
+CELL	<A1>	T	<text>
 CELL	<A1>	F	<formula>
 ```
 
 Where:
 - `N` means numeric literal.
+- `T` means text literal.
 - `F` means formula source text.
 - Formula fields use escape sequences:
   - `\\` for backslash

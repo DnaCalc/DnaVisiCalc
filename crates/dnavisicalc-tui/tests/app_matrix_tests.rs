@@ -23,7 +23,7 @@ fn navigation_clamps_to_sheet_bounds() {
 }
 
 #[test]
-fn edit_mode_rejects_text_cells() {
+fn edit_mode_accepts_text_cells() {
     let mut app = App::new();
     let mut io = MemoryWorkbookIo::new();
 
@@ -33,10 +33,10 @@ fn edit_mode_rejects_text_cells() {
     app.apply(Action::Submit, &mut io);
 
     assert_eq!(app.mode(), AppMode::Navigate);
-    assert!(app.status().contains("text cells are not supported"));
+    assert!(app.status().contains("Set A1"));
     assert_eq!(
         app.engine().cell_state_a1("A1").expect("query A1").value,
-        Value::Blank
+        Value::Text("hi".to_string())
     );
 }
 

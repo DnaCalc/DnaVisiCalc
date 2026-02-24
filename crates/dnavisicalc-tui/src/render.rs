@@ -25,7 +25,7 @@ pub fn render_app(frame: &mut Frame, app: &App) {
     };
     frame.render_widget(
         Paragraph::new(format!(
-            "File: {file_name} | Save: {} | Recalc: {recalc_mode}",
+            "File: {file_name} | Save: {} | Recalc: {recalc_mode} | Help: ?/F1",
             app.save_state_label()
         ))
         .block(Block::default().title("Workbook").borders(Borders::ALL)),
@@ -239,6 +239,7 @@ mod tests {
         assert!(text.contains("DNA VisiCalc"));
         assert!(text.contains("42"));
         assert!(text.contains("Mode: NAV"));
+        assert!(text.contains("Help: ?/F1"));
     }
 
     #[test]

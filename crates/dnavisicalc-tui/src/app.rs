@@ -224,6 +224,7 @@ impl App {
         match self.engine.cell_input(self.selected) {
             Ok(Some(CellInput::Formula(formula))) => formula,
             Ok(Some(CellInput::Number(n))) => n.to_string(),
+            Ok(Some(CellInput::Text(text))) => text,
             Ok(None) => String::new(),
             Err(_) => String::new(),
         }
@@ -508,7 +509,9 @@ fn apply_input_to_cell(engine: &mut Engine, cell_ref: &str, input: &str) -> Resu
         return Ok(());
     }
 
-    Err("text cells are not supported yet; use numbers or formulas".to_string())
+    engine
+        .set_text_a1(cell_ref, input.to_string())
+        .map_err(|err| err.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -554,6 +557,7 @@ pub fn format_value(value: &Value) -> String {
         }
         Value::Bool(true) => "TRUE".to_string(),
         Value::Bool(false) => "FALSE".to_string(),
+        Value::Text(text) => text.clone(),
         Value::Blank => String::new(),
         Value::Error(err) => format!("#ERR {err}"),
     }

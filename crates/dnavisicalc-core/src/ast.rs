@@ -3,6 +3,7 @@ use crate::address::{CellRange, CellRef};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
+    Text(String),
     Bool(bool),
     Cell(CellRef),
     SpillRef(CellRef),
@@ -35,6 +36,7 @@ pub enum BinaryOp {
     Mul,
     Div,
     Pow,
+    Concat,
     Eq,
     Ne,
     Lt,

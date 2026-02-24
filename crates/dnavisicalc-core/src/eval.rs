@@ -8,6 +8,7 @@ use crate::ast::{BinaryOp, Expr, UnaryOp};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
+    Text(String),
     Bool(bool),
     Blank,
     Error(CellError),
@@ -142,6 +143,7 @@ impl RuntimeValue {
 pub struct EvalContext<'a> {
     formulas: &'a HashMap<CellRef, Expr>,
     literals: &'a HashMap<CellRef, f64>,
+    text_literals: &'a HashMap<CellRef, String>,
     bounds: SheetBounds,
     cache: HashMap<CellRef, RuntimeValue>,
     stack: Vec<CellRef>,
@@ -153,12 +155,14 @@ impl<'a> EvalContext<'a> {
     pub fn new(
         formulas: &'a HashMap<CellRef, Expr>,
         literals: &'a HashMap<CellRef, f64>,
+        text_literals: &'a HashMap<CellRef, String>,
         bounds: SheetBounds,
         recalc_serial: u64,
     ) -> Self {
         Self {
             formulas,
             literals,
+            text_literals,
             bounds,
             cache: HashMap::new(),
             stack: Vec::new(),
@@ -188,6 +192,9 @@ impl<'a> EvalContext<'a> {
         if let Some(number) = self.literals.get(&cell) {
             return RuntimeValue::scalar(Value::Number(*number));
         }
+        if let Some(text) = self.text_literals.get(&cell) {
+            return RuntimeValue::scalar(Value::Text(text.clone()));
+        }
 
         if let Some(value) = self.resolve_spilled_cell_value(cell) {
             return RuntimeValue::scalar(value);
@@ -199,6 +206,7 @@ impl<'a> EvalContext<'a> {
     pub(crate) fn evaluate_expr(&mut self, expr: &Expr) -> RuntimeValue {
         match expr {
             Expr::Number(n) => RuntimeValue::scalar(Value::Number(*n)),
+            Expr::Text(text) => RuntimeValue::scalar(Value::Text(text.clone())),
             Expr::Bool(b) => RuntimeValue::scalar(Value::Bool(*b)),
             Expr::Cell(cell) => RuntimeValue::scalar(self.evaluate_cell_runtime(*cell).to_scalar()),
             Expr::SpillRef(cell) => self.evaluate_spill_ref(*cell),
@@ -420,6 +428,7 @@ fn evaluate_binary_scalar(op: BinaryOp, lhs: &Value, rhs: &Value) -> Value {
             }
         }),
         BinaryOp::Pow => eval_numeric_binary(lhs, rhs, |a, b| Ok(a.powf(b))),
+        BinaryOp::Concat => Value::Text(format!("{}{}", value_to_text(lhs), value_to_text(rhs))),
         BinaryOp::Eq => compare_values(lhs, rhs, |a, b| a == b),
         BinaryOp::Ne => compare_values(lhs, rhs, |a, b| a != b),
         BinaryOp::Lt => compare_values(lhs, rhs, |a, b| a < b),
@@ -477,6 +486,8 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         "AND" => eval_and(args, ctx),
         "OR" => eval_or(args, ctx),
         "NOT" => eval_not(args, ctx),
+        "CONCAT" => eval_concat(args, ctx),
+        "LEN" => eval_len(args, ctx),
         "SEQUENCE" => eval_sequence(args, ctx),
         "RANDARRAY" => eval_randarray(args, ctx),
         other => RuntimeValue::scalar(Value::Error(CellError::Name(other.to_string()))),
@@ -606,6 +617,37 @@ fn eval_not(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
         Ok(v) => RuntimeValue::scalar(Value::Bool(!v)),
         Err(err) => RuntimeValue::scalar(Value::Error(err)),
     }
+}
+
+fn eval_concat(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.is_empty() {
+        return RuntimeValue::scalar(Value::Text(String::new()));
+    }
+
+    let mut out = String::new();
+    for arg in args {
+        for value in expand_argument(arg, ctx) {
+            if let Value::Error(err) = value {
+                return RuntimeValue::scalar(Value::Error(err));
+            }
+            out.push_str(&value_to_text(&value));
+        }
+    }
+    RuntimeValue::scalar(Value::Text(out))
+}
+
+fn eval_len(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "LEN expects exactly 1 argument".to_string(),
+        )));
+    }
+
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    if let Value::Error(err) = value {
+        return RuntimeValue::scalar(Value::Error(err));
+    }
+    RuntimeValue::scalar(Value::Number(value_to_text(&value).chars().count() as f64))
 }
 
 fn eval_sequence(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
@@ -770,6 +812,9 @@ fn coerce_number(value: &Value) -> Result<f64, CellError> {
         Value::Number(n) => Ok(*n),
         Value::Bool(true) => Ok(1.0),
         Value::Bool(false) => Ok(0.0),
+        Value::Text(_) => Err(CellError::Value(
+            "text cannot be coerced to number".to_string(),
+        )),
         Value::Blank => Ok(0.0),
         Value::Error(err) => Err(err.clone()),
     }
@@ -779,7 +824,32 @@ fn coerce_bool(value: &Value) -> Result<bool, CellError> {
     match value {
         Value::Bool(v) => Ok(*v),
         Value::Number(n) => Ok(*n != 0.0),
+        Value::Text(_) => Err(CellError::Value(
+            "text cannot be coerced to bool".to_string(),
+        )),
         Value::Blank => Ok(false),
         Value::Error(err) => Err(err.clone()),
+    }
+}
+
+fn value_to_text(value: &Value) -> String {
+    match value {
+        Value::Text(text) => text.clone(),
+        Value::Number(n) => {
+            let mut s = n.to_string();
+            if s.contains('.') {
+                while s.ends_with('0') {
+                    s.pop();
+                }
+                if s.ends_with('.') {
+                    s.pop();
+                }
+            }
+            if s.is_empty() { "0".to_string() } else { s }
+        }
+        Value::Bool(true) => "TRUE".to_string(),
+        Value::Bool(false) => "FALSE".to_string(),
+        Value::Blank => String::new(),
+        Value::Error(err) => format!("#ERR {err}"),
     }
 }

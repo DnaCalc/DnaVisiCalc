@@ -109,7 +109,7 @@ fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
                 collect_dependencies(arg, out);
             }
         }
-        Expr::Number(_) | Expr::Bool(_) => {}
+        Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) => {}
     }
 }
 

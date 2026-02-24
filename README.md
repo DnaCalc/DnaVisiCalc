@@ -28,7 +28,7 @@ docs/
 The `dnavisicalc-core` crate remains library-only and I/O free:
 - VisiCalc-sized bounds (`A1`..`BK254`).
 - Formula parser with arithmetic, comparisons, references, ranges.
-- Functions: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`.
+- Functions: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`, `CONCAT`, `LEN`.
 - Dynamic arrays: `SEQUENCE`, `RANDARRAY`, spill references (`A1#`), `#SPILL`/`#REF` errors.
 - Deterministic dependency graph and cycle detection.
 - Manual/automatic recalc and epoch staleness tracking.

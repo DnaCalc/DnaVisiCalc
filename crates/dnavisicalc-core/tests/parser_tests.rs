@@ -71,3 +71,25 @@ fn parses_spill_reference_postfix() {
     let expr = parse_formula("=A1#", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
     assert_eq!(expr, Expr::SpillRef(CellRef::from_a1("A1").expect("valid")));
 }
+
+#[test]
+fn parses_string_concat_operator() {
+    let expr = parse_formula("=\"hi\"&A1", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
+    match expr {
+        Expr::Binary {
+            op: BinaryOp::Concat,
+            left,
+            right,
+        } => {
+            assert_eq!(*left, Expr::Text("hi".to_string()));
+            assert_eq!(*right, Expr::Cell(CellRef::from_a1("A1").expect("valid")));
+        }
+        _ => panic!("expected concat expression"),
+    }
+}
+
+#[test]
+fn parses_escaped_quote_in_string_literal() {
+    let expr = parse_formula("=\"a\"\"b\"", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
+    assert_eq!(expr, Expr::Text("a\"b".to_string()));
+}

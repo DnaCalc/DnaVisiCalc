@@ -27,6 +27,7 @@ pub enum DynamicArrayStrategy {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CellInput {
     Number(f64),
+    Text(String),
     Formula(String),
 }
 
@@ -40,6 +41,7 @@ pub struct CellState {
 #[derive(Debug, Clone)]
 enum CellEntry {
     Number(f64),
+    Text(String),
     Formula(FormulaEntry),
 }
 
@@ -151,6 +153,21 @@ impl Engine {
         self.maybe_recalculate()
     }
 
+    pub fn set_text(&mut self, cell: CellRef, text: impl Into<String>) -> Result<(), EngineError> {
+        self.ensure_in_bounds(cell)?;
+        let text = text.into();
+        self.cells.insert(cell, CellEntry::Text(text.clone()));
+        self.committed_epoch += 1;
+        self.values.insert(
+            cell,
+            StoredValue {
+                value: Value::Text(text),
+                value_epoch: self.committed_epoch,
+            },
+        );
+        self.maybe_recalculate()
+    }
+
     pub fn set_formula(&mut self, cell: CellRef, formula: &str) -> Result<(), EngineError> {
         self.ensure_in_bounds(cell)?;
         let expr = parse_formula(formula, self.bounds)?;
@@ -183,6 +200,15 @@ impl Engine {
         self.set_formula(cell, formula)
     }
 
+    pub fn set_text_a1(
+        &mut self,
+        cell_ref: &str,
+        text: impl Into<String>,
+    ) -> Result<(), EngineError> {
+        let cell = parse_cell_ref(cell_ref, self.bounds)?;
+        self.set_text(cell, text)
+    }
+
     pub fn clear_cell_a1(&mut self, cell_ref: &str) -> Result<(), EngineError> {
         let cell = parse_cell_ref(cell_ref, self.bounds)?;
         self.clear_cell(cell)
@@ -191,11 +217,15 @@ impl Engine {
     pub fn recalculate(&mut self) -> Result<(), EngineError> {
         let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
         let mut literals: HashMap<CellRef, f64> = HashMap::new();
+        let mut text_literals: HashMap<CellRef, String> = HashMap::new();
 
         for (cell, entry) in &self.cells {
             match entry {
                 CellEntry::Number(n) => {
                     literals.insert(*cell, *n);
+                }
+                CellEntry::Text(t) => {
+                    text_literals.insert(*cell, t.clone());
                 }
                 CellEntry::Formula(formula) => {
                     formulas.insert(*cell, formula.expr.clone());
@@ -205,7 +235,13 @@ impl Engine {
 
         let tree = build_calc_tree(&formulas)?;
         self.recalc_serial = self.recalc_serial.wrapping_add(1);
-        let mut evaluator = EvalContext::new(&formulas, &literals, self.bounds, self.recalc_serial);
+        let mut evaluator = EvalContext::new(
+            &formulas,
+            &literals,
+            &text_literals,
+            self.bounds,
+            self.recalc_serial,
+        );
         let mut new_values: HashMap<CellRef, StoredValue> = HashMap::new();
         let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
 
@@ -214,6 +250,15 @@ impl Engine {
                 *cell,
                 StoredValue {
                     value: Value::Number(*number),
+                    value_epoch: self.committed_epoch,
+                },
+            );
+        }
+        for (cell, text) in &text_literals {
+            new_values.insert(
+                *cell,
+                StoredValue {
+                    value: Value::Text(text.clone()),
                     value_epoch: self.committed_epoch,
                 },
             );
@@ -299,7 +344,7 @@ impl Engine {
         let cell = parse_cell_ref(cell_ref, self.bounds)?;
         let source = self.cells.get(&cell).and_then(|entry| match entry {
             CellEntry::Formula(formula) => Some(formula.source.as_str()),
-            CellEntry::Number(_) => None,
+            CellEntry::Number(_) | CellEntry::Text(_) => None,
         });
         Ok(source)
     }
@@ -345,6 +390,7 @@ impl Engine {
     pub fn set_cell_input(&mut self, cell: CellRef, input: CellInput) -> Result<(), EngineError> {
         match input {
             CellInput::Number(n) => self.set_number(cell, n),
+            CellInput::Text(t) => self.set_text(cell, t),
             CellInput::Formula(f) => self.set_formula(cell, &f),
         }
     }
@@ -362,6 +408,7 @@ impl Engine {
         self.ensure_in_bounds(cell)?;
         let entry = self.cells.get(&cell).map(|entry| match entry {
             CellEntry::Number(n) => CellInput::Number(*n),
+            CellEntry::Text(t) => CellInput::Text(t.clone()),
             CellEntry::Formula(f) => CellInput::Formula(f.source.clone()),
         });
         Ok(entry)
@@ -379,6 +426,7 @@ impl Engine {
             .map(|(cell, entry)| {
                 let input = match entry {
                     CellEntry::Number(n) => CellInput::Number(*n),
+                    CellEntry::Text(t) => CellInput::Text(t.clone()),
                     CellEntry::Formula(f) => CellInput::Formula(f.source.clone()),
                 };
                 (*cell, input)

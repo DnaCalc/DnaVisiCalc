@@ -43,3 +43,30 @@ fn evaluates_average_and_count() {
     assert_eq!(b1.value, Value::Number(3.0));
     assert_eq!(b2.value, Value::Number(2.0));
 }
+
+#[test]
+fn evaluates_text_concat_operator_and_function() {
+    let mut engine = Engine::new();
+    engine.set_text_a1("A1", "dna").expect("set A1 text");
+    engine
+        .set_formula_a1("B1", "=A1&\" calc\"")
+        .expect("set B1 formula");
+    engine
+        .set_formula_a1("B2", "=CONCAT(\"v\", \"1\", \"-\", A1)")
+        .expect("set B2 formula");
+
+    let b1 = engine.cell_state_a1("B1").expect("query B1");
+    let b2 = engine.cell_state_a1("B2").expect("query B2");
+    assert_eq!(b1.value, Value::Text("dna calc".to_string()));
+    assert_eq!(b2.value, Value::Text("v1-dna".to_string()));
+}
+
+#[test]
+fn evaluates_len_function_on_text() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=LEN(\"hello\")")
+        .expect("set A1 formula");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert_eq!(a1.value, Value::Number(5.0));
+}

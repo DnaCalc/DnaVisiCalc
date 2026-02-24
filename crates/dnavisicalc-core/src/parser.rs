@@ -35,6 +35,7 @@ struct Token {
 #[derive(Debug, Clone, PartialEq)]
 enum TokenKind {
     Number(f64),
+    String(String),
     Bool(bool),
     Cell(CellRef),
     Ident(String),
@@ -49,6 +50,7 @@ enum TokenKind {
     Star,
     Slash,
     Caret,
+    Ampersand,
     Eq,
     Ne,
     Lt,
@@ -155,12 +157,28 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
                 });
                 i += 1;
             }
+            '&' => {
+                tokens.push(Token {
+                    kind: TokenKind::Ampersand,
+                    position: i,
+                });
+                i += 1;
+            }
             '=' => {
                 tokens.push(Token {
                     kind: TokenKind::Eq,
                     position: i,
                 });
                 i += 1;
+            }
+            '"' => {
+                let start = i;
+                let (value, next_i) = consume_string(input, i)?;
+                tokens.push(Token {
+                    kind: TokenKind::String(value),
+                    position: start,
+                });
+                i = next_i;
             }
             '<' => {
                 if i + 1 < bytes.len() && bytes[i + 1] as char == '=' {
@@ -322,6 +340,28 @@ fn consume_number(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
+fn consume_string(input: &str, start: usize) -> Result<(String, usize), ParseError> {
+    let bytes = input.as_bytes();
+    let mut i = start + 1;
+    let mut out = String::new();
+
+    while i < bytes.len() {
+        let ch = bytes[i] as char;
+        if ch == '"' {
+            if i + 1 < bytes.len() && bytes[i + 1] as char == '"' {
+                out.push('"');
+                i += 2;
+                continue;
+            }
+            return Ok((out, i + 1));
+        }
+        out.push(ch);
+        i += 1;
+    }
+
+    Err(ParseError::new("unterminated string literal", start))
+}
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -337,11 +377,24 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_additive()?;
+        let mut expr = self.parse_concatenation()?;
         while let Some(op) = self.consume_comparison_operator() {
-            let rhs = self.parse_additive()?;
+            let rhs = self.parse_concatenation()?;
             expr = Expr::Binary {
                 op,
+                left: Box::new(expr),
+                right: Box::new(rhs),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_concatenation(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_additive()?;
+        while self.match_kind(TokenKind::Ampersand) {
+            let rhs = self.parse_additive()?;
+            expr = Expr::Binary {
+                op: BinaryOp::Concat,
                 left: Box::new(expr),
                 right: Box::new(rhs),
             };
@@ -442,6 +495,7 @@ impl Parser {
         };
         match &token.kind {
             TokenKind::Number(value) => Ok(Expr::Number(*value)),
+            TokenKind::String(value) => Ok(Expr::Text(value.clone())),
             TokenKind::Bool(value) => Ok(Expr::Bool(*value)),
             TokenKind::Cell(cell) => {
                 if self.match_kind(TokenKind::Hash) {
@@ -480,7 +534,7 @@ impl Parser {
                 Ok(inner)
             }
             _ => Err(ParseError::new(
-                "expected number, cell reference, function call, or '('",
+                "expected number, string, cell reference, function call, or '('",
                 token.position,
             )),
         }

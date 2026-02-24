@@ -31,12 +31,15 @@ DnaVisiCalc v0 intentionally mirrors this style, while implementing only a tiny 
 - Address format: A1 notation.
 - Cell contents:
   - numeric literal,
+  - text literal,
   - formula expression,
   - blank.
 
 ### 3.3 Formula language v0
 Supported syntax:
 - Arithmetic: `+ - * / ^`.
+- Text literals: `"..."` (with `""` escape for quotes).
+- Concatenation: `&`.
 - Parentheses and unary `+ -`.
 - Comparisons: `= <> < <= > >=`.
 - Cell references: `A1`, `BK254`.
@@ -51,9 +54,10 @@ Supported syntax:
   - `AND`
   - `OR`
   - `NOT`
+  - `CONCAT`
+  - `LEN`
 
 Explicit exclusions for v0:
-- Text concatenation and string semantics.
 - Date/time semantics.
 - Volatile functions.
 - Iterative/circular calculation semantics beyond deterministic cycle detection error.

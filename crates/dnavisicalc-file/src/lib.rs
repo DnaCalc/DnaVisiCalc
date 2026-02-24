@@ -35,6 +35,13 @@ pub fn save_to_string(engine: &Engine) -> Result<String, FileError> {
                 out.push_str(&n.to_string());
                 out.push('\n');
             }
+            CellInput::Text(text) => {
+                out.push_str("CELL\t");
+                out.push_str(&cell.to_string());
+                out.push_str("\tT\t");
+                out.push_str(&escape_field(&text));
+                out.push('\n');
+            }
             CellInput::Formula(formula) => {
                 out.push_str("CELL\t");
                 out.push_str(&cell.to_string());
@@ -168,6 +175,13 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
                         })?;
                         CellInput::Number(number)
                     }
+                    "T" => {
+                        let text = unescape_field(value).map_err(|message| FileError::Parse {
+                            line: line_no,
+                            message,
+                        })?;
+                        CellInput::Text(text)
+                    }
                     "F" => {
                         let formula =
                             unescape_field(value).map_err(|message| FileError::Parse {
@@ -268,9 +282,13 @@ mod tests {
     fn roundtrips_engine_document() {
         let mut engine = Engine::new();
         engine.set_number_a1("A1", 12.5).expect("set A1");
+        engine.set_text_a1("A2", "hello").expect("set A2");
         engine
             .set_formula_a1("B1", "@SUM(A1...A1)")
             .expect("set B1 formula");
+        engine
+            .set_formula_a1("B2", "=A2&\" world\"")
+            .expect("set B2 formula");
 
         let text = save_to_string(&engine).expect("serialize engine");
         let loaded = load_from_str(&text).expect("deserialize engine");
@@ -282,6 +300,14 @@ mod tests {
         assert_eq!(
             loaded.cell_state_a1("B1").expect("query").value,
             Value::Number(12.5)
+        );
+        assert_eq!(
+            loaded.cell_state_a1("A2").expect("query").value,
+            Value::Text("hello".to_string())
+        );
+        assert_eq!(
+            loaded.cell_state_a1("B2").expect("query").value,
+            Value::Text("hello world".to_string())
         );
     }
 

@@ -99,10 +99,14 @@ fn write_without_path_uses_last_saved_path() {
 }
 
 #[test]
-fn set_command_rejects_text_payload() {
+fn set_command_accepts_text_payload() {
     let mut app = App::new();
     let mut io = MemoryWorkbookIo::new();
 
     run_command(&mut app, &mut io, "set A1 hello");
-    assert!(app.status().contains("Set error"));
+    assert!(app.status().contains("Set A1"));
+    assert_eq!(
+        app.engine().cell_state_a1("A1").expect("A1").value,
+        dnavisicalc_core::Value::Text("hello".to_string())
+    );
 }
