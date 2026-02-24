@@ -62,17 +62,43 @@ $runnerScript = @"
 Set-Content -Path $runnerScriptPath -Value $runnerScript -Encoding ASCII
 
 try {
-    Start-Process -FilePath $wt.Source -PassThru -ArgumentList @(
+    $wtProc = Start-Process -FilePath $wt.Source -PassThru -ArgumentList @(
         "-w", "new",
+        "new-tab",
         "--title", $WindowTitle,
         "powershell",
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", $runnerScriptPath
-    ) | Out-Null
+    )
 
-    Start-Sleep -Milliseconds 1200
-    & (Join-Path $PSScriptRoot "send_keys.ps1") -WindowTitle $WindowTitle -Keys @("e", $ProbeKey, "{ENTER}", "q") -DelayMs $KeyDelayMs -ActivationTimeoutMs 12000
+    $windowReady = $false
+    $deadlineWindow = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadlineWindow) {
+        if ($wtProc.HasExited) {
+            throw "Windows Terminal exited before automation. ExitCode=$($wtProc.ExitCode)"
+        }
+        $wtProc.Refresh()
+        if ($wtProc.MainWindowHandle -ne 0) {
+            $windowReady = $true
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+
+    if (-not $windowReady) {
+        throw "Windows Terminal main window was not ready for activation."
+    }
+
+    Start-Sleep -Milliseconds 700
+    $sendKeysScript = Join-Path $PSScriptRoot "send_keys.ps1"
+    try {
+        & $sendKeysScript -ProcessId $wtProc.Id -Keys @("e", $ProbeKey, "{ENTER}", "q") -DelayMs $KeyDelayMs -ActivationTimeoutMs 12000
+    }
+    catch {
+        # Fallback for terminals where pid activation is unreliable.
+        & $sendKeysScript -WindowTitle $WindowTitle -Keys @("e", $ProbeKey, "{ENTER}", "q") -DelayMs $KeyDelayMs -ActivationTimeoutMs 12000
+    }
     Start-Sleep -Milliseconds 1200
 
     $deadline = (Get-Date).AddSeconds(10)
