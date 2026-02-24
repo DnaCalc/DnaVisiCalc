@@ -1,12 +1,11 @@
-use dnavisicalc_core::{Engine, DEFAULT_SHEET_BOUNDS, parse_formula};
+use dnavisicalc_core::{DEFAULT_SHEET_BOUNDS, Engine, parse_formula};
 use proptest::prelude::*;
 
 fn formulaish_string() -> impl Strategy<Value = String> {
     prop::collection::vec(
         prop::sample::select(vec![
-            'A', 'B', 'C', 'X', 'Y', 'Z',
-            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-            '+', '-', '*', '/', '^', '=', '<', '>', '(', ')', ':', '.', ',', '@', ' ',
+            'A', 'B', 'C', 'X', 'Y', 'Z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+',
+            '-', '*', '/', '^', '=', '<', '>', '(', ')', ':', '.', ',', '@', ' ',
         ]),
         0..96,
     )

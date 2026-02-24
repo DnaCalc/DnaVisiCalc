@@ -105,3 +105,36 @@
   - Added randomized UI action sequence fuzz tests over mixed navigation/edit/command actions.
 - Open questions:
   - Should quit actions be ignored while in edit mode unless explicitly confirmed?
+
+## Round 9
+- Status: completed
+- Scope: broken-file handling and recovery in UI flows.
+- Suites:
+  - `cargo test -p dnavisicalc-tui --test broken_file_recovery`
+- Result:
+  - Opening malformed or missing files is non-fatal and app remains operational.
+- Fixes:
+  - Added explicit recovery tests for malformed file open paths.
+  - Added runtime entrypoint test seam (`run_with_options`) and binary smoke test with test-exit flag.
+- Open questions:
+  - Should open failures preserve previous status message history for easier user debugging?
+
+## Round 10
+- Status: completed
+- Scope: coverage-driven gap closure.
+- Suites:
+  - `cargo llvm-cov --workspace --all-targets --summary-only`
+  - plus targeted matrix tests across core/file/tui modules.
+- Result:
+  - Coverage improved to:
+    - Regions: **88.38%**
+    - Lines: **88.99%**
+    - Functions: **89.27%**
+  - 100% was not reached in this pass.
+- Fixes:
+  - Added address, engine API, eval matrix, file error matrix, keymap matrix, IO filesystem, and command-matrix tests.
+  - Added runtime test seams and binary startup smoke coverage.
+  - Added coverage summary doc: `docs/testing/COVERAGE_SUMMARY.md`.
+- Open questions:
+  - Is it worth introducing a pseudo-terminal integration harness to close runtime coverage gaps?
+  - Should round-trip numeric serialization be canonicalized for deterministic textual diffs across platforms?

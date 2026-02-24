@@ -4,9 +4,8 @@ use proptest::prelude::*;
 fn commandish_string() -> impl Strategy<Value = String> {
     prop::collection::vec(
         prop::sample::select(vec![
-            'a', 'b', 'c', 'd', 'e', 'f',
-            '0', '1', '2', '3',
-            ' ', ':', '/', '.', '-', '_', '=', '@',
+            'a', 'b', 'c', 'd', 'e', 'f', '0', '1', '2', '3', ' ', ':', '/', '.', '-', '_', '=',
+            '@',
         ]),
         0..80,
     )

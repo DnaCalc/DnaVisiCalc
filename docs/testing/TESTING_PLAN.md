@@ -28,3 +28,7 @@ See `docs/testing/TESTING_ROUNDS.md`.
 8. Randomized end-to-end action fuzzing in script runner.
 9. Broken-file CLI/TUI load handling and recovery.
 10. Coverage-driven gap closure and final regression run.
+
+## Execution status
+- All 10 planned rounds have been executed in this iteration.
+- Detailed evidence and outcomes are recorded in `docs/testing/TESTING_ROUNDS.md`.
