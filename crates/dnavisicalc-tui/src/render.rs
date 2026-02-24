@@ -1,4 +1,5 @@
 use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,13 +11,14 @@ pub fn render_app(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(80),
+            Constraint::Min(5),
             Constraint::Length(3),
             Constraint::Length(3),
         ])
         .split(frame.area());
 
-    let grid = app.visible_grid(8, 12);
+    let (grid_width, grid_height) = compute_grid_dimensions(chunks[0]);
+    let grid = app.visible_grid(grid_width, grid_height);
     let mut lines: Vec<Line> = Vec::new();
 
     let mut header = String::from("     ");
@@ -24,7 +26,7 @@ pub fn render_app(frame: &mut Frame, app: &App) {
         header.push_str(&format!("| {:^8} ", col));
     }
     lines.push(Line::from(header));
-    lines.push(Line::from("-".repeat(5 + (8 * 11))));
+    lines.push(Line::from("-".repeat(5 + (grid_width as usize * 11))));
 
     for row in &grid.rows {
         let mut spans = vec![Span::raw(format!("{:>4} ", row.row_label))];
@@ -81,6 +83,17 @@ pub fn render_app(frame: &mut Frame, app: &App) {
     );
 }
 
+pub fn compute_grid_dimensions(area: Rect) -> (u16, u16) {
+    // Account for block borders and row-label prefix: "#### | <cell>...".
+    let inner_width = area.width.saturating_sub(2);
+    let inner_height = area.height.saturating_sub(2);
+
+    let grid_width = (inner_width.saturating_sub(5) / 11).max(1);
+    let grid_height = inner_height.saturating_sub(2).max(1);
+
+    (grid_width, grid_height)
+}
+
 fn truncate_cell_text(input: &str, width: usize) -> String {
     let mut out = String::new();
     for ch in input.chars().take(width) {
@@ -126,5 +139,16 @@ mod tests {
         assert!(text.contains("DNA VisiCalc"));
         assert!(text.contains("42"));
         assert!(text.contains("Mode: NAV"));
+    }
+
+    #[test]
+    fn computes_minimum_grid_dimensions_for_tiny_area() {
+        let (w, h) = compute_grid_dimensions(Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        });
+        assert_eq!((w, h), (1, 1));
     }
 }

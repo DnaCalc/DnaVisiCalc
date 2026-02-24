@@ -12,6 +12,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::event_trace::EventTrace;
+use crate::render::compute_grid_dimensions;
 use crate::{App, CommandOutcome, FsWorkbookIo, action_from_key, render_app};
 
 #[derive(Debug, Clone, Default)]
@@ -74,21 +75,44 @@ fn run_event_loop(
     trace: &mut Option<EventTrace>,
 ) -> Result<()> {
     loop {
+        let term_size = terminal.size()?;
+        let grid_area_height = term_size.height.saturating_sub(6).max(1);
+        let (grid_width, grid_height) = compute_grid_dimensions(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: term_size.width,
+            height: grid_area_height,
+        });
+        app.set_viewport_dimensions(grid_width, grid_height);
+
         terminal.draw(|frame| render_app(frame, app))?;
 
         if event::poll(Duration::from_millis(150))? {
-            if let Event::Key(key) = event::read()? {
-                let mode = app.mode();
-                let mapped_action = action_from_key(mode, key.clone());
-                if let Some(trace_writer) = trace.as_mut() {
-                    trace_writer.log_key(mode, &key, mapped_action.as_ref())?;
-                }
-                if let Some(action) = mapped_action {
-                    let outcome = app.apply(action, io);
-                    if outcome == CommandOutcome::Quit {
-                        break;
+            match event::read()? {
+                Event::Key(key) => {
+                    let mode = app.mode();
+                    let mapped_action = action_from_key(mode, key.clone());
+                    if let Some(trace_writer) = trace.as_mut() {
+                        trace_writer.log_key(mode, &key, mapped_action.as_ref())?;
+                    }
+                    if let Some(action) = mapped_action {
+                        let outcome = app.apply(action, io);
+                        if outcome == CommandOutcome::Quit {
+                            break;
+                        }
                     }
                 }
+                Event::Resize(width, height) => {
+                    let grid_area_height = height.saturating_sub(6).max(1);
+                    let (grid_width, grid_height) = compute_grid_dimensions(ratatui::layout::Rect {
+                        x: 0,
+                        y: 0,
+                        width,
+                        height: grid_area_height,
+                    });
+                    app.set_viewport_dimensions(grid_width, grid_height);
+                }
+                _ => {}
             }
         }
     }

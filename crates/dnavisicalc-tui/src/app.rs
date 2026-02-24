@@ -40,6 +40,8 @@ pub struct App {
     selected: CellRef,
     viewport_col: u16,
     viewport_row: u16,
+    viewport_width: u16,
+    viewport_height: u16,
     edit_buffer: String,
     command_buffer: String,
     status: String,
@@ -62,6 +64,8 @@ impl App {
             selected,
             viewport_col: 1,
             viewport_row: 1,
+            viewport_width: 8,
+            viewport_height: 12,
             edit_buffer: String::new(),
             command_buffer: String::new(),
             status: "Ready".to_string(),
@@ -89,6 +93,16 @@ impl App {
 
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    pub fn viewport_dimensions(&self) -> (u16, u16) {
+        (self.viewport_width, self.viewport_height)
+    }
+
+    pub fn set_viewport_dimensions(&mut self, width: u16, height: u16) {
+        self.viewport_width = width.max(1);
+        self.viewport_height = height.max(1);
+        self.ensure_visible();
     }
 
     pub fn edit_buffer(&self) -> &str {
@@ -379,8 +393,8 @@ impl App {
     }
 
     fn ensure_visible(&mut self) {
-        let width = 8;
-        let height = 12;
+        let width = self.viewport_width.max(1);
+        let height = self.viewport_height.max(1);
         if self.selected.col < self.viewport_col {
             self.viewport_col = self.selected.col;
         }
@@ -543,5 +557,30 @@ mod tests {
                 .value,
             Value::Number(5.0)
         );
+    }
+
+    #[test]
+    fn viewport_resizes_and_keeps_selection_visible() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+        app.set_viewport_dimensions(3, 2);
+
+        for _ in 0..6 {
+            app.apply(Action::MoveRight, &mut io);
+        }
+        for _ in 0..4 {
+            app.apply(Action::MoveDown, &mut io);
+        }
+
+        let selected = app.selected_cell();
+        assert!(selected.col >= app.viewport_col);
+        assert!(selected.col < app.viewport_col + app.viewport_width);
+        assert!(selected.row >= app.viewport_row);
+        assert!(selected.row < app.viewport_row + app.viewport_height);
+
+        app.set_viewport_dimensions(1, 1);
+        let selected = app.selected_cell();
+        assert_eq!(app.viewport_col, selected.col);
+        assert_eq!(app.viewport_row, selected.row);
     }
 }
