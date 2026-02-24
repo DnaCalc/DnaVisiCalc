@@ -16,6 +16,7 @@ crates/
   dnavisicalc-tui/   # ratatui app, key mapping, command layer, binary
 docs/
   ARCHITECTURE.md
+  DYNAMIC_ARRAYS_DESIGN.md
   FILE_FORMAT.md
   FOUNDATION_REQUIREMENTS_MAPPING.md
   SPEC_v0.md
@@ -28,6 +29,7 @@ The `dnavisicalc-core` crate remains library-only and I/O free:
 - VisiCalc-sized bounds (`A1`..`BK254`).
 - Formula parser with arithmetic, comparisons, references, ranges.
 - Functions: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`.
+- Dynamic arrays: `SEQUENCE`, `RANDARRAY`, spill references (`A1#`), `#SPILL`/`#REF` errors.
 - Deterministic dependency graph and cycle detection.
 - Manual/automatic recalc and epoch staleness tracking.
 
