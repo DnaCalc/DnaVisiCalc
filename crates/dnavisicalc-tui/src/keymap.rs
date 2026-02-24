@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{Action, AppMode};
 
@@ -10,6 +10,9 @@ pub fn action_from_key(mode: AppMode, key: KeyEvent) -> Option<Action> {
 }
 
 fn map_navigate_key(key: KeyEvent) -> Option<Action> {
+    if !is_actionable_key_event(key.kind) {
+        return None;
+    }
     match key.code {
         KeyCode::Left => Some(Action::MoveLeft),
         KeyCode::Right => Some(Action::MoveRight),
@@ -28,6 +31,9 @@ fn map_navigate_key(key: KeyEvent) -> Option<Action> {
 }
 
 fn map_text_entry_key(key: KeyEvent) -> Option<Action> {
+    if !is_actionable_key_event(key.kind) {
+        return None;
+    }
     match key.code {
         KeyCode::Esc => Some(Action::Cancel),
         KeyCode::Enter => Some(Action::Submit),
@@ -41,6 +47,10 @@ fn map_text_entry_key(key: KeyEvent) -> Option<Action> {
         }
         _ => None,
     }
+}
+
+fn is_actionable_key_event(kind: KeyEventKind) -> bool {
+    matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat)
 }
 
 #[cfg(test)]
@@ -92,9 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn char_press_and_release_both_map_to_input_char_in_edit_mode() {
-        // Repro scaffold: if terminal emits both press and release char events,
-        // the current mapping will produce duplicated characters.
+    fn char_release_is_ignored_in_edit_mode() {
         assert_eq!(
             action_from_key(
                 AppMode::Edit,
@@ -107,7 +115,7 @@ mod tests {
                 AppMode::Edit,
                 key_with_kind(KeyCode::Char('1'), KeyEventKind::Release)
             ),
-            Some(Action::InputChar('1'))
+            None
         );
     }
 }
