@@ -43,6 +43,7 @@ enum TokenKind {
     Comma,
     Colon,
     Ellipsis,
+    Hash,
     Plus,
     Minus,
     Star,
@@ -108,6 +109,13 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
             ':' => {
                 tokens.push(Token {
                     kind: TokenKind::Colon,
+                    position: i,
+                });
+                i += 1;
+            }
+            '#' => {
+                tokens.push(Token {
+                    kind: TokenKind::Hash,
                     position: i,
                 });
                 i += 1;
@@ -435,7 +443,13 @@ impl Parser {
         match &token.kind {
             TokenKind::Number(value) => Ok(Expr::Number(*value)),
             TokenKind::Bool(value) => Ok(Expr::Bool(*value)),
-            TokenKind::Cell(cell) => Ok(Expr::Cell(*cell)),
+            TokenKind::Cell(cell) => {
+                if self.match_kind(TokenKind::Hash) {
+                    Ok(Expr::SpillRef(*cell))
+                } else {
+                    Ok(Expr::Cell(*cell))
+                }
+            }
             TokenKind::Ident(name) => {
                 if !self.match_kind(TokenKind::LParen) {
                     return Err(ParseError::new(

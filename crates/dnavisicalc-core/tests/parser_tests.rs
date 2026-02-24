@@ -65,3 +65,9 @@ fn rejects_invalid_range_boundary() {
     let err = parse_formula("=SUM(1...A1)", DEFAULT_SHEET_BOUNDS).expect_err("formula should fail");
     assert!(err.message.contains("range boundaries"));
 }
+
+#[test]
+fn parses_spill_reference_postfix() {
+    let expr = parse_formula("=A1#", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
+    assert_eq!(expr, Expr::SpillRef(CellRef::from_a1("A1").expect("valid")));
+}

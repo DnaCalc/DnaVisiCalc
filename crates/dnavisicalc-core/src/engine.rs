@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::address::{AddressError, CellRef, DEFAULT_SHEET_BOUNDS, SheetBounds, parse_cell_ref};
+use crate::address::{
+    AddressError, CellRange, CellRef, DEFAULT_SHEET_BOUNDS, SheetBounds, parse_cell_ref,
+};
 use crate::ast::Expr;
 use crate::deps::{CalcTree, DependencyError, build_calc_tree};
-use crate::eval::{EvalContext, Value};
+use crate::eval::{CellError, EvalContext, RuntimeValue, Value};
 use crate::parser::{ParseError, parse_formula};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +54,10 @@ pub struct Engine {
     stabilized_epoch: u64,
     cells: HashMap<CellRef, CellEntry>,
     values: HashMap<CellRef, StoredValue>,
+    spill_owners: HashMap<CellRef, CellRef>,
+    spill_ranges: HashMap<CellRef, CellRange>,
     calc_tree: Option<CalcTree>,
+    recalc_serial: u64,
 }
 
 impl Default for Engine {
@@ -74,7 +79,10 @@ impl Engine {
             stabilized_epoch: 0,
             cells: HashMap::new(),
             values: HashMap::new(),
+            spill_owners: HashMap::new(),
+            spill_ranges: HashMap::new(),
             calc_tree: None,
+            recalc_serial: 0,
         }
     }
 
@@ -94,6 +102,8 @@ impl Engine {
         self.committed_epoch += 1;
         self.cells.clear();
         self.values.clear();
+        self.spill_owners.clear();
+        self.spill_ranges.clear();
         self.calc_tree = None;
         if self.mode == RecalcMode::Automatic {
             self.stabilized_epoch = self.committed_epoch;
@@ -175,8 +185,12 @@ impl Engine {
         }
 
         let tree = build_calc_tree(&formulas)?;
-        let mut evaluator = EvalContext::new(&formulas, &literals);
+        self.recalc_serial = self.recalc_serial.wrapping_add(1);
+        let mut evaluator = EvalContext::new(&formulas, &literals, self.recalc_serial);
         let mut new_values: HashMap<CellRef, StoredValue> = HashMap::new();
+        let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
+        let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();
+        let mut spill_ranges: HashMap<CellRef, CellRange> = HashMap::new();
 
         for (cell, number) in &literals {
             new_values.insert(
@@ -189,7 +203,9 @@ impl Engine {
         }
 
         for cell in &tree.order {
-            let value = evaluator.evaluate_cell(*cell);
+            let runtime = evaluator.evaluate_cell_runtime(*cell);
+            runtime_values.insert(*cell, runtime.clone());
+            let value = runtime.to_scalar();
             new_values.insert(
                 *cell,
                 StoredValue {
@@ -199,7 +215,98 @@ impl Engine {
             );
         }
 
+        for cell in &tree.order {
+            let Some(runtime) = runtime_values.get(cell) else {
+                continue;
+            };
+            let Some(array) = runtime.as_array() else {
+                continue;
+            };
+            if !array.is_spill() {
+                continue;
+            }
+
+            let end_col = cell.col as usize + array.cols() - 1;
+            let end_row = cell.row as usize + array.rows() - 1;
+            if end_col > self.bounds.max_columns as usize || end_row > self.bounds.max_rows as usize
+            {
+                new_values.insert(
+                    *cell,
+                    StoredValue {
+                        value: Value::Error(CellError::Spill(
+                            "spill range exceeds sheet bounds".to_string(),
+                        )),
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                continue;
+            }
+
+            let end = CellRef {
+                col: end_col as u16,
+                row: end_row as u16,
+            };
+            let spill_range = CellRange::new(*cell, end);
+
+            let mut blocked_by_input: Option<CellRef> = None;
+            let mut blocked_by_spill: Option<CellRef> = None;
+            for target in spill_range.iter() {
+                if target != *cell && self.cells.contains_key(&target) {
+                    blocked_by_input = Some(target);
+                    break;
+                }
+                if target != *cell && spill_owners.contains_key(&target) {
+                    blocked_by_spill = Some(target);
+                    break;
+                }
+            }
+
+            if let Some(blocked) = blocked_by_input {
+                new_values.insert(
+                    *cell,
+                    StoredValue {
+                        value: Value::Error(CellError::Spill(format!(
+                            "spill blocked by existing cell {blocked}"
+                        ))),
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                continue;
+            }
+            if let Some(blocked) = blocked_by_spill {
+                new_values.insert(
+                    *cell,
+                    StoredValue {
+                        value: Value::Error(CellError::Spill(format!(
+                            "spill blocked by another spilled range at {blocked}"
+                        ))),
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                continue;
+            }
+
+            spill_ranges.insert(*cell, spill_range.clone());
+            for target in spill_range.iter() {
+                let row = (target.row - cell.row) as usize;
+                let col = (target.col - cell.col) as usize;
+                let value = array.value_at(row, col);
+                new_values.insert(
+                    target,
+                    StoredValue {
+                        value,
+                        value_epoch: self.committed_epoch,
+                    },
+                );
+                if target != *cell {
+                    spill_owners.insert(target, *cell);
+                }
+            }
+        }
+
         self.values = new_values;
+        self.spill_owners = spill_owners;
+        self.spill_ranges = spill_ranges;
         self.stabilized_epoch = self.committed_epoch;
         self.calc_tree = Some(tree);
         Ok(())
@@ -239,6 +346,40 @@ impl Engine {
 
     pub fn calc_tree(&self) -> Option<&CalcTree> {
         self.calc_tree.as_ref()
+    }
+
+    pub fn spill_anchor_for_cell(&self, cell: CellRef) -> Result<Option<CellRef>, EngineError> {
+        self.ensure_in_bounds(cell)?;
+        Ok(self.spill_owners.get(&cell).copied())
+    }
+
+    pub fn spill_anchor_for_cell_a1(&self, cell_ref: &str) -> Result<Option<CellRef>, EngineError> {
+        let cell = parse_cell_ref(cell_ref, self.bounds)?;
+        self.spill_anchor_for_cell(cell)
+    }
+
+    pub fn spill_range_for_anchor(&self, cell: CellRef) -> Result<Option<CellRange>, EngineError> {
+        self.ensure_in_bounds(cell)?;
+        Ok(self.spill_ranges.get(&cell).cloned())
+    }
+
+    pub fn spill_range_for_cell(&self, cell: CellRef) -> Result<Option<CellRange>, EngineError> {
+        self.ensure_in_bounds(cell)?;
+        if let Some(range) = self.spill_ranges.get(&cell) {
+            return Ok(Some(range.clone()));
+        }
+        if let Some(anchor) = self.spill_owners.get(&cell).copied() {
+            return Ok(self.spill_ranges.get(&anchor).cloned());
+        }
+        Ok(None)
+    }
+
+    pub fn spill_range_for_cell_a1(
+        &self,
+        cell_ref: &str,
+    ) -> Result<Option<CellRange>, EngineError> {
+        let cell = parse_cell_ref(cell_ref, self.bounds)?;
+        self.spill_range_for_cell(cell)
     }
 
     pub fn set_cell_input(&mut self, cell: CellRef, input: CellInput) -> Result<(), EngineError> {

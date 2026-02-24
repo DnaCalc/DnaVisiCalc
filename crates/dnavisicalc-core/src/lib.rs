@@ -3,6 +3,7 @@ pub mod ast;
 pub mod deps;
 pub mod engine;
 pub mod eval;
+pub mod experiments;
 pub mod parser;
 
 pub use address::{

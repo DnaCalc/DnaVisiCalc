@@ -5,6 +5,7 @@ pub enum Expr {
     Number(f64),
     Bool(bool),
     Cell(CellRef),
+    SpillRef(CellRef),
     Range(CellRange),
     Unary {
         op: UnaryOp,

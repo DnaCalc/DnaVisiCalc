@@ -89,6 +89,9 @@ fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
         Expr::Cell(cell) => {
             out.insert(*cell);
         }
+        Expr::SpillRef(cell) => {
+            out.insert(*cell);
+        }
         Expr::Range(range) => {
             for cell in range.iter() {
                 out.insert(cell);

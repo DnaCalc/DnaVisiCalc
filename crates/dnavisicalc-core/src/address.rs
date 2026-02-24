@@ -176,7 +176,10 @@ pub fn col_label_to_index(label: &str) -> Result<u16, AddressError> {
         }
         let upper = ch.to_ascii_uppercase();
         let digit = u32::from(upper as u8 - b'A' + 1);
-        value = value * 26 + digit;
+        value = value
+            .checked_mul(26)
+            .and_then(|v| v.checked_add(digit))
+            .ok_or_else(|| AddressError::InvalidColumnLabel(label.to_string()))?;
     }
     u16::try_from(value).map_err(|_| AddressError::InvalidColumnLabel(label.to_string()))
 }
