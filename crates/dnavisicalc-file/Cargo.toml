@@ -1,0 +1,19 @@
+[package]
+name = "dnavisicalc-file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "dnavisicalc_file"
+path = "src/lib.rs"
+
+[dependencies]
+dnavisicalc-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true

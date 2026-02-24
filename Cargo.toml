@@ -1,6 +1,24 @@
-[package]
-name = "dnavisicalc_core"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/dnavisicalc-core",
+    "crates/dnavisicalc-file",
+    "crates/dnavisicalc-tui",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+authors = ["DnaCalc contributors"]
+repository = "https://github.com/DnaCalc/DnaVisiCalc"
+
+[workspace.dependencies]
+dnavisicalc-core = { path = "crates/dnavisicalc-core" }
+dnavisicalc-file = { path = "crates/dnavisicalc-file" }
+anyhow = "1.0.100"
+thiserror = "2.0.17"
+ratatui = "0.29.0"
+crossterm = "0.29.0"
+tempfile = "3.23.0"
+proptest = "1.9.0"

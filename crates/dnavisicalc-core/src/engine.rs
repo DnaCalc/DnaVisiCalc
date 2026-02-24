@@ -14,6 +14,12 @@ pub enum RecalcMode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum CellInput {
+    Number(f64),
+    Formula(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CellState {
     pub value: Value,
     pub value_epoch: u64,
@@ -82,6 +88,16 @@ impl Engine {
 
     pub fn set_recalc_mode(&mut self, mode: RecalcMode) {
         self.mode = mode;
+    }
+
+    pub fn clear(&mut self) {
+        self.committed_epoch += 1;
+        self.cells.clear();
+        self.values.clear();
+        self.calc_tree = None;
+        if self.mode == RecalcMode::Automatic {
+            self.stabilized_epoch = self.committed_epoch;
+        }
     }
 
     pub fn committed_epoch(&self) -> u64 {
@@ -223,6 +239,52 @@ impl Engine {
 
     pub fn calc_tree(&self) -> Option<&CalcTree> {
         self.calc_tree.as_ref()
+    }
+
+    pub fn set_cell_input(&mut self, cell: CellRef, input: CellInput) -> Result<(), EngineError> {
+        match input {
+            CellInput::Number(n) => self.set_number(cell, n),
+            CellInput::Formula(f) => self.set_formula(cell, &f),
+        }
+    }
+
+    pub fn set_cell_input_a1(
+        &mut self,
+        cell_ref: &str,
+        input: CellInput,
+    ) -> Result<(), EngineError> {
+        let cell = parse_cell_ref(cell_ref, self.bounds)?;
+        self.set_cell_input(cell, input)
+    }
+
+    pub fn cell_input(&self, cell: CellRef) -> Result<Option<CellInput>, EngineError> {
+        self.ensure_in_bounds(cell)?;
+        let entry = self.cells.get(&cell).map(|entry| match entry {
+            CellEntry::Number(n) => CellInput::Number(*n),
+            CellEntry::Formula(f) => CellInput::Formula(f.source.clone()),
+        });
+        Ok(entry)
+    }
+
+    pub fn cell_input_a1(&self, cell_ref: &str) -> Result<Option<CellInput>, EngineError> {
+        let cell = parse_cell_ref(cell_ref, self.bounds)?;
+        self.cell_input(cell)
+    }
+
+    pub fn all_cell_inputs(&self) -> Vec<(CellRef, CellInput)> {
+        let mut entries: Vec<(CellRef, CellInput)> = self
+            .cells
+            .iter()
+            .map(|(cell, entry)| {
+                let input = match entry {
+                    CellEntry::Number(n) => CellInput::Number(*n),
+                    CellEntry::Formula(f) => CellInput::Formula(f.source.clone()),
+                };
+                (*cell, input)
+            })
+            .collect();
+        entries.sort_by_key(|(cell, _)| *cell);
+        entries
     }
 
     fn maybe_recalculate(&mut self) -> Result<(), EngineError> {
