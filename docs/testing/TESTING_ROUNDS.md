@@ -189,3 +189,36 @@
   - Added dedicated dynamic-array and spill UX test coverage.
 - Open questions:
   - How closely should broadcasting and volatile recalc behavior track Excel edge semantics in later profiles?
+
+## Round 14
+- Status: completed
+- Scope: spill-interior dereference correctness fix.
+- Suites:
+  - `cargo test -p dnavisicalc-core`
+  - `cargo test --workspace`
+- Result:
+  - Direct references and range aggregation over spill-interior cells now evaluate correctly.
+- Fixes:
+  - Evaluator now resolves spill-interior cell values during formula evaluation by deriving active spill ranges from evaluated anchors.
+  - Added explicit regression tests for direct and range-based spill-interior references.
+- Open questions:
+  - Whether to evolve dependency extraction to model spill-derived dependencies explicitly for diagnostics.
+
+## Round 15
+- Status: completed
+- Scope: dynamic-array fuzz/hardening pass.
+- Suites:
+  - `cargo test -p dnavisicalc-core --test dynamic_array_fuzz_prop`
+  - `cargo test --workspace`
+- Result:
+  - Added property-based tests for:
+    - interior spill-cell references,
+    - `SUM(A1#)` arithmetic consistency,
+    - blocked spill non-overwrite guarantees,
+    - `RANDARRAY` bounds/integer guarantees.
+  - One edge mismatch found and corrected in tests:
+    - `A1#` is invalid for non-spilled 1x1 results (aligned assumptions).
+- Fixes:
+  - Added new fuzz suite: `crates/dnavisicalc-core/tests/dynamic_array_fuzz_prop.rs`.
+- Open questions:
+  - Should we introduce profile flags for strict Excel volatility semantics on dynamic-array functions?
