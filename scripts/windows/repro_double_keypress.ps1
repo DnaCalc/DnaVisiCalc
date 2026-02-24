@@ -1,11 +1,12 @@
 param(
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path,
     [string]$LogPath,
-    [string]$WindowTitle = "DNA VisiCalc Repro",
+    [string]$WindowTitle = "DNA_VisiCalc_Repro",
     [string]$ProbeKey = "1",
     [int]$KeyDelayMs = 120,
     [switch]$NoBuild,
-    [switch]$RequireDuplicate
+    [switch]$RequireDuplicate,
+    [switch]$KeepRunnerScript
 )
 
 Set-StrictMode -Version Latest
@@ -62,42 +63,19 @@ $runnerScript = @"
 Set-Content -Path $runnerScriptPath -Value $runnerScript -Encoding ASCII
 
 try {
-    $wtProc = Start-Process -FilePath $wt.Source -PassThru -ArgumentList @(
-        "-w", "new",
-        "new-tab",
-        "--title", $WindowTitle,
-        "powershell",
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", $runnerScriptPath
-    )
-
-    $windowReady = $false
-    $deadlineWindow = (Get-Date).AddSeconds(10)
-    while ((Get-Date) -lt $deadlineWindow) {
-        if ($wtProc.HasExited) {
-            throw "Windows Terminal exited before automation. ExitCode=$($wtProc.ExitCode)"
-        }
-        $wtProc.Refresh()
-        if ($wtProc.MainWindowHandle -ne 0) {
-            $windowReady = $true
-            break
-        }
-        Start-Sleep -Milliseconds 100
-    }
-
-    if (-not $windowReady) {
-        throw "Windows Terminal main window was not ready for activation."
-    }
+    $quotedTitle = '"' + ($WindowTitle.Replace('"', '\"')) + '"'
+    $quotedRunner = '"' + ($runnerScriptPath.Replace('"', '\"')) + '"'
+    $wtArgString = "new-tab --title $quotedTitle -- powershell -NoProfile -ExecutionPolicy Bypass -File $quotedRunner"
+    Start-Process -FilePath $wt.Source -ArgumentList $wtArgString | Out-Null
 
     Start-Sleep -Milliseconds 700
     $sendKeysScript = Join-Path $PSScriptRoot "send_keys.ps1"
     try {
-        & $sendKeysScript -ProcessId $wtProc.Id -Keys @("e", $ProbeKey, "{ENTER}", "q") -DelayMs $KeyDelayMs -ActivationTimeoutMs 12000
+        & $sendKeysScript -WindowTitle $WindowTitle -Keys @("e", $ProbeKey, "{ENTER}", "q") -DelayMs $KeyDelayMs -ActivationTimeoutMs 12000
     }
     catch {
-        # Fallback for terminals where pid activation is unreliable.
-        & $sendKeysScript -WindowTitle $WindowTitle -Keys @("e", $ProbeKey, "{ENTER}", "q") -DelayMs $KeyDelayMs -ActivationTimeoutMs 12000
+        # Fallback when tab title is not exposed as a window title.
+        & $sendKeysScript -WindowTitle "Windows Terminal" -Keys @("e", $ProbeKey, "{ENTER}", "q") -DelayMs $KeyDelayMs -ActivationTimeoutMs 12000
     }
     Start-Sleep -Milliseconds 1200
 
@@ -117,7 +95,7 @@ try {
 
     $escapedKey = [regex]::Escape($ProbeKey)
     $mappedPattern = "code=Char\('$escapedKey'\).*action=InputChar\('$escapedKey'\)"
-    $mapped = @($lines | Where-Object { $_ -match $mappedPattern })
+    $mapped = @($lines | Where-Object { $_ -match $mappedPattern } | ForEach-Object { $_.ToString() })
     $pressMapped = @($mapped | Where-Object { $_ -match "kind=Press" })
     $releaseMapped = @($mapped | Where-Object { $_ -match "kind=Release" })
     $repeatMapped = @($mapped | Where-Object { $_ -match "kind=Repeat" })
@@ -142,5 +120,7 @@ try {
     }
 }
 finally {
-    Remove-Item $runnerScriptPath -ErrorAction SilentlyContinue
+    if (-not $KeepRunnerScript) {
+        Remove-Item $runnerScriptPath -ErrorAction SilentlyContinue
+    }
 }

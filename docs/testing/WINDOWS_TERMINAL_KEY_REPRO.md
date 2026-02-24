@@ -35,6 +35,7 @@ Optional flags:
 - `-ProbeKey 1` (key to detect in trace).
 - `-LogPath artifacts/windows/my-trace.log`.
 - `-KeyDelayMs 120`.
+- `-KeepRunnerScript` (keep generated temp runner script for debugging launch issues).
 
 ## Output
 
