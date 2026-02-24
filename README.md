@@ -55,6 +55,11 @@ cargo run -p dnavisicalc-tui --bin dnavisicalc
 cargo test --workspace
 ```
 
+Deep testing and hardening artifacts:
+- `docs/testing/TESTING_PLAN.md`
+- `docs/testing/TESTING_ROUNDS.md`
+- `docs/testing/COVERAGE_SUMMARY.md`
+
 ## Foundation relationship
 This repository follows Foundation guidance with a lighter process suitable for pathfinding.
 See:
