@@ -5,7 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, SpillRole};
 
 pub fn render_app(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -39,7 +39,14 @@ pub fn render_app(frame: &mut Frame, app: &App) {
                     .bg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default()
+                match cell.spill_role {
+                    SpillRole::Anchor => Style::default()
+                        .fg(Color::White)
+                        .bg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                    SpillRole::Member => Style::default().fg(Color::Cyan),
+                    SpillRole::None => Style::default(),
+                }
             };
             spans.push(Span::styled(format!("{text:<8}"), style));
             spans.push(Span::raw(" "));
@@ -62,12 +69,16 @@ pub fn render_app(frame: &mut Frame, app: &App) {
         AppMode::Navigate => app.formula_or_input_for_selected(),
     };
 
+    let spill_text = app
+        .spill_info_for_selected()
+        .unwrap_or_else(|| "Spill -".to_string());
     frame.render_widget(
         Paragraph::new(format!(
-            "{} | Cell {} | Value {}",
+            "{} | Cell {} | Value {} | {}",
             mode_text,
             app.selected_cell(),
-            app.evaluate_display_for_selected()
+            app.evaluate_display_for_selected(),
+            spill_text
         ))
         .block(Block::default().title("Context").borders(Borders::ALL)),
         chunks[1],

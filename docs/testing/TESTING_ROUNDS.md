@@ -157,3 +157,35 @@
 - Open questions:
   - In this CI/sandbox context, foreground window activation for SendKeys may fail (non-interactive desktop characteristics).
   - Should we add a ConPTY-driven harness to avoid foreground-window dependence?
+
+## Round 12
+- Status: completed
+- Scope: key-input duplication fix and resize-aware TUI behavior.
+- Suites:
+  - `cargo test -p dnavisicalc-tui`
+  - `cargo test --workspace`
+- Result:
+  - Key release events no longer trigger input actions.
+  - Grid viewport now adapts to terminal size and resize events.
+- Fixes:
+  - Key-event filtering to actionable kinds (`Press`/`Repeat`).
+  - Dynamic grid dimension computation + viewport tracking in app/runtime.
+- Open questions:
+  - Whether to add configurable minimum column width for very small terminals.
+
+## Round 13
+- Status: completed
+- Scope: dynamic array support in core and spill affordances in TUI.
+- Suites:
+  - `cargo test -p dnavisicalc-core`
+  - `cargo test -p dnavisicalc-tui`
+  - `cargo test --workspace`
+- Result:
+  - Added dynamic arrays with spill placement and conflict handling.
+  - Added `SEQUENCE`, `RANDARRAY`, and spill-reference parsing/evaluation (`A1#`).
+  - Added TUI spill role visuals and edit constraints for spill children.
+- Fixes:
+  - Added checked overflow handling for long column labels in address parsing.
+  - Added dedicated dynamic-array and spill UX test coverage.
+- Open questions:
+  - How closely should broadcasting and volatile recalc behavior track Excel edge semantics in later profiles?

@@ -27,6 +27,13 @@ pub enum Action {
     Quit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillRole {
+    None,
+    Anchor,
+    Member,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
     Continue,
@@ -147,7 +154,16 @@ impl App {
                     .cell_state(cell)
                     .map(|state| format_value(&state.value))
                     .unwrap_or_else(|_| "#ADDR".to_string());
-                cells.push(GridCell { selected, value });
+                let spill_role = match self.engine.spill_range_for_cell(cell).ok().flatten() {
+                    Some(range) if range.start == cell => SpillRole::Anchor,
+                    Some(_) => SpillRole::Member,
+                    None => SpillRole::None,
+                };
+                cells.push(GridCell {
+                    selected,
+                    value,
+                    spill_role,
+                });
             }
             rows.push(GridRow {
                 row_label: row_num,
@@ -163,6 +179,15 @@ impl App {
             .cell_state(self.selected)
             .map(|state| format_value(&state.value))
             .unwrap_or_else(|err| format!("#ERR {err}"))
+    }
+
+    pub fn spill_info_for_selected(&self) -> Option<String> {
+        let range = self
+            .engine
+            .spill_range_for_cell(self.selected)
+            .ok()
+            .flatten()?;
+        Some(format!("Spill {}", format_range(range)))
     }
 
     pub fn formula_or_input_for_selected(&self) -> String {
@@ -181,6 +206,10 @@ impl App {
             Action::MoveUp => self.move_selection(0, -1),
             Action::MoveDown => self.move_selection(0, 1),
             Action::StartEdit => {
+                if let Some(reason) = self.editing_block_reason(self.selected) {
+                    self.status = reason;
+                    return CommandOutcome::Continue;
+                }
                 self.mode = AppMode::Edit;
                 self.edit_buffer = self.formula_or_input_for_selected();
                 self.status = format!("Edit {}", self.selected);
@@ -347,6 +376,17 @@ impl App {
                     self.status = "Usage: set <A1> <value|formula>".to_string();
                     return CommandOutcome::Continue;
                 };
+                let parsed_cell = match CellRef::from_a1_with_bounds(cell, self.engine.bounds()) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.status = format!("Set error: {err}");
+                        return CommandOutcome::Continue;
+                    }
+                };
+                if let Some(reason) = self.editing_block_reason(parsed_cell) {
+                    self.status = reason;
+                    return CommandOutcome::Continue;
+                }
                 let value = parts.collect::<Vec<_>>().join(" ");
                 if value.trim().is_empty() {
                     self.status = "Usage: set <A1> <value|formula>".to_string();
@@ -370,6 +410,9 @@ impl App {
     }
 
     fn apply_edit_buffer(&mut self) -> String {
+        if let Some(reason) = self.editing_block_reason(self.selected) {
+            return reason;
+        }
         let input = self.edit_buffer.trim();
         if input.is_empty() {
             return match self.engine.clear_cell(self.selected) {
@@ -408,6 +451,13 @@ impl App {
             self.viewport_row = self.selected.row - height + 1;
         }
     }
+
+    fn editing_block_reason(&self, cell: CellRef) -> Option<String> {
+        let anchor = self.engine.spill_anchor_for_cell(cell).ok().flatten()?;
+        Some(format!(
+            "Cannot edit spilled cell {cell}; edit anchor {anchor}"
+        ))
+    }
 }
 
 fn apply_input_to_cell(engine: &mut Engine, cell_ref: &str, input: &str) -> Result<(), String> {
@@ -444,6 +494,15 @@ pub struct GridRow {
 pub struct GridCell {
     pub selected: bool,
     pub value: String,
+    pub spill_role: SpillRole,
+}
+
+fn format_range(range: dnavisicalc_core::CellRange) -> String {
+    if range.start == range.end {
+        range.start.to_string()
+    } else {
+        format!("{}:{}", range.start, range.end)
+    }
 }
 
 pub fn format_value(value: &Value) -> String {
@@ -582,5 +641,40 @@ mod tests {
         let selected = app.selected_cell();
         assert_eq!(app.viewport_col, selected.col);
         assert_eq!(app.viewport_row, selected.row);
+    }
+
+    #[test]
+    fn cannot_edit_spilled_child_cell() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        app.apply(Action::StartCommand, &mut io);
+        for ch in "set A1 =SEQUENCE(2)".chars() {
+            app.apply(Action::InputChar(ch), &mut io);
+        }
+        app.apply(Action::Submit, &mut io);
+
+        app.apply(Action::MoveDown, &mut io);
+        app.apply(Action::StartEdit, &mut io);
+        assert_eq!(app.mode(), AppMode::Navigate);
+        assert!(app.status().contains("Cannot edit spilled cell"));
+    }
+
+    #[test]
+    fn visible_grid_marks_spill_anchor_and_members() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        app.apply(Action::StartCommand, &mut io);
+        for ch in "set A1 =SEQUENCE(2,2)".chars() {
+            app.apply(Action::InputChar(ch), &mut io);
+        }
+        app.apply(Action::Submit, &mut io);
+
+        let grid = app.visible_grid(2, 2);
+        assert_eq!(grid.rows[0].cells[0].spill_role, SpillRole::Anchor);
+        assert_eq!(grid.rows[0].cells[1].spill_role, SpillRole::Member);
+        assert_eq!(grid.rows[1].cells[0].spill_role, SpillRole::Member);
+        assert_eq!(grid.rows[1].cells[1].spill_role, SpillRole::Member);
     }
 }

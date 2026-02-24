@@ -104,12 +104,13 @@ fn run_event_loop(
                 }
                 Event::Resize(width, height) => {
                     let grid_area_height = height.saturating_sub(6).max(1);
-                    let (grid_width, grid_height) = compute_grid_dimensions(ratatui::layout::Rect {
-                        x: 0,
-                        y: 0,
-                        width,
-                        height: grid_area_height,
-                    });
+                    let (grid_width, grid_height) =
+                        compute_grid_dimensions(ratatui::layout::Rect {
+                            x: 0,
+                            y: 0,
+                            width,
+                            height: grid_area_height,
+                        });
                     app.set_viewport_dimensions(grid_width, grid_height);
                 }
                 _ => {}
