@@ -120,3 +120,33 @@ fn randarray_spills_within_bounds() {
         }
     }
 }
+
+#[test]
+fn direct_reference_to_spilled_interior_cell_works() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(2,2,1,1)")
+        .expect("set sequence");
+    engine.set_formula_a1("D1", "=B2").expect("set ref formula");
+
+    assert_eq!(
+        engine.cell_state_a1("D1").expect("D1").value,
+        Value::Number(4.0)
+    );
+}
+
+#[test]
+fn range_aggregate_over_spilled_interior_cells_works() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(2,2,1,1)")
+        .expect("set sequence");
+    engine
+        .set_formula_a1("D1", "=SUM(A1:B2)")
+        .expect("set sum formula");
+
+    assert_eq!(
+        engine.cell_state_a1("D1").expect("D1").value,
+        Value::Number(10.0)
+    );
+}

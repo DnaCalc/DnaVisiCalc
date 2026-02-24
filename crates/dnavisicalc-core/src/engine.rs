@@ -186,7 +186,7 @@ impl Engine {
 
         let tree = build_calc_tree(&formulas)?;
         self.recalc_serial = self.recalc_serial.wrapping_add(1);
-        let mut evaluator = EvalContext::new(&formulas, &literals, self.recalc_serial);
+        let mut evaluator = EvalContext::new(&formulas, &literals, self.bounds, self.recalc_serial);
         let mut new_values: HashMap<CellRef, StoredValue> = HashMap::new();
         let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
         let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();

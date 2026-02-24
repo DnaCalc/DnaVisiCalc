@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::address::{CellRange, SheetBounds};
 use crate::address::CellRef;
 use crate::ast::{BinaryOp, Expr, UnaryOp};
 
@@ -141,6 +142,7 @@ impl RuntimeValue {
 pub struct EvalContext<'a> {
     formulas: &'a HashMap<CellRef, Expr>,
     literals: &'a HashMap<CellRef, f64>,
+    bounds: SheetBounds,
     cache: HashMap<CellRef, RuntimeValue>,
     stack: Vec<CellRef>,
     recalc_serial: u64,
@@ -151,11 +153,13 @@ impl<'a> EvalContext<'a> {
     pub fn new(
         formulas: &'a HashMap<CellRef, Expr>,
         literals: &'a HashMap<CellRef, f64>,
+        bounds: SheetBounds,
         recalc_serial: u64,
     ) -> Self {
         Self {
             formulas,
             literals,
+            bounds,
             cache: HashMap::new(),
             stack: Vec::new(),
             recalc_serial,
@@ -183,6 +187,10 @@ impl<'a> EvalContext<'a> {
 
         if let Some(number) = self.literals.get(&cell) {
             return RuntimeValue::scalar(Value::Number(*number));
+        }
+
+        if let Some(value) = self.resolve_spilled_cell_value(cell) {
+            return RuntimeValue::scalar(value);
         }
 
         RuntimeValue::scalar(Value::Blank)
@@ -274,6 +282,65 @@ impl<'a> EvalContext<'a> {
         x ^= x << 17;
         x
     }
+
+    fn resolve_spilled_cell_value(&mut self, target: CellRef) -> Option<Value> {
+        let mut anchors: Vec<CellRef> = self.formulas.keys().copied().collect();
+        anchors.sort();
+
+        for anchor in anchors {
+            if anchor == target {
+                continue;
+            }
+
+            let runtime = self.evaluate_cell_runtime(anchor);
+            let Some(array) = runtime.as_array() else {
+                continue;
+            };
+            if !array.is_spill() {
+                continue;
+            }
+
+            let Some(range) = self.spill_range_if_input_unblocked(anchor, array) else {
+                continue;
+            };
+            if !range_contains(range, target) {
+                continue;
+            }
+
+            let row = (target.row - anchor.row) as usize;
+            let col = (target.col - anchor.col) as usize;
+            return Some(array.value_at(row, col));
+        }
+
+        None
+    }
+
+    fn spill_range_if_input_unblocked(&self, anchor: CellRef, array: &ArrayValue) -> Option<CellRange> {
+        let end_col = anchor.col as usize + array.cols() - 1;
+        let end_row = anchor.row as usize + array.rows() - 1;
+        if end_col > self.bounds.max_columns as usize || end_row > self.bounds.max_rows as usize {
+            return None;
+        }
+
+        let end = CellRef {
+            col: end_col as u16,
+            row: end_row as u16,
+        };
+        let range = CellRange::new(anchor, end);
+        for cell in range.iter() {
+            if cell != anchor && (self.formulas.contains_key(&cell) || self.literals.contains_key(&cell)) {
+                return None;
+            }
+        }
+        Some(range)
+    }
+}
+
+fn range_contains(range: CellRange, cell: CellRef) -> bool {
+    cell.col >= range.start.col
+        && cell.col <= range.end.col
+        && cell.row >= range.start.row
+        && cell.row <= range.end.row
 }
 
 fn evaluate_binary_runtime(op: BinaryOp, lhs: &RuntimeValue, rhs: &RuntimeValue) -> RuntimeValue {
