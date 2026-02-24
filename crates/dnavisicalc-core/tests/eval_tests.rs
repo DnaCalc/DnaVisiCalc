@@ -70,3 +70,121 @@ fn evaluates_len_function_on_text() {
     let a1 = engine.cell_state_a1("A1").expect("query A1");
     assert_eq!(a1.value, Value::Number(5.0));
 }
+
+#[test]
+fn evaluates_math_functions() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=ABS(-3)").expect("ABS");
+    engine.set_formula_a1("A2", "=INT(3.9)").expect("INT");
+    engine
+        .set_formula_a1("A3", "=ROUND(12.345,2)")
+        .expect("ROUND");
+    engine.set_formula_a1("A4", "=SIGN(-10)").expect("SIGN");
+    engine.set_formula_a1("A5", "=SQRT(81)").expect("SQRT");
+    engine.set_formula_a1("A6", "=LOG10(1000)").expect("LOG10");
+    engine.set_formula_a1("A7", "=LN(EXP(2))").expect("LN/EXP");
+    engine.set_formula_a1("A8", "=ATN(1)").expect("ATN");
+    engine.set_formula_a1("A9", "=PI()").expect("PI");
+
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("A2").expect("A2").value,
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("A3").expect("A3").value,
+        Value::Number(12.35)
+    );
+    assert_eq!(
+        engine.cell_state_a1("A4").expect("A4").value,
+        Value::Number(-1.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("A5").expect("A5").value,
+        Value::Number(9.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("A6").expect("A6").value,
+        Value::Number(3.0)
+    );
+    match engine.cell_state_a1("A7").expect("A7").value {
+        Value::Number(v) => assert!((v - 2.0).abs() < 1e-9),
+        other => panic!("expected numeric A7, got {other:?}"),
+    }
+    match engine.cell_state_a1("A8").expect("A8").value {
+        Value::Number(v) => assert!((v - std::f64::consts::FRAC_PI_4).abs() < 1e-9),
+        other => panic!("expected numeric A8, got {other:?}"),
+    }
+    match engine.cell_state_a1("A9").expect("A9").value {
+        Value::Number(v) => assert!((v - std::f64::consts::PI).abs() < 1e-12),
+        other => panic!("expected numeric A9, got {other:?}"),
+    }
+}
+
+#[test]
+fn evaluates_financial_functions() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("B1", "=PMT(0.01,12,1000)")
+        .expect("PMT");
+    engine
+        .set_formula_a1("B2", "=FV(0.01,12,-100,0,0)")
+        .expect("FV");
+    engine
+        .set_formula_a1("B3", "=PV(0.01,12,-100,0,0)")
+        .expect("PV");
+    engine
+        .set_formula_a1("B4", "=NPV(0.1,100,110)")
+        .expect("NPV");
+
+    match engine.cell_state_a1("B1").expect("B1").value {
+        Value::Number(v) => assert!((v + 88.84878867834166).abs() < 1e-9),
+        other => panic!("expected numeric B1, got {other:?}"),
+    }
+    match engine.cell_state_a1("B2").expect("B2").value {
+        Value::Number(v) => assert!((v - 1268.2503013196976).abs() < 1e-9),
+        other => panic!("expected numeric B2, got {other:?}"),
+    }
+    match engine.cell_state_a1("B3").expect("B3").value {
+        Value::Number(v) => assert!((v - 1125.5077473484644).abs() < 1e-9),
+        other => panic!("expected numeric B3, got {other:?}"),
+    }
+    match engine.cell_state_a1("B4").expect("B4").value {
+        Value::Number(v) => assert!((v - 181.8181818181818).abs() < 1e-9),
+        other => panic!("expected numeric B4, got {other:?}"),
+    }
+}
+
+#[test]
+fn evaluates_lookup_and_error_functions() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A1", 10.0).expect("A1");
+    engine.set_number_a1("A2", 1.0).expect("A2");
+    engine.set_number_a1("B1", 20.0).expect("B1");
+    engine.set_number_a1("B2", 2.0).expect("B2");
+    engine.set_number_a1("C1", 30.0).expect("C1");
+    engine.set_number_a1("C2", 3.0).expect("C2");
+    engine
+        .set_formula_a1("D1", "=LOOKUP(25,A1:C2)")
+        .expect("LOOKUP");
+    engine.set_formula_a1("D2", "=NA()").expect("NA");
+    engine
+        .set_formula_a1("D3", "=ERROR(\"boom\")")
+        .expect("ERROR");
+
+    assert_eq!(
+        engine.cell_state_a1("D1").expect("D1").value,
+        Value::Number(2.0)
+    );
+    assert!(matches!(
+        engine.cell_state_a1("D2").expect("D2").value,
+        Value::Error(_)
+    ));
+    assert!(matches!(
+        engine.cell_state_a1("D3").expect("D3").value,
+        Value::Error(_)
+    ));
+}

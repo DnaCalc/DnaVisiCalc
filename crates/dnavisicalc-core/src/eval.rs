@@ -55,6 +55,42 @@ impl fmt::Display for CellError {
 
 impl std::error::Error for CellError {}
 
+pub const SUPPORTED_FUNCTIONS: &[&str] = &[
+    "SUM",
+    "MIN",
+    "MAX",
+    "AVERAGE",
+    "COUNT",
+    "IF",
+    "AND",
+    "OR",
+    "NOT",
+    "ABS",
+    "INT",
+    "ROUND",
+    "SIGN",
+    "SQRT",
+    "EXP",
+    "LN",
+    "LOG10",
+    "SIN",
+    "COS",
+    "TAN",
+    "ATN",
+    "PI",
+    "NPV",
+    "PV",
+    "FV",
+    "PMT",
+    "LOOKUP",
+    "NA",
+    "ERROR",
+    "CONCAT",
+    "LEN",
+    "SEQUENCE",
+    "RANDARRAY",
+];
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ArrayValue {
     rows: usize,
@@ -486,6 +522,26 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         "AND" => eval_and(args, ctx),
         "OR" => eval_or(args, ctx),
         "NOT" => eval_not(args, ctx),
+        "ABS" => eval_abs(args, ctx),
+        "INT" => eval_int(args, ctx),
+        "ROUND" => eval_round(args, ctx),
+        "SIGN" => eval_sign(args, ctx),
+        "SQRT" => eval_sqrt(args, ctx),
+        "EXP" => eval_exp(args, ctx),
+        "LN" => eval_ln(args, ctx),
+        "LOG10" => eval_log10(args, ctx),
+        "SIN" => eval_sin(args, ctx),
+        "COS" => eval_cos(args, ctx),
+        "TAN" => eval_tan(args, ctx),
+        "ATN" => eval_atn(args, ctx),
+        "PI" => eval_pi(args),
+        "NPV" => eval_npv(args, ctx),
+        "PV" => eval_pv(args, ctx),
+        "FV" => eval_fv(args, ctx),
+        "PMT" => eval_pmt(args, ctx),
+        "LOOKUP" => eval_lookup(args, ctx),
+        "NA" => eval_na(args),
+        "ERROR" => eval_error(args, ctx),
         "CONCAT" => eval_concat(args, ctx),
         "LEN" => eval_len(args, ctx),
         "SEQUENCE" => eval_sequence(args, ctx),
@@ -617,6 +673,290 @@ fn eval_not(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
         Ok(v) => RuntimeValue::scalar(Value::Bool(!v)),
         Err(err) => RuntimeValue::scalar(Value::Error(err)),
     }
+}
+
+fn eval_abs(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "ABS", |v| Ok(v.abs()))
+}
+
+fn eval_int(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "INT", |v| Ok(v.floor()))
+}
+
+fn eval_round(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.is_empty() || args.len() > 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ROUND expects 1 or 2 arguments".to_string(),
+        )));
+    }
+    let value = match coerce_number(&ctx.evaluate_expr(&args[0]).to_scalar()) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+    let digits = if args.len() == 2 {
+        match coerce_number(&ctx.evaluate_expr(&args[1]).to_scalar()) {
+            Ok(v) => v.round() as i32,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        }
+    } else {
+        0
+    };
+
+    let factor = 10f64.powi(digits);
+    RuntimeValue::scalar(Value::Number((value * factor).round() / factor))
+}
+
+fn eval_sign(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "SIGN", |v| {
+        Ok(if v > 0.0 {
+            1.0
+        } else if v < 0.0 {
+            -1.0
+        } else {
+            0.0
+        })
+    })
+}
+
+fn eval_sqrt(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "SQRT", |v| {
+        if v < 0.0 {
+            return Err(CellError::Value(
+                "SQRT expects a non-negative input".to_string(),
+            ));
+        }
+        Ok(v.sqrt())
+    })
+}
+
+fn eval_exp(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "EXP", |v| Ok(v.exp()))
+}
+
+fn eval_ln(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "LN", |v| {
+        if v <= 0.0 {
+            return Err(CellError::Value("LN expects input > 0".to_string()));
+        }
+        Ok(v.ln())
+    })
+}
+
+fn eval_log10(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "LOG10", |v| {
+        if v <= 0.0 {
+            return Err(CellError::Value("LOG10 expects input > 0".to_string()));
+        }
+        Ok(v.log10())
+    })
+}
+
+fn eval_sin(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "SIN", |v| Ok(v.sin()))
+}
+
+fn eval_cos(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "COS", |v| Ok(v.cos()))
+}
+
+fn eval_tan(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "TAN", |v| Ok(v.tan()))
+}
+
+fn eval_atn(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    eval_unary_number(args, ctx, "ATN", |v| Ok(v.atan()))
+}
+
+fn eval_pi(args: &[Expr]) -> RuntimeValue {
+    if !args.is_empty() {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "PI expects no arguments".to_string(),
+        )));
+    }
+    RuntimeValue::scalar(Value::Number(std::f64::consts::PI))
+}
+
+fn eval_npv(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() < 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "NPV expects at least 2 arguments".to_string(),
+        )));
+    }
+
+    let rate = match coerce_number(&ctx.evaluate_expr(&args[0]).to_scalar()) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+    if rate == -1.0 {
+        return RuntimeValue::scalar(Value::Error(CellError::DivisionByZero));
+    }
+
+    let mut discount_index = 1.0;
+    let mut npv = 0.0;
+    for arg in &args[1..] {
+        for value in expand_argument(arg, ctx) {
+            match coerce_number(&value) {
+                Ok(v) => {
+                    npv += v / (1.0 + rate).powf(discount_index);
+                    discount_index += 1.0;
+                }
+                Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+            }
+        }
+    }
+
+    RuntimeValue::scalar(Value::Number(npv))
+}
+
+fn eval_pv(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    let (rate, nper, pmt, fv, ty) = match parse_time_value_args("PV", args, ctx) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+
+    let pv = if rate == 0.0 {
+        -(fv + pmt * nper)
+    } else {
+        let term = (1.0 + rate).powf(nper);
+        -(fv + pmt * (1.0 + rate * ty) * ((term - 1.0) / rate)) / term
+    };
+    RuntimeValue::scalar(Value::Number(pv))
+}
+
+fn eval_fv(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    let (rate, nper, pmt, pv, ty) = match parse_time_value_args("FV", args, ctx) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+
+    let fv = if rate == 0.0 {
+        -(pv + pmt * nper)
+    } else {
+        let term = (1.0 + rate).powf(nper);
+        -(pv * term + pmt * (1.0 + rate * ty) * ((term - 1.0) / rate))
+    };
+    RuntimeValue::scalar(Value::Number(fv))
+}
+
+fn eval_pmt(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    let (rate, nper, pv, fv, ty) = match parse_time_value_args("PMT", args, ctx) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+
+    if nper == 0.0 {
+        return RuntimeValue::scalar(Value::Error(CellError::DivisionByZero));
+    }
+
+    let payment = if rate == 0.0 {
+        -(pv + fv) / nper
+    } else {
+        let term = (1.0 + rate).powf(nper);
+        -(rate * (fv + pv * term)) / ((1.0 + rate * ty) * (term - 1.0))
+    };
+    RuntimeValue::scalar(Value::Number(payment))
+}
+
+fn eval_lookup(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "LOOKUP expects exactly 2 arguments".to_string(),
+        )));
+    }
+
+    let lookup = match coerce_number(&ctx.evaluate_expr(&args[0]).to_scalar()) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+    let Expr::Range(table) = &args[1] else {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "LOOKUP expects a range as the second argument".to_string(),
+        )));
+    };
+
+    let rows = table.end.row - table.start.row + 1;
+    let cols = table.end.col - table.start.col + 1;
+
+    if rows == 2 {
+        let mut match_col: Option<u16> = None;
+        for col in table.start.col..=table.end.col {
+            let key_cell = CellRef {
+                col,
+                row: table.start.row,
+            };
+            let key = match coerce_number(&ctx.evaluate_cell_runtime(key_cell).to_scalar()) {
+                Ok(v) => v,
+                Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+            };
+            if key <= lookup {
+                match_col = Some(col);
+            }
+        }
+        let Some(col) = match_col else {
+            return RuntimeValue::scalar(Value::Error(CellError::Ref(
+                "LOOKUP could not find a matching key".to_string(),
+            )));
+        };
+        let value_cell = CellRef {
+            col,
+            row: table.start.row + 1,
+        };
+        return RuntimeValue::scalar(ctx.evaluate_cell_runtime(value_cell).to_scalar());
+    }
+
+    if cols == 2 {
+        let mut match_row: Option<u16> = None;
+        for row in table.start.row..=table.end.row {
+            let key_cell = CellRef {
+                col: table.start.col,
+                row,
+            };
+            let key = match coerce_number(&ctx.evaluate_cell_runtime(key_cell).to_scalar()) {
+                Ok(v) => v,
+                Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+            };
+            if key <= lookup {
+                match_row = Some(row);
+            }
+        }
+        let Some(row) = match_row else {
+            return RuntimeValue::scalar(Value::Error(CellError::Ref(
+                "LOOKUP could not find a matching key".to_string(),
+            )));
+        };
+        let value_cell = CellRef {
+            col: table.start.col + 1,
+            row,
+        };
+        return RuntimeValue::scalar(ctx.evaluate_cell_runtime(value_cell).to_scalar());
+    }
+
+    RuntimeValue::scalar(Value::Error(CellError::Value(
+        "LOOKUP expects a 2-row or 2-column range".to_string(),
+    )))
+}
+
+fn eval_na(args: &[Expr]) -> RuntimeValue {
+    if !args.is_empty() {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "NA expects no arguments".to_string(),
+        )));
+    }
+    RuntimeValue::scalar(Value::Error(CellError::Value("NA".to_string())))
+}
+
+fn eval_error(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() > 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ERROR expects zero or one argument".to_string(),
+        )));
+    }
+    if args.is_empty() {
+        return RuntimeValue::scalar(Value::Error(CellError::Value("ERROR".to_string())));
+    }
+
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    RuntimeValue::scalar(Value::Error(CellError::Value(value_to_text(&value))))
 }
 
 fn eval_concat(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
@@ -795,6 +1135,54 @@ fn eval_dimension_arg(
         return Err(CellError::Value(format!("{arg_name} must be > 0")));
     }
     Ok(as_number.round() as usize)
+}
+
+fn eval_unary_number<F>(args: &[Expr], ctx: &mut EvalContext<'_>, name: &str, f: F) -> RuntimeValue
+where
+    F: FnOnce(f64) -> Result<f64, CellError>,
+{
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(format!(
+            "{name} expects exactly 1 argument"
+        ))));
+    }
+    let value = match coerce_number(&ctx.evaluate_expr(&args[0]).to_scalar()) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+    RuntimeValue::scalar(f(value).map_or_else(Value::Error, Value::Number))
+}
+
+fn parse_time_value_args(
+    name: &str,
+    args: &[Expr],
+    ctx: &mut EvalContext<'_>,
+) -> Result<(f64, f64, f64, f64, f64), CellError> {
+    if args.len() < 3 || args.len() > 5 {
+        return Err(CellError::Value(format!(
+            "{name} expects between 3 and 5 arguments"
+        )));
+    }
+
+    let rate = coerce_number(&ctx.evaluate_expr(&args[0]).to_scalar())?;
+    let nper = coerce_number(&ctx.evaluate_expr(&args[1]).to_scalar())?;
+    let v3 = coerce_number(&ctx.evaluate_expr(&args[2]).to_scalar())?;
+    let v4 = if args.len() >= 4 {
+        coerce_number(&ctx.evaluate_expr(&args[3]).to_scalar())?
+    } else {
+        0.0
+    };
+    let ty = if args.len() >= 5 {
+        coerce_number(&ctx.evaluate_expr(&args[4]).to_scalar())?
+    } else {
+        0.0
+    };
+    if ty != 0.0 && ty != 1.0 {
+        return Err(CellError::Value(format!(
+            "{name} expects payment type 0 or 1"
+        )));
+    }
+    Ok((rate, nper, v3, v4, ty))
 }
 
 fn expand_argument(arg: &Expr, ctx: &mut EvalContext<'_>) -> Vec<Value> {

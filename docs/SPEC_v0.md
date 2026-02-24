@@ -54,6 +54,26 @@ Supported syntax:
   - `AND`
   - `OR`
   - `NOT`
+  - `ABS`
+  - `INT`
+  - `ROUND`
+  - `SIGN`
+  - `SQRT`
+  - `EXP`
+  - `LN`
+  - `LOG10`
+  - `SIN`
+  - `COS`
+  - `TAN`
+  - `ATN`
+  - `PI`
+  - `NPV`
+  - `PV`
+  - `FV`
+  - `PMT`
+  - `LOOKUP`
+  - `NA`
+  - `ERROR`
   - `CONCAT`
   - `LEN`
 

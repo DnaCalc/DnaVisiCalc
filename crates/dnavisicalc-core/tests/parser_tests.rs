@@ -93,3 +93,15 @@ fn parses_escaped_quote_in_string_literal() {
     let expr = parse_formula("=\"a\"\"b\"", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
     assert_eq!(expr, Expr::Text("a\"b".to_string()));
 }
+
+#[test]
+fn parses_function_name_that_looks_like_cell_ref() {
+    let expr = parse_formula("=LOG10(100)", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
+    match expr {
+        Expr::FunctionCall { name, args } => {
+            assert_eq!(name, "LOG10");
+            assert_eq!(args.len(), 1);
+        }
+        _ => panic!("expected function call"),
+    }
+}

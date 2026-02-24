@@ -154,8 +154,10 @@ fn quick_help(mode: AppMode) -> &'static str {
     }
 }
 
-fn help_text() -> &'static str {
-    "DNA VisiCalc\n\
+fn help_text() -> String {
+    let function_list = dnavisicalc_core::SUPPORTED_FUNCTIONS.join(", ");
+    format!(
+        "DNA VisiCalc\n\
 \n\
 Navigation keys\n\
 - Arrows or h/j/k/l: move selection\n\
@@ -174,12 +176,16 @@ Command mode\n\
 - r or recalc: recalculate now\n\
 - q or quit: quit\n\
 \n\
+Supported functions\n\
+- {function_list}\n\
+\n\
 Notes\n\
 - File/Save status is shown in the top bar.\n\
 - Status messages persist while navigating.\n\
 - Spill child cells are read-only; edit the anchor cell.\n\
 \n\
 Press ? or F1 to close help."
+    )
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
@@ -251,5 +257,29 @@ mod tests {
             height: 1,
         });
         assert_eq!((w, h), (1, 1));
+    }
+
+    #[test]
+    fn help_popup_includes_supported_function_list() {
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).expect("create terminal");
+        let mut app = App::new();
+        let mut io = MemoryWorkbookIo::new();
+        app.apply(Action::ToggleHelp, &mut io);
+
+        terminal
+            .draw(|frame| render_app(frame, &app))
+            .expect("draw app");
+
+        let buffer = terminal.backend().buffer();
+        let text = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(text.contains("Supported functions"));
+        assert!(text.contains("LOOKUP"));
+        assert!(text.contains("PMT"));
     }
 }

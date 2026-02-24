@@ -264,3 +264,22 @@
   - Used alternate `CARGO_TARGET_DIR` to avoid Windows lock from a concurrently running interactive binary.
 - Open questions:
   - Should full-help popup include a compact command examples section with live current path substitution?
+
+## Round 18
+- Status: completed
+- Scope: VisiCalc function-surface expansion + help-panel function listing + release hardening.
+- Suites:
+  - `CARGO_TARGET_DIR=target_tmp cargo test -p dnavisicalc-core`
+  - `CARGO_TARGET_DIR=target_tmp cargo test -p dnavisicalc-file`
+  - `CARGO_TARGET_DIR=target_tmp cargo test -p dnavisicalc-tui`
+  - `CARGO_TARGET_DIR=target_tmp cargo test --workspace`
+- Result:
+  - Expanded core function coverage with math, trig, financial, lookup, and error helpers.
+  - Help popup now renders the supported-function list from core metadata.
+  - Added compatibility classification document for problematic/not-yet-implemented areas.
+  - Captured reproducible README screenshot artifacts via scripted scene capture.
+- Fixes:
+  - Added parser lookahead regression fix for function names resembling cell refs (`LOG10(...)`).
+  - Added regression tests for new functions and help-popup list rendering.
+- Open questions:
+  - Exact historical VisiCalc coercion/error text behavior should be validated against additional public evidence fixtures.

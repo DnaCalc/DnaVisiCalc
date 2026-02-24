@@ -13,5 +13,5 @@ pub use address::{
 pub use ast::{BinaryOp, Expr, UnaryOp};
 pub use deps::{CalcNode, CalcTree, DependencyError, build_calc_tree};
 pub use engine::{CellInput, CellState, DynamicArrayStrategy, Engine, EngineError, RecalcMode};
-pub use eval::{CellError, Value};
+pub use eval::{CellError, SUPPORTED_FUNCTIONS, Value};
 pub use parser::{ParseError, parse_formula};

@@ -31,6 +31,7 @@ See `docs/testing/TESTING_ROUNDS.md`.
 
 ## Execution status
 - All 10 planned rounds have been executed in this iteration.
+- Additional hardening rounds (11-18) were executed for terminal behavior, dynamic arrays, TUI UX, and function-surface expansion.
 - Detailed evidence and outcomes are recorded in `docs/testing/TESTING_ROUNDS.md`.
 
 ## Platform harness extension (Windows Terminal)

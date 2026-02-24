@@ -274,6 +274,7 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
                 }
                 let raw = &input[start..i];
                 let upper = raw.to_ascii_uppercase();
+                let call_ahead = next_non_whitespace_char(bytes, i) == Some('(');
                 if upper == "TRUE" {
                     tokens.push(Token {
                         kind: TokenKind::Bool(true),
@@ -288,7 +289,7 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
                     });
                     continue;
                 }
-                if is_cell_reference_token(&upper) {
+                if is_cell_reference_token(&upper) && !call_ahead {
                     let cell = parse_cell_ref(&upper, bounds)
                         .map_err(|err| ParseError::new(err.to_string(), start))?;
                     tokens.push(Token {
@@ -338,6 +339,17 @@ fn consume_number(bytes: &[u8], mut i: usize) -> usize {
         }
     }
     i
+}
+
+fn next_non_whitespace_char(bytes: &[u8], mut i: usize) -> Option<char> {
+    while i < bytes.len() {
+        let ch = bytes[i] as char;
+        if !ch.is_ascii_whitespace() {
+            return Some(ch);
+        }
+        i += 1;
+    }
+    None
 }
 
 fn consume_string(input: &str, start: usize) -> Result<(String, usize), ParseError> {
