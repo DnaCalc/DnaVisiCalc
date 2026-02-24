@@ -32,3 +32,13 @@ See `docs/testing/TESTING_ROUNDS.md`.
 ## Execution status
 - All 10 planned rounds have been executed in this iteration.
 - Detailed evidence and outcomes are recorded in `docs/testing/TESTING_ROUNDS.md`.
+
+## Platform harness extension (Windows Terminal)
+- Add and maintain an interactive E2E harness for terminal event anomalies:
+  - `scripts/windows/repro_double_keypress.ps1`
+  - `scripts/windows/send_keys.ps1`
+  - `docs/testing/WINDOWS_TERMINAL_KEY_REPRO.md`
+- Purpose:
+  - capture raw key event streams (`Press`/`Release`/`Repeat`) alongside mapped actions,
+  - reproduce environment-specific key issues before changing input logic,
+  - keep a reusable route for future UI regression and terminal-compat testing.

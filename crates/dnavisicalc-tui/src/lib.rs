@@ -1,4 +1,5 @@
 pub mod app;
+mod event_trace;
 pub mod io;
 pub mod keymap;
 pub mod render;

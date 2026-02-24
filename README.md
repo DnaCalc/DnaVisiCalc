@@ -49,6 +49,17 @@ Run:
 cargo run -p dnavisicalc-tui --bin dnavisicalc
 ```
 
+Optional key-event tracing for terminal/input debugging:
+
+```bash
+DNAVISICALC_EVENT_TRACE=artifacts/windows/event-trace.log cargo run -p dnavisicalc-tui --bin dnavisicalc
+```
+
+```powershell
+$env:DNAVISICALC_EVENT_TRACE = "artifacts/windows/event-trace.log"
+cargo run -p dnavisicalc-tui --bin dnavisicalc
+```
+
 ## Development
 
 ```bash
@@ -59,6 +70,7 @@ Deep testing and hardening artifacts:
 - `docs/testing/TESTING_PLAN.md`
 - `docs/testing/TESTING_ROUNDS.md`
 - `docs/testing/COVERAGE_SUMMARY.md`
+- `docs/testing/WINDOWS_TERMINAL_KEY_REPRO.md`
 
 ## Foundation relationship
 This repository follows Foundation guidance with a lighter process suitable for pathfinding.

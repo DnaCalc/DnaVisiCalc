@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -10,16 +11,22 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+use crate::event_trace::EventTrace;
 use crate::{App, CommandOutcome, FsWorkbookIo, action_from_key, render_app};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RuntimeOptions {
     pub test_exit: bool,
+    pub event_trace_path: Option<PathBuf>,
 }
 
 pub fn run_from_env() -> Result<()> {
     let test_exit = std::env::var_os("DNAVISICALC_TEST_EXIT").is_some();
-    run_with_options(RuntimeOptions { test_exit })
+    let event_trace_path = std::env::var_os("DNAVISICALC_EVENT_TRACE").map(PathBuf::from);
+    run_with_options(RuntimeOptions {
+        test_exit,
+        event_trace_path,
+    })
 }
 
 pub fn run_with_options(options: RuntimeOptions) -> Result<()> {
@@ -28,15 +35,15 @@ pub fn run_with_options(options: RuntimeOptions) -> Result<()> {
 
 fn run_with_runner<F>(options: RuntimeOptions, runner: F) -> Result<()>
 where
-    F: FnOnce() -> Result<()>,
+    F: FnOnce(RuntimeOptions) -> Result<()>,
 {
     if options.test_exit {
         return Ok(());
     }
-    runner()
+    runner(options)
 }
 
-fn run_terminal_app() -> Result<()> {
+fn run_terminal_app(options: RuntimeOptions) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -45,8 +52,13 @@ fn run_terminal_app() -> Result<()> {
 
     let mut app = App::new();
     let mut io = FsWorkbookIo;
+    let mut trace = options
+        .event_trace_path
+        .as_deref()
+        .map(EventTrace::open)
+        .transpose()?;
 
-    let run_result = run_event_loop(&mut terminal, &mut app, &mut io);
+    let run_result = run_event_loop(&mut terminal, &mut app, &mut io, &mut trace);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -59,13 +71,19 @@ fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     io: &mut FsWorkbookIo,
+    trace: &mut Option<EventTrace>,
 ) -> Result<()> {
     loop {
         terminal.draw(|frame| render_app(frame, app))?;
 
         if event::poll(Duration::from_millis(150))? {
             if let Event::Key(key) = event::read()? {
-                if let Some(action) = action_from_key(app.mode(), key) {
+                let mode = app.mode();
+                let mapped_action = action_from_key(mode, key.clone());
+                if let Some(trace_writer) = trace.as_mut() {
+                    trace_writer.log_key(mode, &key, mapped_action.as_ref())?;
+                }
+                if let Some(action) = mapped_action {
                     let outcome = app.apply(action, io);
                     if outcome == CommandOutcome::Quit {
                         break;
@@ -84,21 +102,34 @@ mod tests {
 
     #[test]
     fn test_exit_option_short_circuits_runtime() {
-        let result = run_with_options(RuntimeOptions { test_exit: true });
+        let result = run_with_options(RuntimeOptions {
+            test_exit: true,
+            event_trace_path: None,
+        });
         assert!(result.is_ok());
     }
 
     #[test]
     fn non_test_exit_path_uses_runner() {
-        let result = run_with_runner(RuntimeOptions { test_exit: false }, || Ok(()));
+        let result = run_with_runner(
+            RuntimeOptions {
+                test_exit: false,
+                event_trace_path: None,
+            },
+            |_| Ok(()),
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn non_test_exit_path_propagates_runner_error() {
-        let result = run_with_runner(RuntimeOptions { test_exit: false }, || {
-            Err(anyhow::anyhow!("runner failed"))
-        });
+        let result = run_with_runner(
+            RuntimeOptions {
+                test_exit: false,
+                event_trace_path: None,
+            },
+            |_| Err(anyhow::anyhow!("runner failed")),
+        );
         assert!(result.is_err());
     }
 }

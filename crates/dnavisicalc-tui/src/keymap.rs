@@ -58,6 +58,15 @@ mod tests {
         }
     }
 
+    fn key_with_kind(code: KeyCode, kind: KeyEventKind) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind,
+            state: KeyEventState::NONE,
+        }
+    }
+
     #[test]
     fn maps_navigation_keys() {
         assert_eq!(
@@ -79,6 +88,26 @@ mod tests {
         assert_eq!(
             action_from_key(AppMode::Command, key(KeyCode::Enter)),
             Some(Action::Submit)
+        );
+    }
+
+    #[test]
+    fn char_press_and_release_both_map_to_input_char_in_edit_mode() {
+        // Repro scaffold: if terminal emits both press and release char events,
+        // the current mapping will produce duplicated characters.
+        assert_eq!(
+            action_from_key(
+                AppMode::Edit,
+                key_with_kind(KeyCode::Char('1'), KeyEventKind::Press)
+            ),
+            Some(Action::InputChar('1'))
+        );
+        assert_eq!(
+            action_from_key(
+                AppMode::Edit,
+                key_with_kind(KeyCode::Char('1'), KeyEventKind::Release)
+            ),
+            Some(Action::InputChar('1'))
         );
     }
 }

@@ -138,3 +138,22 @@
 - Open questions:
   - Is it worth introducing a pseudo-terminal integration harness to close runtime coverage gaps?
   - Should round-trip numeric serialization be canonicalized for deterministic textual diffs across platforms?
+
+## Round 11
+- Status: completed
+- Scope: reproduce and scaffold terminal key duplication behavior (Windows Terminal path).
+- Suites:
+  - `cargo test --workspace`
+  - targeted key mapping repro test in `keymap.rs`
+  - Windows harness script dry-run:
+    - `scripts/windows/repro_double_keypress.ps1`
+- Result:
+  - Reproduction scaffold added in code: `char_press_and_release_both_map_to_input_char_in_edit_mode`.
+  - Runtime key-event tracing added (`DNAVISICALC_EVENT_TRACE`).
+  - Windows Terminal + SendKeys automation harness added for high-level repro capture.
+- Fixes:
+  - No behavior fix applied yet (repro-first rule).
+  - Added trace and automation infrastructure for future terminal regressions.
+- Open questions:
+  - In this CI/sandbox context, foreground window activation for SendKeys may fail (non-interactive desktop characteristics).
+  - Should we add a ConPTY-driven harness to avoid foreground-window dependence?
