@@ -64,7 +64,7 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
     let mut mode = RecalcMode::Automatic;
     let mut seen_mode = false;
     let mut seen_cells = BTreeSet::new();
-    let mut entries: Vec<(CellRef, CellInput)> = Vec::new();
+    let mut entries: Vec<(usize, CellRef, CellInput)> = Vec::new();
 
     for (idx, raw_line) in input.lines().enumerate() {
         let line_no = idx + 1;
@@ -74,7 +74,8 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
         }
 
         if !found_header {
-            if line != MAGIC {
+            let header_line = line.strip_prefix('\u{feff}').unwrap_or(line);
+            if header_line != MAGIC {
                 return Err(FileError::Parse {
                     line: line_no,
                     message: format!("expected header '{MAGIC}'"),
@@ -183,7 +184,7 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
                     }
                 };
 
-                entries.push((cell, input));
+                entries.push((line_no, cell, input));
             }
             other => {
                 return Err(FileError::Parse {
@@ -203,10 +204,20 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
 
     let mut engine = Engine::new();
     engine.set_recalc_mode(RecalcMode::Manual);
-    for (cell, input) in entries {
-        engine.set_cell_input(cell, input)?;
+    for (line_no, cell, input) in entries {
+        if let Err(err) = engine.set_cell_input(cell, input) {
+            return Err(FileError::Parse {
+                line: line_no,
+                message: format!("failed to apply cell {cell}: {err}"),
+            });
+        }
     }
-    engine.recalculate()?;
+    if let Err(err) = engine.recalculate() {
+        return Err(FileError::Parse {
+            line: 1,
+            message: format!("recalculation failed after load: {err}"),
+        });
+    }
     engine.set_recalc_mode(mode);
     Ok(engine)
 }
@@ -310,5 +321,24 @@ mod tests {
         let input = "DVISICALC\t1\nCELL\tA1\tF\t=A1+\\\n";
         let err = load_from_str(input).expect_err("expected parse error");
         assert!(err.to_string().contains("trailing escape"));
+    }
+
+    #[test]
+    fn supports_utf8_bom_header() {
+        let input = "\u{feff}DVISICALC\t1\nCELL\tA1\tN\t3\n";
+        let loaded = load_from_str(input).expect("expected successful load");
+        assert_eq!(
+            loaded.cell_state_a1("A1").expect("query").value,
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn reports_line_for_formula_load_error() {
+        let input = "DVISICALC\t1\nCELL\tA1\tF\t=\n";
+        let err = load_from_str(input).expect_err("expected formula parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("line 2"));
+        assert!(msg.contains("failed to apply cell"));
     }
 }
