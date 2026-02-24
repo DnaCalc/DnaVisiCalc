@@ -222,3 +222,23 @@
   - Added new fuzz suite: `crates/dnavisicalc-core/tests/dynamic_array_fuzz_prop.rs`.
 - Open questions:
   - Should we introduce profile flags for strict Excel volatility semantics on dynamic-array functions?
+
+## Round 16
+- Status: completed
+- Scope: enforce dynamic-array parity + fuzz across all three strategy implementations.
+- Suites:
+  - `cargo test -p dnavisicalc-core --test dynamic_array_strategy_parity`
+  - `cargo test -p dnavisicalc-core --test dynamic_array_fuzz_prop`
+  - `cargo test --workspace`
+- Result:
+  - Dynamic-array fuzz properties now execute under:
+    - `OverlayInline`,
+    - `OverlayPlanner`,
+    - `RewriteMaterialize`.
+  - Added deterministic cross-strategy property assertions to detect parity drift directly.
+  - Full workspace remains green.
+- Fixes:
+  - Expanded `dynamic_array_fuzz_prop` to multi-strategy execution.
+  - Added deterministic parity property over value grid + spill metadata.
+- Open questions:
+  - Should CI split strategy parity tests into a dedicated fast lane (required) and a longer nightly stress lane?
