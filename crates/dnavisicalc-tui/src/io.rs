@@ -33,6 +33,10 @@ impl MemoryWorkbookIo {
     pub fn files(&self) -> &HashMap<String, String> {
         &self.files
     }
+
+    pub fn insert_file(&mut self, path: impl Into<String>, content: impl Into<String>) {
+        self.files.insert(path.into(), content.into());
+    }
 }
 
 impl WorkbookIo for MemoryWorkbookIo {
