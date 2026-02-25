@@ -111,6 +111,13 @@ A computed value is stale when `value_epoch < committed_epoch`.
 - `Automatic`: edits trigger immediate full recalc.
 - `Manual`: edits update `committed_epoch` and defer recalc until explicitly requested.
 
+### 3.7 Cell formatting (implemented extension)
+- Per-cell formatting metadata is supported and persisted:
+  - decimals for numeric display (`0..9` or unset),
+  - text style flags (`bold`, `italic`),
+  - foreground/background palette colors (16-name nature-soft palette).
+- Formatting does not change formula evaluation semantics.
+
 ## 4. Initial crate and module layout
 
 ```text

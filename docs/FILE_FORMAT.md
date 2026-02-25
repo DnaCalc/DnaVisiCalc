@@ -32,6 +32,11 @@ NAME	<IDENT>	T	<text>
 NAME	<IDENT>	F	<formula>
 ```
 
+### Format
+```text
+FMT	<A1>	<decimals|->	<bold:0|1>	<italic:0|1>	<fg|->	<bg|->
+```
+
 Where:
 - `N` means numeric literal.
 - `T` means text literal.
@@ -47,9 +52,12 @@ Where:
 - At most one `MODE` record.
 - Duplicate `CELL` addresses are rejected.
 - Duplicate `NAME` identifiers are rejected.
+- Duplicate `FMT` addresses are rejected.
 - Unknown record kinds are rejected.
 - Unknown `CELL` type tags are rejected.
 - Unknown `NAME` type tags are rejected.
+- `FMT` flags must be valid and colors must be known palette values.
+  - Palette values: `MIST`, `SAGE`, `FERN`, `MOSS`, `OLIVE`, `SEAFOAM`, `LAGOON`, `TEAL`, `SKY`, `CLOUD`, `SAND`, `CLAY`, `PEACH`, `ROSE`, `LAVENDER`, `SLATE`.
 - Numeric parse must succeed for `N` records.
 
 ## Design intent

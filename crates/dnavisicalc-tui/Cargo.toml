@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 crossterm.workspace = true
+arboard.workspace = true
 ratatui.workspace = true
 dnavisicalc-core.workspace = true
 dnavisicalc-file.workspace = true

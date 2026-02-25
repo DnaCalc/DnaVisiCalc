@@ -62,3 +62,17 @@ fn unknown_name_type_is_rejected() {
     let err = load_from_str(input).expect_err("expected parse error");
     assert!(err.to_string().contains("unknown NAME type"));
 }
+
+#[test]
+fn duplicate_format_record_is_rejected() {
+    let input = "DVISICALC\t1\nFMT\tA1\t2\t0\t0\t-\t-\nFMT\tA1\t1\t0\t0\t-\t-\n";
+    let err = load_from_str(input).expect_err("expected parse error");
+    assert!(err.to_string().contains("duplicate format"));
+}
+
+#[test]
+fn invalid_format_flag_is_rejected() {
+    let input = "DVISICALC\t1\nFMT\tA1\t2\tX\t0\t-\t-\n";
+    let err = load_from_str(input).expect_err("expected parse error");
+    assert!(err.to_string().contains("invalid bold flag"));
+}

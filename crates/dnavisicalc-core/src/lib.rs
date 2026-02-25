@@ -13,7 +13,8 @@ pub use address::{
 pub use ast::{BinaryOp, Expr, UnaryOp};
 pub use deps::{CalcNode, CalcTree, DependencyError, build_calc_tree};
 pub use engine::{
-    CellInput, CellState, DynamicArrayStrategy, Engine, EngineError, NameInput, RecalcMode,
+    CellFormat, CellInput, CellState, DynamicArrayStrategy, Engine, EngineError, NameInput,
+    PaletteColor, RecalcMode,
 };
 pub use eval::{CellError, SUPPORTED_FUNCTIONS, Value};
 pub use parser::{ParseError, parse_formula};

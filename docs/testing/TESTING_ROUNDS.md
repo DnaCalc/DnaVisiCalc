@@ -336,3 +336,45 @@
   - Added end-to-end tests for core eval, serialization, and command behavior.
 - Open questions:
   - If needed later, add a dedicated dependency-plan representation that includes names explicitly (not just runtime name evaluation with memoization/cycle detection).
+
+## Round 22
+- Status: completed
+- Scope: minimal cell formatting + multi-cell selection and delete/format flows.
+- Suites:
+  - `CARGO_TARGET_DIR=target_tmp cargo test --workspace`
+- Result:
+  - Added per-cell formatting metadata (decimals, text bold/italic, fg/bg palette) with deterministic save/load support.
+  - Added multi-cell selection extension via `Shift+Arrows` / `Shift+H/J/K/L`.
+  - Added range clear behavior via `Delete` in navigation mode.
+  - Added formatting commands that apply over current selection.
+  - Verified workspace remains fully green after feature integration and UI help updates.
+- Fixes:
+  - Extended key mapping and app action model with selection-extension and clear-selection actions.
+  - Added format persistence records (`FMT`) in DVISICALC file format and strict validation.
+  - Updated render styling with a 16-color nature-soft palette and selection-aware highlighting.
+- Open questions:
+  - Whether to add an explicit style-preview panel for the selected range in a future UX pass.
+
+## Round 23
+- Status: completed
+- Scope: keyboard and clipboard UX expansion (`F2` editing + system clipboard copy/paste + paste-type picker).
+- Suites:
+  - `cargo test -p dnavisicalc-tui`
+  - `cargo test --workspace`
+- Result:
+  - Added `F2` as a direct start-edit shortcut in navigation mode.
+  - Added `Ctrl+C`/`Ctrl+V` system clipboard integration in runtime.
+  - Added Paste Special mode selector with types:
+    - All
+    - Formulas
+    - Values
+    - Values+KeepDestFmt
+    - Formatting
+  - Added dedicated keymap handling for paste-special mode (`Tab`, arrows, `j/k`, `1..5`, `Enter`, `Esc`).
+  - Updated help and quick-reference docs for the new shortcuts and paste-type flow.
+- Fixes:
+  - Added app-level paste-special regression tests covering formula/value/format behavior.
+  - Added runtime clipboard-bridge unit tests with deterministic mock clipboard coverage.
+  - Added keymap matrix coverage for `F2`, clipboard shortcuts, and paste-special controls.
+- Open questions:
+  - Whether to add block replication (tiling) when pasting a smaller source range into a larger selected destination range.

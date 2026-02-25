@@ -28,6 +28,7 @@ The `dnavisicalc-core` crate stays library-only and I/O free:
 - VisiCalc-sized bounds (`A1`..`BK254`).
 - Formula parser with arithmetic, comparisons, references, ranges.
 - Workbook names for reusable values/formulas (names can reference cells and other names).
+- Per-cell formatting: decimals, text style (bold/italic), foreground/background palette colors.
 - Functions: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`, `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`, `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`, `NA`, `ERROR`, `CONCAT`, `LEN`.
 - Dynamic arrays: `SEQUENCE`, `RANDARRAY`, spill references (`A1#`), `#SPILL`/`#REF` errors.
 - Deterministic dependency graph and cycle detection.
@@ -41,9 +42,12 @@ The `dnavisicalc-file` crate provides deterministic workbook serialization:
 
 ## TUI
 The `dnavisicalc-tui` crate provides a terminal UI using `ratatui` + `crossterm`:
-- Grid navigation and cell editing.
+- Grid navigation and cell editing (`Enter`/`e`/`F2`).
+- Multi-cell selection with `Shift+Arrows` or `Shift+H/J/K/L`.
+- System clipboard copy/paste (`Ctrl+C`, `Ctrl+V`) with Paste Special modes.
 - Command mode (`:w`, `:o`, `:mode`, `:recalc`, `:set`, `:q`).
 - Name commands (`:name <NAME> <value|formula>`, `:name clear <NAME>`).
+- Format commands (`:fmt decimals|bold|italic|fg|bg|clear ...`) and `Delete` to clear selected range contents.
 - Full help popup (`?` / `F1`) including the supported function list.
 - Workbook header showing file, save status, and recalc mode.
 - Status messages that persist during navigation.
@@ -51,17 +55,17 @@ The `dnavisicalc-tui` crate provides a terminal UI using `ratatui` + `crossterm`
 
 ## Windows Release (No Rust Needed)
 Prebuilt Windows x64 artifacts are published on GitHub Releases:
-- `https://github.com/DnaCalc/DnaVisiCalc/releases/tag/v0.1.2`
+- `https://github.com/DnaCalc/DnaVisiCalc/releases/tag/v0.2.0`
 
 Quick start (Windows):
-1. Download `dnavisicalc-v0.1.2-windows-x64.zip` from the release assets.
+1. Download `dnavisicalc-v0.2.0-windows-x64.zip` from the release assets.
 2. Extract the archive.
 3. Run `dnavisicalc.exe` from the extracted folder.
 4. Press `?` (or `F1`) in the app for full help and function coverage.
 
 Detailed release/run docs:
-- `docs/release/WINDOWS_RUN_v0.1.2.md`
-- `docs/release/HELP_QUICK_REFERENCE_v0.1.2.md`
+- `docs/release/WINDOWS_RUN_v0.2.0.md`
+- `docs/release/HELP_QUICK_REFERENCE_v0.2.0.md`
 
 ## Development
 Run locally with Cargo:

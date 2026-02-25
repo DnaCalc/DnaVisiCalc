@@ -39,6 +39,109 @@ pub enum NameInput {
     Formula(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PaletteColor {
+    Mist,
+    Sage,
+    Fern,
+    Moss,
+    Olive,
+    Seafoam,
+    Lagoon,
+    Teal,
+    Sky,
+    Cloud,
+    Sand,
+    Clay,
+    Peach,
+    Rose,
+    Lavender,
+    Slate,
+}
+
+impl PaletteColor {
+    pub const ALL: [PaletteColor; 16] = [
+        PaletteColor::Mist,
+        PaletteColor::Sage,
+        PaletteColor::Fern,
+        PaletteColor::Moss,
+        PaletteColor::Olive,
+        PaletteColor::Seafoam,
+        PaletteColor::Lagoon,
+        PaletteColor::Teal,
+        PaletteColor::Sky,
+        PaletteColor::Cloud,
+        PaletteColor::Sand,
+        PaletteColor::Clay,
+        PaletteColor::Peach,
+        PaletteColor::Rose,
+        PaletteColor::Lavender,
+        PaletteColor::Slate,
+    ];
+
+    pub fn as_name(self) -> &'static str {
+        match self {
+            Self::Mist => "MIST",
+            Self::Sage => "SAGE",
+            Self::Fern => "FERN",
+            Self::Moss => "MOSS",
+            Self::Olive => "OLIVE",
+            Self::Seafoam => "SEAFOAM",
+            Self::Lagoon => "LAGOON",
+            Self::Teal => "TEAL",
+            Self::Sky => "SKY",
+            Self::Cloud => "CLOUD",
+            Self::Sand => "SAND",
+            Self::Clay => "CLAY",
+            Self::Peach => "PEACH",
+            Self::Rose => "ROSE",
+            Self::Lavender => "LAVENDER",
+            Self::Slate => "SLATE",
+        }
+    }
+
+    pub fn from_name(input: &str) -> Option<Self> {
+        match input.trim().to_ascii_uppercase().as_str() {
+            "MIST" => Some(Self::Mist),
+            "SAGE" => Some(Self::Sage),
+            "FERN" => Some(Self::Fern),
+            "MOSS" => Some(Self::Moss),
+            "OLIVE" => Some(Self::Olive),
+            "SEAFOAM" => Some(Self::Seafoam),
+            "LAGOON" => Some(Self::Lagoon),
+            "TEAL" => Some(Self::Teal),
+            "SKY" => Some(Self::Sky),
+            "CLOUD" => Some(Self::Cloud),
+            "SAND" => Some(Self::Sand),
+            "CLAY" => Some(Self::Clay),
+            "PEACH" => Some(Self::Peach),
+            "ROSE" => Some(Self::Rose),
+            "LAVENDER" => Some(Self::Lavender),
+            "SLATE" => Some(Self::Slate),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CellFormat {
+    pub decimals: Option<u8>,
+    pub bold: bool,
+    pub italic: bool,
+    pub fg: Option<PaletteColor>,
+    pub bg: Option<PaletteColor>,
+}
+
+impl CellFormat {
+    pub fn is_default(&self) -> bool {
+        self.decimals.is_none()
+            && !self.bold
+            && !self.italic
+            && self.fg.is_none()
+            && self.bg.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellState {
     pub value: Value,
@@ -79,6 +182,7 @@ pub struct Engine {
     committed_epoch: u64,
     stabilized_epoch: u64,
     cells: HashMap<CellRef, CellEntry>,
+    formats: HashMap<CellRef, CellFormat>,
     names: HashMap<String, NameEntry>,
     values: HashMap<CellRef, StoredValue>,
     name_values: HashMap<String, StoredValue>,
@@ -107,6 +211,7 @@ impl Engine {
             committed_epoch: 0,
             stabilized_epoch: 0,
             cells: HashMap::new(),
+            formats: HashMap::new(),
             names: HashMap::new(),
             values: HashMap::new(),
             name_values: HashMap::new(),
@@ -141,6 +246,7 @@ impl Engine {
     pub fn clear(&mut self) {
         self.committed_epoch += 1;
         self.cells.clear();
+        self.formats.clear();
         self.names.clear();
         self.values.clear();
         self.name_values.clear();
@@ -540,6 +646,50 @@ impl Engine {
         entries
     }
 
+    pub fn cell_format(&self, cell: CellRef) -> Result<CellFormat, EngineError> {
+        self.ensure_in_bounds(cell)?;
+        Ok(self.formats.get(&cell).cloned().unwrap_or_default())
+    }
+
+    pub fn cell_format_a1(&self, cell_ref: &str) -> Result<CellFormat, EngineError> {
+        let cell = parse_cell_ref(cell_ref, self.bounds)?;
+        self.cell_format(cell)
+    }
+
+    pub fn set_cell_format(
+        &mut self,
+        cell: CellRef,
+        format: CellFormat,
+    ) -> Result<(), EngineError> {
+        self.ensure_in_bounds(cell)?;
+        if format.is_default() {
+            self.formats.remove(&cell);
+        } else {
+            self.formats.insert(cell, format);
+        }
+        self.mark_presentation_change();
+        Ok(())
+    }
+
+    pub fn set_cell_format_a1(
+        &mut self,
+        cell_ref: &str,
+        format: CellFormat,
+    ) -> Result<(), EngineError> {
+        let cell = parse_cell_ref(cell_ref, self.bounds)?;
+        self.set_cell_format(cell, format)
+    }
+
+    pub fn all_cell_formats(&self) -> Vec<(CellRef, CellFormat)> {
+        let mut entries: Vec<(CellRef, CellFormat)> = self
+            .formats
+            .iter()
+            .map(|(cell, format)| (*cell, format.clone()))
+            .collect();
+        entries.sort_by_key(|(cell, _)| *cell);
+        entries
+    }
+
     pub fn name_input(&self, name: &str) -> Result<Option<NameInput>, EngineError> {
         let key = self.normalize_name(name)?;
         let entry = self.names.get(&key).map(|entry| match entry {
@@ -571,6 +721,17 @@ impl Engine {
         match self.mode {
             RecalcMode::Automatic => self.recalculate(),
             RecalcMode::Manual => Ok(()),
+        }
+    }
+
+    fn mark_presentation_change(&mut self) {
+        self.committed_epoch += 1;
+        self.stabilized_epoch = self.committed_epoch;
+        for stored in self.values.values_mut() {
+            stored.value_epoch = self.committed_epoch;
+        }
+        for stored in self.name_values.values_mut() {
+            stored.value_epoch = self.committed_epoch;
         }
     }
 

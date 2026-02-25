@@ -1,4 +1,6 @@
-use dnavisicalc_core::{CellInput, CellRef, Engine, EngineError, NameInput, RecalcMode, Value};
+use dnavisicalc_core::{
+    CellFormat, CellInput, CellRef, Engine, EngineError, NameInput, PaletteColor, RecalcMode, Value,
+};
 
 #[test]
 fn clear_resets_cells_and_values() {
@@ -97,4 +99,48 @@ fn rejects_invalid_name_collisions() {
         .set_name_number("SUM", 1.0)
         .expect_err("expected invalid name");
     assert!(err.to_string().contains("built-in function"));
+}
+
+#[test]
+fn cell_format_accessors_roundtrip() {
+    let mut engine = Engine::new();
+    let format = CellFormat {
+        decimals: Some(3),
+        bold: true,
+        italic: true,
+        fg: Some(PaletteColor::Sage),
+        bg: Some(PaletteColor::Cloud),
+    };
+    engine
+        .set_cell_format_a1("B2", format.clone())
+        .expect("set format");
+
+    let loaded = engine.cell_format_a1("B2").expect("get format");
+    assert_eq!(loaded, format);
+    assert_eq!(engine.all_cell_formats().len(), 1);
+}
+
+#[test]
+fn formatting_change_does_not_mark_values_stale() {
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine.set_number_a1("A1", 10.0).expect("A1");
+    engine.set_formula_a1("B1", "=A1*2").expect("B1");
+    engine.recalculate().expect("recalc");
+
+    engine
+        .set_cell_format_a1(
+            "B1",
+            CellFormat {
+                decimals: Some(1),
+                bold: false,
+                italic: false,
+                fg: None,
+                bg: None,
+            },
+        )
+        .expect("set format");
+
+    let state = engine.cell_state_a1("B1").expect("B1");
+    assert!(!state.stale);
 }

@@ -11,9 +11,9 @@ fn key(code: KeyCode) -> KeyEvent {
 }
 
 #[test]
-fn unknown_key_in_navigation_is_none() {
+fn f2_starts_edit_in_navigation() {
     let action = action_from_key(AppMode::Navigate, key(KeyCode::F(2)));
-    assert_eq!(action, None);
+    assert_eq!(action, Some(Action::StartEdit));
 }
 
 #[test]
@@ -64,5 +64,71 @@ fn vim_and_command_keys_map_in_navigation_mode() {
     assert_eq!(
         action_from_key(AppMode::Navigate, key(KeyCode::F(1))),
         Some(Action::ToggleHelp)
+    );
+}
+
+#[test]
+fn shift_navigation_extends_selection() {
+    let shift_left = KeyEvent {
+        code: KeyCode::Left,
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    assert_eq!(
+        action_from_key(AppMode::Navigate, shift_left),
+        Some(Action::ExtendLeft)
+    );
+    assert_eq!(
+        action_from_key(AppMode::Navigate, key(KeyCode::Char('H'))),
+        Some(Action::ExtendLeft)
+    );
+    assert_eq!(
+        action_from_key(AppMode::Navigate, key(KeyCode::Delete)),
+        Some(Action::ClearSelection)
+    );
+}
+
+#[test]
+fn control_clipboard_keys_map_in_navigation_mode() {
+    let ctrl_c = KeyEvent {
+        code: KeyCode::Char('c'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    let ctrl_v = KeyEvent {
+        code: KeyCode::Char('v'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    assert_eq!(
+        action_from_key(AppMode::Navigate, ctrl_c),
+        Some(Action::CopySelection)
+    );
+    assert_eq!(
+        action_from_key(AppMode::Navigate, ctrl_v),
+        Some(Action::PasteFromClipboard)
+    );
+}
+
+#[test]
+fn paste_special_mode_keys_map_to_paste_actions() {
+    assert_eq!(
+        action_from_key(AppMode::PasteSpecial, key(KeyCode::Down)),
+        Some(Action::PasteModeNext)
+    );
+    assert_eq!(
+        action_from_key(AppMode::PasteSpecial, key(KeyCode::Up)),
+        Some(Action::PasteModePrev)
+    );
+    assert_eq!(
+        action_from_key(AppMode::PasteSpecial, key(KeyCode::Tab)),
+        Some(Action::PasteModeNext)
+    );
+    assert_eq!(
+        action_from_key(AppMode::PasteSpecial, key(KeyCode::Char('5'))),
+        Some(Action::InputChar('5'))
     );
 }

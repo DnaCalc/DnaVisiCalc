@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use dnavisicalc_core::{CellInput, CellRef, Engine, EngineError, NameInput, RecalcMode};
+use dnavisicalc_core::{
+    CellFormat, CellInput, CellRef, Engine, EngineError, NameInput, PaletteColor, RecalcMode,
+};
 use thiserror::Error;
 
 const MAGIC: &str = "DVISICALC\t1";
@@ -78,6 +80,27 @@ pub fn save_to_string(engine: &Engine) -> Result<String, FileError> {
         }
     }
 
+    for (cell, format) in engine.all_cell_formats() {
+        out.push_str("FMT\t");
+        out.push_str(&cell.to_string());
+        out.push('\t');
+        out.push_str(
+            &format
+                .decimals
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+        );
+        out.push('\t');
+        out.push_str(if format.bold { "1" } else { "0" });
+        out.push('\t');
+        out.push_str(if format.italic { "1" } else { "0" });
+        out.push('\t');
+        out.push_str(format.fg.map(|c| c.as_name()).unwrap_or("-"));
+        out.push('\t');
+        out.push_str(format.bg.map(|c| c.as_name()).unwrap_or("-"));
+        out.push('\n');
+    }
+
     Ok(out)
 }
 
@@ -98,8 +121,10 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
     let mut seen_mode = false;
     let mut seen_cells = BTreeSet::new();
     let mut seen_names = BTreeSet::new();
+    let mut seen_formats = BTreeSet::new();
     let mut entries: Vec<(usize, CellRef, CellInput)> = Vec::new();
     let mut name_entries: Vec<(usize, String, NameInput)> = Vec::new();
+    let mut format_entries: Vec<(usize, CellRef, CellFormat)> = Vec::new();
 
     for (idx, raw_line) in input.lines().enumerate() {
         let line_no = idx + 1;
@@ -295,6 +320,93 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
 
                 name_entries.push((line_no, name, input));
             }
+            "FMT" => {
+                let Some(addr) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "FMT record missing address".to_string(),
+                    });
+                };
+                let Some(decimals) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "FMT record missing decimals".to_string(),
+                    });
+                };
+                let Some(bold) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "FMT record missing bold flag".to_string(),
+                    });
+                };
+                let Some(italic) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "FMT record missing italic flag".to_string(),
+                    });
+                };
+                let Some(fg) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "FMT record missing foreground".to_string(),
+                    });
+                };
+                let Some(bg) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "FMT record missing background".to_string(),
+                    });
+                };
+                if parts.next().is_some() {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "FMT record has extra fields".to_string(),
+                    });
+                }
+
+                let cell = CellRef::from_a1(addr).map_err(|err| FileError::Parse {
+                    line: line_no,
+                    message: format!("invalid address '{addr}': {err}"),
+                })?;
+                if !seen_formats.insert(cell) {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: format!("duplicate format record for {cell}"),
+                    });
+                }
+
+                let decimals = if decimals.trim() == "-" {
+                    None
+                } else {
+                    let parsed = decimals.parse::<u8>().map_err(|_| FileError::Parse {
+                        line: line_no,
+                        message: format!("invalid decimals '{decimals}'"),
+                    })?;
+                    if parsed > 9 {
+                        return Err(FileError::Parse {
+                            line: line_no,
+                            message: "decimals must be in range 0..9".to_string(),
+                        });
+                    }
+                    Some(parsed)
+                };
+                let bold = parse_bool_flag(bold, line_no, "bold")?;
+                let italic = parse_bool_flag(italic, line_no, "italic")?;
+                let fg = parse_palette_color(fg, line_no, "foreground")?;
+                let bg = parse_palette_color(bg, line_no, "background")?;
+
+                format_entries.push((
+                    line_no,
+                    cell,
+                    CellFormat {
+                        decimals,
+                        bold,
+                        italic,
+                        fg,
+                        bg,
+                    },
+                ));
+            }
             other => {
                 return Err(FileError::Parse {
                     line: line_no,
@@ -329,6 +441,14 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
             });
         }
     }
+    for (line_no, cell, format) in format_entries {
+        if let Err(err) = engine.set_cell_format(cell, format) {
+            return Err(FileError::Parse {
+                line: line_no,
+                message: format!("failed to apply format for {cell}: {err}"),
+            });
+        }
+    }
     if let Err(err) = engine.recalculate() {
         return Err(FileError::Parse {
             line: 1,
@@ -337,6 +457,34 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
     }
     engine.set_recalc_mode(mode);
     Ok(engine)
+}
+
+fn parse_bool_flag(value: &str, line_no: usize, field: &str) -> Result<bool, FileError> {
+    match value.trim() {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        other => Err(FileError::Parse {
+            line: line_no,
+            message: format!("invalid {field} flag '{other}'"),
+        }),
+    }
+}
+
+fn parse_palette_color(
+    value: &str,
+    line_no: usize,
+    field: &str,
+) -> Result<Option<PaletteColor>, FileError> {
+    let trimmed = value.trim();
+    if trimmed == "-" {
+        return Ok(None);
+    }
+    PaletteColor::from_name(trimmed)
+        .map(Some)
+        .ok_or_else(|| FileError::Parse {
+            line: line_no,
+            message: format!("invalid {field} color '{trimmed}'"),
+        })
 }
 
 fn escape_field(input: &str) -> String {
@@ -379,7 +527,7 @@ fn unescape_field(input: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dnavisicalc_core::{NameInput, Value};
+    use dnavisicalc_core::{CellFormat, NameInput, PaletteColor, Value};
 
     #[test]
     fn roundtrips_engine_document() {
@@ -399,6 +547,18 @@ mod tests {
         engine
             .set_formula_a1("C1", "=BONUS")
             .expect("set C1 formula");
+        engine
+            .set_cell_format_a1(
+                "A1",
+                CellFormat {
+                    decimals: Some(2),
+                    bold: false,
+                    italic: false,
+                    fg: Some(PaletteColor::Sage),
+                    bg: Some(PaletteColor::Cloud),
+                },
+            )
+            .expect("set A1 format");
 
         let text = save_to_string(&engine).expect("serialize engine");
         let loaded = load_from_str(&text).expect("deserialize engine");
@@ -426,6 +586,16 @@ mod tests {
         assert_eq!(
             loaded.name_input("RATE").expect("query RATE"),
             Some(NameInput::Number(0.2))
+        );
+        assert_eq!(
+            loaded.cell_format_a1("A1").expect("query format"),
+            CellFormat {
+                decimals: Some(2),
+                bold: false,
+                italic: false,
+                fg: Some(PaletteColor::Sage),
+                bg: Some(PaletteColor::Cloud),
+            }
         );
     }
 
@@ -500,5 +670,14 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("line 2"));
         assert!(msg.contains("failed to apply name"));
+    }
+
+    #[test]
+    fn reports_line_for_invalid_format_record() {
+        let input = "DVISICALC\t1\nFMT\tA1\t12\t0\t0\t-\t-\n";
+        let err = load_from_str(input).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("line 2"));
+        assert!(msg.contains("decimals must be in range"));
     }
 }

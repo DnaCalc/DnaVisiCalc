@@ -130,3 +130,19 @@ fn name_command_sets_and_clears_names() {
     run_command(&mut app, &mut io, "name clear rate");
     assert!(app.status().contains("Cleared name RATE"));
 }
+
+#[test]
+fn fmt_command_applies_format_to_selection() {
+    let mut app = App::new();
+    let mut io = MemoryWorkbookIo::new();
+
+    run_command(&mut app, &mut io, "set A1 3.14159");
+    run_command(&mut app, &mut io, "fmt decimals 2");
+    run_command(&mut app, &mut io, "fmt fg sage");
+    run_command(&mut app, &mut io, "fmt bg cloud");
+
+    let format = app.engine().cell_format_a1("A1").expect("A1 format");
+    assert_eq!(format.decimals, Some(2));
+    assert_eq!(format.fg, Some(dnavisicalc_core::PaletteColor::Sage));
+    assert_eq!(format.bg, Some(dnavisicalc_core::PaletteColor::Cloud));
+}

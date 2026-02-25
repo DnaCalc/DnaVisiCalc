@@ -1,4 +1,4 @@
-# DNA VisiCalc v0.1.2 - Help Quick Reference
+# DNA VisiCalc v0.2.0 - Help Quick Reference
 
 ## Navigation
 - Arrows or `h/j/k/l`: move selection

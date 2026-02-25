@@ -41,6 +41,7 @@ These are available in v0.1, but historical edge semantics should still be cross
 ### 3.2 Architecture-era differences (intentional)
 - Dynamic arrays (`SEQUENCE`, `RANDARRAY`, spill semantics) are modern extensions and not historical VisiCalc features.
 - Workbook-level named formulas/values are modernized behavior and not historical VisiCalc scope.
+- Per-cell formatting metadata (decimals, text style, fg/bg palette) is modernized behavior and not historical VisiCalc scope.
 - Current TUI command shell is modernized and test-oriented, not a strict clone of VisiCalc UI flows.
 
 ## 4. Recommended Next Compatibility Steps
