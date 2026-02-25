@@ -49,17 +49,17 @@ The `dnavisicalc-tui` crate provides a terminal UI using `ratatui` + `crossterm`
 
 ## Windows Release (No Rust Needed)
 Prebuilt Windows x64 artifacts are published on GitHub Releases:
-- `https://github.com/DnaCalc/DnaVisiCalc/releases/tag/v0.1.1`
+- `https://github.com/DnaCalc/DnaVisiCalc/releases/tag/v0.1.2`
 
 Quick start (Windows):
-1. Download `dnavisicalc-v0.1.1-windows-x64.zip` from the release assets.
+1. Download `dnavisicalc-v0.1.2-windows-x64.zip` from the release assets.
 2. Extract the archive.
-3. Run `dnavisicalc.exe` (or `run_dnavisicalc.bat`) from the extracted folder.
+3. Run `dnavisicalc.exe` from the extracted folder.
 4. Press `?` (or `F1`) in the app for full help and function coverage.
 
 Detailed release/run docs:
-- `docs/release/WINDOWS_RUN_v0.1.1.md`
-- `docs/release/HELP_QUICK_REFERENCE_v0.1.1.md`
+- `docs/release/WINDOWS_RUN_v0.1.2.md`
+- `docs/release/HELP_QUICK_REFERENCE_v0.1.2.md`
 
 ## Development
 Run locally with Cargo:

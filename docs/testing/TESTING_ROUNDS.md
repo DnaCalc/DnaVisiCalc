@@ -302,3 +302,19 @@
   - Reordered README sections to make screenshots first and move layering/layout story to the end.
 - Open questions:
   - Should future release scripts be consolidated into a single parameterized script to avoid per-version duplication?
+
+## Round 20
+- Status: completed
+- Scope: release packaging correction to remove launcher-induced working-directory change and publish v0.1.2 artifact.
+- Suites:
+  - `CARGO_TARGET_DIR=target_tmp cargo test --workspace`
+  - `powershell -ExecutionPolicy Bypass -File scripts/windows/build_release_v0.1.2.ps1`
+- Result:
+  - Verified full workspace remains green.
+  - Produced release zip `dnavisicalc-v0.1.2-windows-x64.zip` containing only direct runtime entry (`dnavisicalc.exe`) and docs.
+  - Removed `run_dnavisicalc.bat` from packaged assets and release instructions.
+- Fixes:
+  - Added v0.1.2 packaging script and release docs aligned to direct executable launch behavior.
+  - Updated README release section to v0.1.2 and direct executable launch instructions.
+- Open questions:
+  - Whether to replace versioned release scripts with one parameterized script before v0.2.0.
