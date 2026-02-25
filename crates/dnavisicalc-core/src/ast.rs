@@ -22,6 +22,10 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    Invoke {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

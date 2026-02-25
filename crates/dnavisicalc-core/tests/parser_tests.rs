@@ -137,3 +137,45 @@ fn parses_name_starting_with_underscore() {
         _ => panic!("expected addition"),
     }
 }
+
+#[test]
+fn parses_let_and_lambda_calls() {
+    let expr = parse_formula("=LET(x,10,f,LAMBDA(v,v+1),f(x))", DEFAULT_SHEET_BOUNDS)
+        .expect("formula should parse");
+    match expr {
+        Expr::FunctionCall { name, args } => {
+            assert_eq!(name, "LET");
+            assert_eq!(args.len(), 5);
+        }
+        _ => panic!("expected LET function call"),
+    }
+}
+
+#[test]
+fn parses_indirect_offset_row_column() {
+    let expr = parse_formula(
+        "=SUM(INDIRECT(\"A1\"),OFFSET(A1,1,1),ROW(B2),COLUMN(C3))",
+        DEFAULT_SHEET_BOUNDS,
+    )
+    .expect("formula should parse");
+    match expr {
+        Expr::FunctionCall { name, args } => {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 4);
+        }
+        _ => panic!("expected function call"),
+    }
+}
+
+#[test]
+fn parses_direct_lambda_invoke() {
+    let expr =
+        parse_formula("=(LAMBDA(x,x+1))(5)", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
+    match expr {
+        Expr::Invoke { callee, args } => {
+            assert_eq!(args.len(), 1);
+            assert!(matches!(*callee, Expr::FunctionCall { .. }));
+        }
+        _ => panic!("expected invoke expression"),
+    }
+}

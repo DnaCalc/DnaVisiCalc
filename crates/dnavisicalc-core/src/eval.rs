@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::address::CellRef;
+use crate::address::{AddressError, parse_cell_ref};
 use crate::address::{CellRange, SheetBounds};
 use crate::ast::{BinaryOp, Expr, UnaryOp};
 
@@ -87,6 +88,13 @@ pub const SUPPORTED_FUNCTIONS: &[&str] = &[
     "LEN",
     "SEQUENCE",
     "RANDARRAY",
+    "LET",
+    "LAMBDA",
+    "MAP",
+    "INDIRECT",
+    "OFFSET",
+    "ROW",
+    "COLUMN",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,6 +146,14 @@ impl ArrayValue {
 pub(crate) enum RuntimeValue {
     Scalar(Value),
     Array(ArrayValue),
+    Lambda(LambdaValue),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LambdaValue {
+    params: Vec<String>,
+    body: Expr,
+    captured: HashMap<String, RuntimeValue>,
 }
 
 impl RuntimeValue {
@@ -149,13 +165,16 @@ impl RuntimeValue {
         match self {
             Self::Scalar(value) => value.clone(),
             Self::Array(array) => array.top_left(),
+            Self::Lambda(_) => Value::Error(CellError::Value(
+                "lambda cannot be used as a scalar value".to_string(),
+            )),
         }
     }
 
     pub fn as_array(&self) -> Option<&ArrayValue> {
         match self {
             Self::Array(array) => Some(array),
-            Self::Scalar(_) => None,
+            Self::Scalar(_) | Self::Lambda(_) => None,
         }
     }
 
@@ -163,6 +182,9 @@ impl RuntimeValue {
         match self {
             Self::Scalar(value) => ArrayValue::from_scalar(value.clone()),
             Self::Array(array) => array.clone(),
+            Self::Lambda(_) => ArrayValue::from_scalar(Value::Error(CellError::Value(
+                "lambda cannot be used as an array value".to_string(),
+            ))),
         }
     }
 
@@ -170,6 +192,9 @@ impl RuntimeValue {
         match self {
             Self::Scalar(value) => vec![value.clone()],
             Self::Array(array) => array.iter().cloned().collect(),
+            Self::Lambda(_) => vec![Value::Error(CellError::Value(
+                "lambda cannot be expanded as argument values".to_string(),
+            ))],
         }
     }
 }
@@ -185,6 +210,7 @@ pub struct EvalContext<'a> {
     cache: HashMap<CellRef, RuntimeValue>,
     name_cache: HashMap<String, RuntimeValue>,
     stack: Vec<EvalStackNode>,
+    local_scopes: Vec<HashMap<String, RuntimeValue>>,
     recalc_serial: u64,
     random_counter: u64,
 }
@@ -226,6 +252,7 @@ impl<'a> EvalContext<'a> {
             cache: HashMap::new(),
             name_cache: HashMap::new(),
             stack: Vec::new(),
+            local_scopes: Vec::new(),
             recalc_serial,
             random_counter: 0,
         }
@@ -271,6 +298,9 @@ impl<'a> EvalContext<'a> {
     }
 
     pub(crate) fn evaluate_name_runtime(&mut self, name: &str) -> RuntimeValue {
+        if let Some(local) = self.lookup_local(name) {
+            return local;
+        }
         let upper = name.to_ascii_uppercase();
         if let Some(value) = self.name_cache.get(&upper) {
             return value.clone();
@@ -305,13 +335,85 @@ impl<'a> EvalContext<'a> {
         RuntimeValue::scalar(Value::Error(CellError::UnknownName(name.to_string())))
     }
 
+    fn lookup_local(&self, name: &str) -> Option<RuntimeValue> {
+        let key = name.to_ascii_uppercase();
+        for scope in self.local_scopes.iter().rev() {
+            if let Some(value) = scope.get(&key) {
+                return Some(value.clone());
+            }
+        }
+        None
+    }
+
+    fn push_scope(&mut self) {
+        self.local_scopes.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.local_scopes.pop();
+    }
+
+    fn bind_local(&mut self, name: &str, value: RuntimeValue) {
+        let key = name.to_ascii_uppercase();
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.insert(key, value);
+        }
+    }
+
+    fn collect_visible_locals(&self) -> HashMap<String, RuntimeValue> {
+        let mut out = HashMap::new();
+        for scope in &self.local_scopes {
+            for (name, value) in scope {
+                out.insert(name.clone(), value.clone());
+            }
+        }
+        out
+    }
+
+    fn current_context_cell(&self) -> Option<CellRef> {
+        self.stack.iter().rev().find_map(|node| match node {
+            EvalStackNode::Cell(cell) => Some(*cell),
+            EvalStackNode::Name(_) => None,
+        })
+    }
+
+    fn evaluate_expr_with_scope(
+        &mut self,
+        expr: &Expr,
+        scope: HashMap<String, RuntimeValue>,
+    ) -> RuntimeValue {
+        self.local_scopes.push(scope);
+        let value = self.evaluate_expr(expr);
+        self.local_scopes.pop();
+        value
+    }
+
+    fn invoke_lambda_runtime(
+        &mut self,
+        lambda: &LambdaValue,
+        args: Vec<RuntimeValue>,
+    ) -> RuntimeValue {
+        if args.len() != lambda.params.len() {
+            return RuntimeValue::scalar(Value::Error(CellError::Value(format!(
+                "lambda expects {} argument(s), received {}",
+                lambda.params.len(),
+                args.len()
+            ))));
+        }
+        let mut scope = lambda.captured.clone();
+        for (param, arg) in lambda.params.iter().zip(args.into_iter()) {
+            scope.insert(param.to_ascii_uppercase(), arg);
+        }
+        self.evaluate_expr_with_scope(&lambda.body, scope)
+    }
+
     pub(crate) fn evaluate_expr(&mut self, expr: &Expr) -> RuntimeValue {
         match expr {
             Expr::Number(n) => RuntimeValue::scalar(Value::Number(*n)),
             Expr::Text(text) => RuntimeValue::scalar(Value::Text(text.clone())),
             Expr::Bool(b) => RuntimeValue::scalar(Value::Bool(*b)),
             Expr::Cell(cell) => RuntimeValue::scalar(self.evaluate_cell_runtime(*cell).to_scalar()),
-            Expr::Name(name) => RuntimeValue::scalar(self.evaluate_name_runtime(name).to_scalar()),
+            Expr::Name(name) => self.evaluate_name_runtime(name),
             Expr::SpillRef(cell) => self.evaluate_spill_ref(*cell),
             Expr::Range(_) => RuntimeValue::scalar(Value::Error(CellError::Value(
                 "range cannot be used as a scalar value".to_string(),
@@ -329,6 +431,7 @@ impl<'a> EvalContext<'a> {
                 evaluate_binary_runtime(*op, &lval, &rval)
             }
             Expr::FunctionCall { name, args } => evaluate_function(name, args, self),
+            Expr::Invoke { callee, args } => eval_invoke(callee, args, self),
         }
     }
 
@@ -358,6 +461,9 @@ impl<'a> EvalContext<'a> {
                 }
                 RuntimeValue::Array(ArrayValue::new(array.rows(), array.cols(), out))
             }
+            RuntimeValue::Lambda(_) => RuntimeValue::scalar(Value::Error(CellError::Value(
+                "lambda cannot be used with unary operators".to_string(),
+            ))),
         }
     }
 
@@ -372,6 +478,9 @@ impl<'a> EvalContext<'a> {
             }
             RuntimeValue::Scalar(Value::Error(err)) => RuntimeValue::scalar(Value::Error(err)),
             RuntimeValue::Scalar(_) => RuntimeValue::scalar(Value::Error(CellError::Ref(format!(
+                "{cell} does not contain a spilled range"
+            )))),
+            RuntimeValue::Lambda(_) => RuntimeValue::scalar(Value::Error(CellError::Ref(format!(
                 "{cell} does not contain a spilled range"
             )))),
         }
@@ -581,7 +690,29 @@ where
     }
 }
 
+fn eval_invoke(callee: &Expr, args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    let callee_value = ctx.evaluate_expr(callee);
+    let RuntimeValue::Lambda(lambda) = callee_value else {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "only LAMBDA values are callable".to_string(),
+        )));
+    };
+    let runtime_args: Vec<RuntimeValue> = args.iter().map(|arg| ctx.evaluate_expr(arg)).collect();
+    ctx.invoke_lambda_runtime(&lambda, runtime_args)
+}
+
 fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if let Some(local) = ctx.lookup_local(name) {
+        if let RuntimeValue::Lambda(lambda) = local {
+            let runtime_args: Vec<RuntimeValue> =
+                args.iter().map(|arg| ctx.evaluate_expr(arg)).collect();
+            return ctx.invoke_lambda_runtime(&lambda, runtime_args);
+        }
+        return RuntimeValue::scalar(Value::Error(CellError::Value(format!(
+            "{name} is not callable"
+        ))));
+    }
+
     match name {
         "SUM" => aggregate_numbers(args, ctx, AggregateKind::Sum),
         "MIN" => aggregate_numbers(args, ctx, AggregateKind::Min),
@@ -616,6 +747,13 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         "LEN" => eval_len(args, ctx),
         "SEQUENCE" => eval_sequence(args, ctx),
         "RANDARRAY" => eval_randarray(args, ctx),
+        "LET" => eval_let(args, ctx),
+        "LAMBDA" => eval_lambda(args, ctx),
+        "MAP" => eval_map(args, ctx),
+        "INDIRECT" => eval_indirect(args, ctx),
+        "OFFSET" => eval_offset(args, ctx),
+        "ROW" => eval_row(args, ctx),
+        "COLUMN" => eval_column(args, ctx),
         other => RuntimeValue::scalar(Value::Error(CellError::Name(other.to_string()))),
     }
 }
@@ -1060,6 +1198,278 @@ fn eval_len(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
     RuntimeValue::scalar(Value::Number(value_to_text(&value).chars().count() as f64))
 }
 
+fn eval_let(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() < 3 || args.len() % 2 == 0 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "LET expects name/value pairs followed by a final expression".to_string(),
+        )));
+    }
+
+    ctx.push_scope();
+
+    let mut pair_index = 0usize;
+    while pair_index + 1 < args.len() - 1 {
+        let name = match parse_local_binding_name(&args[pair_index]) {
+            Ok(name) => name,
+            Err(err) => {
+                ctx.pop_scope();
+                return RuntimeValue::scalar(Value::Error(err));
+            }
+        };
+        let value = ctx.evaluate_expr(&args[pair_index + 1]);
+        ctx.bind_local(&name, value);
+        pair_index += 2;
+    }
+
+    let result = ctx.evaluate_expr(&args[args.len() - 1]);
+    ctx.pop_scope();
+    result
+}
+
+fn eval_lambda(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.is_empty() {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "LAMBDA expects at least a body expression".to_string(),
+        )));
+    }
+
+    let mut params = Vec::new();
+    for param_expr in &args[..args.len() - 1] {
+        let param = match parse_local_binding_name(param_expr) {
+            Ok(name) => name,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        };
+        if params.iter().any(|existing: &String| existing == &param) {
+            return RuntimeValue::scalar(Value::Error(CellError::Value(format!(
+                "duplicate lambda parameter: {param}"
+            ))));
+        }
+        params.push(param);
+    }
+
+    let body = args[args.len() - 1].clone();
+    let captured = ctx.collect_visible_locals();
+    RuntimeValue::Lambda(LambdaValue {
+        params,
+        body,
+        captured,
+    })
+}
+
+fn eval_map(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() < 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "MAP expects at least one array and one lambda".to_string(),
+        )));
+    }
+
+    let lambda_runtime = ctx.evaluate_expr(args.last().expect("non-empty args"));
+    let lambda = match lambda_runtime {
+        RuntimeValue::Lambda(lambda) => lambda,
+        _ => {
+            return RuntimeValue::scalar(Value::Error(CellError::Value(
+                "MAP expects LAMBDA as its final argument".to_string(),
+            )));
+        }
+    };
+
+    let mut input_arrays = Vec::new();
+    for arg in &args[..args.len() - 1] {
+        let runtime = runtime_from_argument(arg, ctx);
+        let array = runtime.to_array_value();
+        input_arrays.push(array);
+    }
+
+    let mut rows = 1usize;
+    let mut cols = 1usize;
+    for array in &input_arrays {
+        let shape = match broadcast_shape(rows, cols, array.rows(), array.cols()) {
+            Ok(shape) => shape,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        };
+        rows = shape.0;
+        cols = shape.1;
+    }
+
+    let mut out = Vec::with_capacity(rows * cols);
+    for row in 0..rows {
+        for col in 0..cols {
+            let mut lambda_args = Vec::with_capacity(input_arrays.len());
+            for array in &input_arrays {
+                let src_row = if array.rows() == 1 { 0 } else { row };
+                let src_col = if array.cols() == 1 { 0 } else { col };
+                lambda_args.push(RuntimeValue::scalar(array.value_at(src_row, src_col)));
+            }
+            let item = ctx.invoke_lambda_runtime(&lambda, lambda_args);
+            match item {
+                RuntimeValue::Scalar(value) => out.push(value),
+                RuntimeValue::Array(_) | RuntimeValue::Lambda(_) => {
+                    return RuntimeValue::scalar(Value::Error(CellError::Value(
+                        "MAP lambda must return a scalar value".to_string(),
+                    )));
+                }
+            }
+        }
+    }
+
+    if rows == 1 && cols == 1 {
+        RuntimeValue::scalar(out.into_iter().next().unwrap_or(Value::Blank))
+    } else {
+        RuntimeValue::Array(ArrayValue::new(rows, cols, out))
+    }
+}
+
+fn eval_indirect(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.is_empty() || args.len() > 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "INDIRECT expects 1 or 2 arguments".to_string(),
+        )));
+    }
+
+    if args.len() == 2 {
+        let a1_style = match coerce_bool(&ctx.evaluate_expr(&args[1]).to_scalar()) {
+            Ok(v) => v,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        };
+        if !a1_style {
+            return RuntimeValue::scalar(Value::Error(CellError::Value(
+                "INDIRECT R1C1 mode is not supported".to_string(),
+            )));
+        }
+    }
+
+    let text = value_to_text(&ctx.evaluate_expr(&args[0]).to_scalar());
+    match resolve_reference_text(&text, ctx.bounds) {
+        Ok(ReferenceTarget::Cell(cell)) => {
+            RuntimeValue::scalar(ctx.evaluate_cell_runtime(cell).to_scalar())
+        }
+        Ok(ReferenceTarget::Spill(cell)) => ctx.evaluate_spill_ref(cell),
+        Ok(ReferenceTarget::Range(range)) => runtime_for_range(range, ctx),
+        Err(err) => RuntimeValue::scalar(Value::Error(err)),
+    }
+}
+
+fn eval_offset(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() < 3 || args.len() > 5 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "OFFSET expects between 3 and 5 arguments".to_string(),
+        )));
+    }
+
+    let base_range = match resolve_reference_argument(&args[0], ctx) {
+        Ok(range) => range,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+    let row_delta = match coerce_number(&ctx.evaluate_expr(&args[1]).to_scalar()) {
+        Ok(v) => v.round() as i32,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+    let col_delta = match coerce_number(&ctx.evaluate_expr(&args[2]).to_scalar()) {
+        Ok(v) => v.round() as i32,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+
+    let base_height = (base_range.end.row - base_range.start.row + 1) as i32;
+    let base_width = (base_range.end.col - base_range.start.col + 1) as i32;
+    let height = if args.len() >= 4 {
+        match coerce_number(&ctx.evaluate_expr(&args[3]).to_scalar()) {
+            Ok(v) => v.round() as i32,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        }
+    } else {
+        base_height
+    };
+    let width = if args.len() >= 5 {
+        match coerce_number(&ctx.evaluate_expr(&args[4]).to_scalar()) {
+            Ok(v) => v.round() as i32,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        }
+    } else {
+        base_width
+    };
+
+    if height <= 0 || width <= 0 {
+        return RuntimeValue::scalar(Value::Error(CellError::Ref(
+            "OFFSET height/width must be positive".to_string(),
+        )));
+    }
+
+    let start_col = base_range.start.col as i32 + col_delta;
+    let start_row = base_range.start.row as i32 + row_delta;
+    let end_col = start_col + width - 1;
+    let end_row = start_row + height - 1;
+
+    if start_col < 1
+        || start_row < 1
+        || end_col > ctx.bounds.max_columns as i32
+        || end_row > ctx.bounds.max_rows as i32
+    {
+        return RuntimeValue::scalar(Value::Error(CellError::Ref(
+            "OFFSET result is out of sheet bounds".to_string(),
+        )));
+    }
+
+    let range = CellRange::new(
+        CellRef {
+            col: start_col as u16,
+            row: start_row as u16,
+        },
+        CellRef {
+            col: end_col as u16,
+            row: end_row as u16,
+        },
+    );
+    runtime_for_range(range, ctx)
+}
+
+fn eval_row(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() > 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ROW expects zero or one argument".to_string(),
+        )));
+    }
+    let row = if args.is_empty() {
+        match ctx.current_context_cell() {
+            Some(cell) => cell.row,
+            None => {
+                return RuntimeValue::scalar(Value::Error(CellError::Ref(
+                    "ROW() has no current-cell context".to_string(),
+                )));
+            }
+        }
+    } else {
+        match resolve_reference_argument(&args[0], ctx) {
+            Ok(range) => range.start.row,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        }
+    };
+    RuntimeValue::scalar(Value::Number(row as f64))
+}
+
+fn eval_column(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() > 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "COLUMN expects zero or one argument".to_string(),
+        )));
+    }
+    let col = if args.is_empty() {
+        match ctx.current_context_cell() {
+            Some(cell) => cell.col,
+            None => {
+                return RuntimeValue::scalar(Value::Error(CellError::Ref(
+                    "COLUMN() has no current-cell context".to_string(),
+                )));
+            }
+        }
+    } else {
+        match resolve_reference_argument(&args[0], ctx) {
+            Ok(range) => range.start.col,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        }
+    };
+    RuntimeValue::scalar(Value::Number(col as f64))
+}
+
 fn eval_sequence(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
     if args.is_empty() || args.len() > 4 {
         return RuntimeValue::scalar(Value::Error(CellError::Value(
@@ -1192,6 +1602,173 @@ fn eval_randarray(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
     }
 
     RuntimeValue::Array(ArrayValue::new(rows, cols, values))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReferenceTarget {
+    Cell(CellRef),
+    Spill(CellRef),
+    Range(CellRange),
+}
+
+fn parse_local_binding_name(expr: &Expr) -> Result<String, CellError> {
+    let Expr::Name(name) = expr else {
+        return Err(CellError::Value(
+            "expected identifier for local binding name".to_string(),
+        ));
+    };
+    let upper = name.to_ascii_uppercase();
+    let mut chars = upper.chars();
+    let Some(first) = chars.next() else {
+        return Err(CellError::Value("binding name cannot be empty".to_string()));
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return Err(CellError::Value(
+            "binding name must start with a letter or '_'".to_string(),
+        ));
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+        return Err(CellError::Value(
+            "binding name may only contain letters, digits, or '_'".to_string(),
+        ));
+    }
+    if upper == "TRUE" || upper == "FALSE" {
+        return Err(CellError::Value(
+            "binding name cannot be TRUE or FALSE".to_string(),
+        ));
+    }
+    if is_cell_reference_like(&upper) {
+        return Err(CellError::Value(format!(
+            "binding name '{upper}' conflicts with a cell reference"
+        )));
+    }
+    if SUPPORTED_FUNCTIONS.contains(&upper.as_str()) {
+        return Err(CellError::Value(format!(
+            "binding name '{upper}' conflicts with a built-in function"
+        )));
+    }
+    Ok(upper)
+}
+
+fn is_cell_reference_like(name: &str) -> bool {
+    let mut seen_letter = false;
+    let mut seen_digit = false;
+    let mut in_digits = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphabetic() {
+            if in_digits {
+                return false;
+            }
+            seen_letter = true;
+        } else if ch.is_ascii_digit() {
+            in_digits = true;
+            seen_digit = true;
+        } else {
+            return false;
+        }
+    }
+    seen_letter && seen_digit
+}
+
+fn runtime_from_argument(arg: &Expr, ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    match arg {
+        Expr::Range(range) => runtime_for_range(*range, ctx),
+        _ => ctx.evaluate_expr(arg),
+    }
+}
+
+fn runtime_for_range(range: CellRange, ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    let rows = (range.end.row - range.start.row + 1) as usize;
+    let cols = (range.end.col - range.start.col + 1) as usize;
+    let mut values = Vec::with_capacity(rows * cols);
+    for row in range.start.row..=range.end.row {
+        for col in range.start.col..=range.end.col {
+            values.push(ctx.evaluate_cell_runtime(CellRef { col, row }).to_scalar());
+        }
+    }
+    if rows == 1 && cols == 1 {
+        RuntimeValue::scalar(values.into_iter().next().unwrap_or(Value::Blank))
+    } else {
+        RuntimeValue::Array(ArrayValue::new(rows, cols, values))
+    }
+}
+
+fn resolve_reference_text(input: &str, bounds: SheetBounds) -> Result<ReferenceTarget, CellError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(CellError::Ref("reference text is empty".to_string()));
+    }
+
+    if let Some(anchor) = trimmed.strip_suffix('#') {
+        let cell = parse_cell_ref(anchor, bounds).map_err(address_err_to_ref)?;
+        return Ok(ReferenceTarget::Spill(cell));
+    }
+
+    if let Some((left, right)) = split_range_text(trimmed) {
+        let start = parse_cell_ref(left, bounds).map_err(address_err_to_ref)?;
+        let end = parse_cell_ref(right, bounds).map_err(address_err_to_ref)?;
+        return Ok(ReferenceTarget::Range(CellRange::new(start, end)));
+    }
+
+    let cell = parse_cell_ref(trimmed, bounds).map_err(address_err_to_ref)?;
+    Ok(ReferenceTarget::Cell(cell))
+}
+
+fn split_range_text(input: &str) -> Option<(&str, &str)> {
+    if let Some((left, right)) = input.split_once(':') {
+        return Some((left.trim(), right.trim()));
+    }
+    if let Some((left, right)) = input.split_once("...") {
+        return Some((left.trim(), right.trim()));
+    }
+    None
+}
+
+fn address_err_to_ref(err: AddressError) -> CellError {
+    CellError::Ref(err.to_string())
+}
+
+fn resolve_reference_argument(
+    arg: &Expr,
+    ctx: &mut EvalContext<'_>,
+) -> Result<CellRange, CellError> {
+    match arg {
+        Expr::Cell(cell) => Ok(CellRange::new(*cell, *cell)),
+        Expr::Range(range) => Ok(*range),
+        Expr::SpillRef(cell) => match ctx.evaluate_spill_ref(*cell) {
+            RuntimeValue::Array(array) => {
+                let end = CellRef {
+                    col: cell.col + array.cols() as u16 - 1,
+                    row: cell.row + array.rows() as u16 - 1,
+                };
+                Ok(CellRange::new(*cell, end))
+            }
+            RuntimeValue::Scalar(Value::Error(err)) => Err(err),
+            _ => Err(CellError::Ref(format!(
+                "{cell} does not contain a spilled range"
+            ))),
+        },
+        _ => {
+            let text = value_to_text(&ctx.evaluate_expr(arg).to_scalar());
+            match resolve_reference_text(&text, ctx.bounds)? {
+                ReferenceTarget::Cell(cell) => Ok(CellRange::new(cell, cell)),
+                ReferenceTarget::Range(range) => Ok(range),
+                ReferenceTarget::Spill(cell) => {
+                    let runtime = ctx.evaluate_spill_ref(cell);
+                    let RuntimeValue::Array(array) = runtime else {
+                        return Err(CellError::Ref(format!(
+                            "{cell} does not contain a spilled range"
+                        )));
+                    };
+                    let end = CellRef {
+                        col: cell.col + array.cols() as u16 - 1,
+                        row: cell.row + array.rows() as u16 - 1,
+                    };
+                    Ok(CellRange::new(cell, end))
+                }
+            }
+        }
+    }
 }
 
 fn eval_dimension_arg(

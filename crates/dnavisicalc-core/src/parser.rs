@@ -488,6 +488,26 @@ impl Parser {
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_primary()?;
         loop {
+            if self.match_kind(TokenKind::LParen) {
+                let mut args = Vec::new();
+                if !self.match_kind(TokenKind::RParen) {
+                    loop {
+                        let arg = self.parse_expression()?;
+                        args.push(arg);
+                        if self.match_kind(TokenKind::Comma) {
+                            continue;
+                        }
+                        self.expect_kind(TokenKind::RParen)?;
+                        break;
+                    }
+                }
+                expr = Expr::Invoke {
+                    callee: Box::new(expr),
+                    args,
+                };
+                continue;
+            }
+
             let has_range_op =
                 self.match_kind(TokenKind::Colon) || self.match_kind(TokenKind::Ellipsis);
             if !has_range_op {

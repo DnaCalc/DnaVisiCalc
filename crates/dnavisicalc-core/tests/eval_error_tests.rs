@@ -48,3 +48,17 @@ fn scalar_range_expression_returns_value_error() {
     let value = engine.cell_state_a1("B1").expect("query").value;
     assert!(matches!(value, Value::Error(_)));
 }
+
+#[test]
+fn let_rejects_invalid_binding_name_conflicts() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=LET(SUM,1,SUM)")
+        .expect("set formula");
+
+    let value = engine.cell_state_a1("A1").expect("query").value;
+    match value {
+        Value::Error(err) => assert!(err.to_string().contains("binding name")),
+        other => panic!("expected error value, got {other:?}"),
+    }
+}

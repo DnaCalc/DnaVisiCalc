@@ -223,3 +223,125 @@ fn reports_name_cycle_as_cell_error() {
         other => panic!("expected cycle error, got {other:?}"),
     }
 }
+
+#[test]
+fn evaluates_let_bindings() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=LET(x,10,y,x*3,y+2)")
+        .expect("set LET formula");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(32.0)
+    );
+}
+
+#[test]
+fn evaluates_lambda_invocation_through_let() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=LET(inc,LAMBDA(v,v+1),inc(41))")
+        .expect("set lambda formula");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(42.0)
+    );
+}
+
+#[test]
+fn evaluates_direct_lambda_invocation() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=(LAMBDA(v,v+2))(40)")
+        .expect("set direct lambda formula");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(42.0)
+    );
+}
+
+#[test]
+fn evaluates_map_with_lambda_over_range() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A1", 1.0).expect("A1");
+    engine.set_number_a1("A2", 2.0).expect("A2");
+    engine.set_number_a1("A3", 3.0).expect("A3");
+    engine
+        .set_formula_a1("B1", "=MAP(A1:A3,LAMBDA(x,x*10))")
+        .expect("set MAP formula");
+
+    assert_eq!(
+        engine.cell_state_a1("B1").expect("B1").value,
+        Value::Number(10.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("B2").expect("B2").value,
+        Value::Number(20.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("B3").expect("B3").value,
+        Value::Number(30.0)
+    );
+}
+
+#[test]
+fn evaluates_row_and_column() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("C5", "=ROW()").expect("ROW");
+    engine
+        .set_formula_a1("D5", "=COLUMN(A1)")
+        .expect("COLUMN(A1)");
+    engine
+        .set_formula_a1("E5", "=ROW(B8:B9)")
+        .expect("ROW(range)");
+    engine
+        .set_formula_a1("F5", "=COLUMN(C9)")
+        .expect("COLUMN(cell)");
+
+    assert_eq!(
+        engine.cell_state_a1("C5").expect("C5").value,
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("D5").expect("D5").value,
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("E5").expect("E5").value,
+        Value::Number(8.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("F5").expect("F5").value,
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn evaluates_indirect_and_offset() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A1", 10.0).expect("A1");
+    engine.set_number_a1("B2", 25.0).expect("B2");
+    engine.set_number_a1("B3", 5.0).expect("B3");
+    engine
+        .set_formula_a1("C1", "=INDIRECT(\"A1\")")
+        .expect("INDIRECT");
+    engine
+        .set_formula_a1("C2", "=OFFSET(A1,1,1)")
+        .expect("OFFSET scalar");
+    engine
+        .set_formula_a1("C3", "=SUM(OFFSET(A1,1,1,2,1))")
+        .expect("OFFSET range");
+
+    assert_eq!(
+        engine.cell_state_a1("C1").expect("C1").value,
+        Value::Number(10.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("C2").expect("C2").value,
+        Value::Number(25.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("C3").expect("C3").value,
+        Value::Number(30.0)
+    );
+}

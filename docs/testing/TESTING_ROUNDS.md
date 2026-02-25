@@ -378,3 +378,22 @@
   - Added keymap matrix coverage for `F2`, clipboard shortcuts, and paste-special controls.
 - Open questions:
   - Whether to add block replication (tiling) when pasting a smaller source range into a larger selected destination range.
+
+## Round 24
+- Status: completed
+- Scope: Excel-style formula-surface expansion (`LET`/`LAMBDA`/`MAP` and `INDIRECT`/`OFFSET`/`ROW`/`COLUMN`).
+- Suites:
+  - `cargo test -p dnavisicalc-core`
+  - `cargo test --workspace`
+- Result:
+  - Added lexical formula scope with runtime closures for `LET` and `LAMBDA`.
+  - Added lambda invocation support in formula context and element-wise lambda evaluation via `MAP`.
+  - Added reference helper functions `INDIRECT`, `OFFSET`, `ROW`, and `COLUMN`.
+  - Added deterministic behavior and bounds/error handling for dynamic reference resolution.
+  - Extended parser/evaluator test coverage with new functional and reference scenarios.
+- Fixes:
+  - Refactored evaluator runtime model to carry scoped local bindings in addition to workbook names.
+  - Added runtime `Lambda` value representation and closure capture semantics.
+  - Added regression tests for valid and invalid LET/LAMBDA/MAP and reference-helper usage.
+- Open questions:
+  - Whether to add full Excel-style `R1C1` handling for `INDIRECT` second argument in a future compatibility pass.

@@ -53,3 +53,5 @@ Palette colors:
 - `LOOKUP`, `NA`, `ERROR`
 - `CONCAT`, `LEN`
 - `SEQUENCE`, `RANDARRAY`
+- `LET`, `LAMBDA`, `MAP`
+- `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`

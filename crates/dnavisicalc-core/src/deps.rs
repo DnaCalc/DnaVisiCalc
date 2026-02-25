@@ -109,6 +109,12 @@ fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
                 collect_dependencies(arg, out);
             }
         }
+        Expr::Invoke { callee, args } => {
+            collect_dependencies(callee, out);
+            for arg in args {
+                collect_dependencies(arg, out);
+            }
+        }
         Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Name(_) => {}
     }
 }

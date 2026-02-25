@@ -31,7 +31,8 @@ $env:DNAVISICALC_EVENT_TRACE = "event-trace.log"
   - aggregates/logical: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`
   - math/trig: `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`
   - financial/table/error: `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`, `NA`, `ERROR`
-  - text and arrays: `CONCAT`, `LEN`, `SEQUENCE`, `RANDARRAY`
+  - text/arrays and lambda model: `CONCAT`, `LEN`, `SEQUENCE`, `RANDARRAY`, `LET`, `LAMBDA`, `MAP`
+  - reference helpers: `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`
 
 ## Compatibility notes
 - Compatibility matrix: `docs/VISICALC_COMPATIBILITY_MATRIX.md`

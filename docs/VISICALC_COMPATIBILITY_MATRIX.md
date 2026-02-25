@@ -21,6 +21,7 @@ This file tracks which historically VisiCalc-like features are implemented in Dn
 - Math/trig: `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`.
 - Financial/table/error: `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`, `NA`, `ERROR`.
 - Text: `CONCAT`, `LEN`.
+- Modern Excel-style functional/reference extensions: `LET`, `LAMBDA`, `MAP`, `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`.
 
 ## 2. Implemented but Semantics Need Deeper Compatibility Validation
 
@@ -42,6 +43,7 @@ These are available in v0.1, but historical edge semantics should still be cross
 - Dynamic arrays (`SEQUENCE`, `RANDARRAY`, spill semantics) are modern extensions and not historical VisiCalc features.
 - Workbook-level named formulas/values are modernized behavior and not historical VisiCalc scope.
 - Per-cell formatting metadata (decimals, text style, fg/bg palette) is modernized behavior and not historical VisiCalc scope.
+- Functional/lambda and dynamic reference helpers (`LET`, `LAMBDA`, `MAP`, `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`) are modernized behavior and not historical VisiCalc scope.
 - Current TUI command shell is modernized and test-oriented, not a strict clone of VisiCalc UI flows.
 
 ## 4. Recommended Next Compatibility Steps

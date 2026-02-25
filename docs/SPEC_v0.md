@@ -77,11 +77,28 @@ Supported syntax:
   - `ERROR`
   - `CONCAT`
   - `LEN`
+  - `LET`
+  - `LAMBDA`
+  - `MAP`
+  - `INDIRECT`
+  - `OFFSET`
+  - `ROW`
+  - `COLUMN`
 
 Explicit exclusions for v0:
 - Date/time semantics.
 - Volatile functions.
 - Iterative/circular calculation semantics beyond deterministic cycle detection error.
+
+### 3.3.2 Implemented formula extensions
+- Lexical bindings and lambdas:
+  - `LET(name, value, ..., result)` evaluates pairs left-to-right with local lexical scope.
+  - `LAMBDA(param..., body)` returns a closure value.
+  - `MAP(array..., LAMBDA(...))` performs element-wise lambda application with scalar broadcasting.
+- Reference indirection helpers:
+  - `INDIRECT(text_ref[, a1])` supports A1 text references (single cell, range, or spill reference with `#`).
+  - `OFFSET(reference, rows, cols[, height, width])` returns reference-backed values/ranges.
+  - `ROW([reference])` / `COLUMN([reference])` return row/column indices.
 
 ### 3.3.1 Workbook names (implemented extension)
 - Workbook-level names can be assigned to numeric/text values or formulas.
