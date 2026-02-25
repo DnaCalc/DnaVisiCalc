@@ -3,69 +3,102 @@
 DNA VisiCalc is the Round 0 pathfinder for the larger DNA Calc program.
 
 ## Screenshots
-Startup:
+
+### Getting Started
+
+Empty grid on startup:
 
 ![Startup](docs/images/01_startup.png)
 
-Editing text + concat formula:
+Editing a formula (`=A2*2`) with formatted header row:
 
 ![Editing](docs/images/02_editing.png)
 
-Help popup with function list:
+Help popup with full function list and keybindings:
 
 ![Help Popup](docs/images/03_help_popup.png)
 
-Command mode:
+Command mode (`:mode manual`):
 
 ![Command Mode](docs/images/04_command_mode.png)
 
-Numerical model (formulas visible in input panel + financial functions):
+### Math & Science
 
-![Numerical Model](docs/images/05_numerical_model.png)
+8x8 multiplication table with rainbow column colors:
 
-Names-driven model (`TAX_RATE`, `DISCOUNT`) with formula references:
+![Multiplication Table](docs/images/05_multiplication_table.png)
 
-![Names Model](docs/images/06_names_model.png)
+Scientific calculator (`SIN`, `COS`, `TAN`, `SQRT`, `EXP`, `LN`) with per-column colors:
 
-Paste Special picker (`Ctrl+V`, choose mode):
+![Scientific Calculator](docs/images/06_scientific_calculator.png)
 
-![Paste Special Picker](docs/images/07_paste_special_picker.png)
+### Financial
 
-Paste Special applied (`Values+KeepDestFmt`):
+Financial model with `ROUND`, `PMT`, `NPV` across 5 periods:
 
-![Paste Special Result](docs/images/08_paste_special_result.png)
+![Financial Model](docs/images/07_financial_model.png)
 
-Formatting pass (decimals, bold/italic, fg/bg palette commands on selection):
+Names-driven tax model (`TAX_RATE`, `DISCOUNT`) with formula references:
 
-![Formatting and Colors](docs/images/09_formatting_colors.png)
+![Names Tax Model](docs/images/08_names_tax_model.png)
 
-Dynamic arrays (`SEQUENCE`, `RANDARRAY`, spill ranges, `A1#` aggregates):
+Loan calculator with named `RATE`/`TERM` and `PMT`, `PV`, `FV`, `NPV`:
 
-![Dynamic Arrays](docs/images/10_dynamic_arrays.png)
+![Loan Calculator](docs/images/09_loan_calculator.png)
 
-Bioreactor operations dashboard (imaginary domain model, names + formulas + formatting):
+### Formatting & Palette
 
-![Bioreactor Dashboard](docs/images/11_bioreactor_dashboard.png)
+Formatting showcase (bold, italic, bold+italic, decimals) with distinct fg/bg pairs:
 
-Palette and text-format showcase (bold/italic/decimals with mixed color styling):
+![Formatting Showcase](docs/images/10_formatting_showcase.png)
 
-![Palette Showcase](docs/images/12_palette_showcase.png)
+Full 16-color palette as foreground, background, and bold number styling:
 
-Names with `LET` + `LAMBDA` in a financial mini-model:
+![Full Palette](docs/images/11_full_palette.png)
 
-![Names LET LAMBDA](docs/images/13_names_let_lambda.png)
+### Dynamic Arrays & Spill
 
-`INDIRECT` (A1 + R1C1 mode) and `OFFSET` behavior model:
+`SEQUENCE(6,3)` with `SUM`/`AVG`/`MAX`/`MIN`/`COUNT` aggregate panel:
 
-![INDIRECT R1C1 OFFSET](docs/images/14_indirect_r1c1_offset.png)
+![Sequence Aggregates](docs/images/12_sequence_aggregates.png)
 
-`MAP` with dynamic-array lambda results (tiled spill outputs):
+`RANDARRAY(6,3,0,100)` with aggregate statistics:
 
-![MAP Array Tiles](docs/images/15_map_array_tiles.png)
+![RANDARRAY Lab](docs/images/13_randarray_lab.png)
 
-Dynamic array lab view (multiple spills and aggregate summary panel):
+`MAP` with lambda-driven `SEQUENCE` tiles (1x3 and 2x1 spill outputs):
 
-![Dynamic Array Lab](docs/images/16_dynamic_array_lab.png)
+![MAP Array Tiles](docs/images/14_map_array_tiles.png)
+
+### Advanced Functions
+
+`LET` + `LAMBDA` with named `BASE_RATE`/`RISK_ADJ` in a financial stress model:
+
+![LET LAMBDA](docs/images/15_let_lambda.png)
+
+`INDIRECT` (absolute + relative R1C1) and `OFFSET` behavior:
+
+![INDIRECT R1C1 OFFSET](docs/images/16_indirect_r1c1_offset.png)
+
+`LOOKUP` model with product table and order lookups:
+
+![LOOKUP Model](docs/images/17_lookup_model.png)
+
+### Logic & Text
+
+Student gradebook with nested `IF`, `AND`, `OR`:
+
+![Student Gradebook](docs/images/18_student_gradebook.png)
+
+Text functions (`CONCAT`, `LEN`, `IF` on length):
+
+![Text Functions](docs/images/19_text_functions.png)
+
+### Clipboard
+
+Paste Special picker (`Ctrl+V`, choose paste mode):
+
+![Paste Special Picker](docs/images/20_paste_special_picker.png)
 
 ## Scope
 The `dnavisicalc-core` crate stays library-only and I/O free:

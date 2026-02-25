@@ -10,164 +10,171 @@ Add-Type -AssemblyName System.Drawing
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
-$bgTop = [System.Drawing.Color]::FromArgb(8, 28, 44)
-$bgBottom = [System.Drawing.Color]::FromArgb(16, 23, 38)
-$fg = [System.Drawing.Color]::FromArgb(226, 232, 240)
-$muted = [System.Drawing.Color]::FromArgb(148, 163, 184)
-$accent = [System.Drawing.Color]::FromArgb(110, 231, 183)
-$status = [System.Drawing.Color]::FromArgb(125, 211, 252)
-$ok = [System.Drawing.Color]::FromArgb(167, 243, 208)
-$warn = [System.Drawing.Color]::FromArgb(253, 230, 138)
-$lineColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
+# ---------------------------------------------------------------------------
+# Chrome colours (gradient background, card border, title bar)
+# ---------------------------------------------------------------------------
+$bgTop       = [System.Drawing.Color]::FromArgb(8, 28, 44)
+$bgBottom    = [System.Drawing.Color]::FromArgb(16, 23, 38)
+$cardColor   = [System.Drawing.Color]::FromArgb(28, 42, 60)
+$lineColor   = [System.Drawing.Color]::FromArgb(71, 85, 105)
+$accentColor = [System.Drawing.Color]::FromArgb(110, 231, 183)
 
-$palette = @(
-    [System.Drawing.Color]::FromArgb(186, 230, 253), # sky
-    [System.Drawing.Color]::FromArgb(167, 243, 208), # mint
-    [System.Drawing.Color]::FromArgb(221, 214, 254), # lavender
-    [System.Drawing.Color]::FromArgb(253, 224, 203), # peach
-    [System.Drawing.Color]::FromArgb(252, 231, 243), # rose
-    [System.Drawing.Color]::FromArgb(254, 240, 138)  # sand
-)
+# Default text colour when span fg is null (terminal default)
+$defaultFg   = [System.Drawing.Color]::FromArgb(226, 232, 240)
 
-$font = New-Object System.Drawing.Font("Consolas", 15, [System.Drawing.FontStyle]::Regular)
-$fontBold = New-Object System.Drawing.Font("Consolas", 15, [System.Drawing.FontStyle]::Bold)
-$fontItalic = New-Object System.Drawing.Font("Consolas", 15, [System.Drawing.FontStyle]::Italic)
-$titleFont = New-Object System.Drawing.Font("Consolas", 14, [System.Drawing.FontStyle]::Bold)
+# ---------------------------------------------------------------------------
+# Fonts
+# ---------------------------------------------------------------------------
+$fontRegular    = New-Object System.Drawing.Font("Consolas", 15, [System.Drawing.FontStyle]::Regular)
+$fontBold       = New-Object System.Drawing.Font("Consolas", 15, [System.Drawing.FontStyle]::Bold)
+$fontItalic     = New-Object System.Drawing.Font("Consolas", 15, [System.Drawing.FontStyle]::Italic)
+$fontBoldItalic = New-Object System.Drawing.Font("Consolas", 15, ([System.Drawing.FontStyle]::Bold -bor [System.Drawing.FontStyle]::Italic))
+$titleFont      = New-Object System.Drawing.Font("Consolas", 14, [System.Drawing.FontStyle]::Bold)
 
-$files = Get-ChildItem -Path $InputDir -Filter *.txt | Sort-Object Name
+# ---------------------------------------------------------------------------
+# Measure a single Consolas character width for pixel-perfect monospace grid.
+# ---------------------------------------------------------------------------
+$dummyBmp  = New-Object System.Drawing.Bitmap(1, 1)
+$gMeasure  = [System.Drawing.Graphics]::FromImage($dummyBmp)
+$gMeasure.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+
+# MeasureString over-reports due to padding. Measure a long run and divide.
+$sampleLen  = 80
+$sampleText = "M" * $sampleLen
+$sampleSize = $gMeasure.MeasureString($sampleText, $fontRegular)
+$charWidth  = $sampleSize.Width / $sampleLen
+$lineHeight = [Math]::Ceiling($fontRegular.GetHeight($gMeasure)) + 2
+
+$gMeasure.Dispose()
+$dummyBmp.Dispose()
+
+# ---------------------------------------------------------------------------
+# Helper: parse #RRGGBB hex string to Drawing.Color
+# ---------------------------------------------------------------------------
+function HexToColor([string]$hex) {
+    if (-not $hex -or $hex -eq "null") { return $null }
+    $hex = $hex.TrimStart("#")
+    $r = [Convert]::ToInt32($hex.Substring(0, 2), 16)
+    $g = [Convert]::ToInt32($hex.Substring(2, 2), 16)
+    $b = [Convert]::ToInt32($hex.Substring(4, 2), 16)
+    return [System.Drawing.Color]::FromArgb($r, $g, $b)
+}
+
+# ---------------------------------------------------------------------------
+# Helper: pick font variant from bold/italic flags
+# ---------------------------------------------------------------------------
+function PickFont([bool]$bold, [bool]$italic) {
+    if ($bold -and $italic) { return $fontBoldItalic }
+    if ($bold)              { return $fontBold }
+    if ($italic)            { return $fontItalic }
+    return $fontRegular
+}
+
+# ---------------------------------------------------------------------------
+# Render each .json scene file
+# ---------------------------------------------------------------------------
+$files = Get-ChildItem -Path $InputDir -Filter *.json | Sort-Object Name
 foreach ($file in $files) {
-    $lines = Get-Content $file.FullName -Encoding UTF8
-    if ($lines.Count -eq 0) {
-        continue
-    }
+    $json = Get-Content $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
 
-    $dummyBmp = New-Object System.Drawing.Bitmap(1, 1)
-    $gMeasure = [System.Drawing.Graphics]::FromImage($dummyBmp)
-    $lineHeight = [Math]::Ceiling($font.GetHeight($gMeasure)) + 2
-    $maxWidth = 0
-    foreach ($line in $lines) {
-        $w = [Math]::Ceiling($gMeasure.MeasureString($line, $font).Width)
-        if ($w -gt $maxWidth) {
-            $maxWidth = $w
-        }
-    }
-    $gMeasure.Dispose()
-    $dummyBmp.Dispose()
+    $gridWidth  = [int]$json.width
+    $gridHeight = [int]$json.height
 
-    $padding = 24
+    $padding  = 24
     $titleBar = 36
-    $width = [Math]::Max(1200, $maxWidth + $padding * 2)
-    $height = [Math]::Max(700, $titleBar + $padding + ($lineHeight * $lines.Count) + $padding)
+    $imgWidth  = [Math]::Max(1200, [int][Math]::Ceiling($padding + $gridWidth * $charWidth + $padding))
+    $imgHeight = [Math]::Max(700, $titleBar + $padding + [int]($lineHeight * $gridHeight) + $padding)
 
-    $bmp = New-Object System.Drawing.Bitmap($width, $height)
+    $bmp = New-Object System.Drawing.Bitmap($imgWidth, $imgHeight)
     $gfx = [System.Drawing.Graphics]::FromImage($bmp)
-    $gfx.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
-    $gfx.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $gfx.TextRenderingHint  = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $gfx.SmoothingMode      = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
     $gfx.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
 
+    # -- Gradient background --
     $bgBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-        (New-Object System.Drawing.Rectangle 0, 0, $width, $height),
-        $bgTop,
-        $bgBottom,
-        90
+        (New-Object System.Drawing.Rectangle 0, 0, $imgWidth, $imgHeight),
+        $bgTop, $bgBottom, 90
     )
-    $gfx.FillRectangle($bgBrush, 0, 0, $width, $height)
+    $gfx.FillRectangle($bgBrush, 0, 0, $imgWidth, $imgHeight)
 
-    $cardBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(28, 42, 60))
-    $cardRect = [System.Drawing.Rectangle]::new(10, 10, ($width - 20), ($height - 20))
+    # -- Card with border --
+    $cardBrush = New-Object System.Drawing.SolidBrush($cardColor)
+    $cardRect  = [System.Drawing.Rectangle]::new(10, 10, ($imgWidth - 20), ($imgHeight - 20))
     $gfx.FillRectangle($cardBrush, $cardRect)
     $cardPen = New-Object System.Drawing.Pen($lineColor, 2)
     $gfx.DrawRectangle($cardPen, $cardRect)
 
-    $titleBrush = New-Object System.Drawing.SolidBrush($accent)
-    $textBrush = New-Object System.Drawing.SolidBrush($fg)
-    $mutedBrush = New-Object System.Drawing.SolidBrush($muted)
-    $statusBrush = New-Object System.Drawing.SolidBrush($status)
-    $okBrush = New-Object System.Drawing.SolidBrush($ok)
-    $warnBrush = New-Object System.Drawing.SolidBrush($warn)
-
+    # -- Title bar --
+    $titleBrush = New-Object System.Drawing.SolidBrush($accentColor)
     $title = "DNA VisiCalc - " + [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
     $gfx.DrawString($title, $titleFont, $titleBrush, 16, 8)
 
-    $y = $titleBar
-    foreach ($line in $lines) {
-        $lineBrush = $textBrush
-        $lineFont = $font
+    # -- Render rows from JSON spans using character-grid positioning --
+    foreach ($row in $json.rows) {
+        $y = $titleBar + [int]$row.y * $lineHeight
+        $charIdx = 0  # character column index within the row
 
-        if ($line -match "^Status:") {
-            $lineBrush = $statusBrush
-            if ($line -match "Ready|Set|saved|open") {
-                $lineBrush = $okBrush
+        foreach ($span in $row.spans) {
+            $text = [string]$span.text
+            $spanLen = $text.Length
+
+            # Foreground colour
+            $fgColor = $defaultFg
+            if ($span.fg -and $span.fg -ne "null") {
+                $parsed = HexToColor $span.fg
+                if ($parsed) { $fgColor = $parsed }
             }
-            if ($line -match "error|invalid|failed") {
-                $lineBrush = $warnBrush
+
+            # Background colour
+            $bgColor = $null
+            if ($span.bg -and $span.bg -ne "null") {
+                $bgColor = HexToColor $span.bg
             }
-        } elseif ($line -match "^Mode:|^\|Workbook|^\|File:") {
-            $lineBrush = $statusBrush
-        } elseif ($line -match "^DNA VisiCalc|^\|DNA VisiCalc") {
-            $lineBrush = $titleBrush
-            $lineFont = $fontBold
-        } elseif ($line -match "fmt |LET|LAMBDA|MAP|INDIRECT|OFFSET|SEQUENCE|RANDARRAY") {
-            $lineBrush = $warnBrush
-        } elseif ($line -match "^\|[- ]{5,}$|^[ -]{8,}$") {
-            $lineBrush = $mutedBrush
+
+            # Font variant
+            $spanBold   = if ($span.bold   -is [bool]) { $span.bold }   else { $false }
+            $spanItalic = if ($span.italic -is [bool]) { $span.italic } else { $false }
+            $spanFont   = PickFont $spanBold $spanItalic
+
+            # X position: pixel-perfect monospace grid
+            $x = $padding + [Math]::Floor($charIdx * $charWidth)
+
+            # Draw background rectangle if present
+            if ($bgColor) {
+                $bgBr = New-Object System.Drawing.SolidBrush($bgColor)
+                $bgW  = [Math]::Ceiling($spanLen * $charWidth)
+                $gfx.FillRectangle($bgBr, [int]$x, [int]$y, [int]$bgW, [int]$lineHeight)
+                $bgBr.Dispose()
+            }
+
+            # Draw text
+            $fgBrush = New-Object System.Drawing.SolidBrush($fgColor)
+            $gfx.DrawString($text, $spanFont, $fgBrush, [float]$x, [float]$y)
+            $fgBrush.Dispose()
+
+            $charIdx += $spanLen
         }
-
-        if ($line -match "\|") {
-            $tokens = [regex]::Split($line, "(\|)")
-            $x = $padding
-            $columnIndex = 0
-            foreach ($token in $tokens) {
-                if ($token -eq "") {
-                    continue
-                }
-
-                $tokenBrush = $lineBrush
-                $tokenFont = $lineFont
-                if ($token -eq "|") {
-                    $tokenBrush = $mutedBrush
-                } elseif ($line -match "^\s*\d+\s*\|") {
-                    $tokenBrush = New-Object System.Drawing.SolidBrush($palette[$columnIndex % $palette.Count])
-                    $tokenFont = if ($columnIndex -eq 0) { $fontBold } else { $font }
-                    $columnIndex++
-                } elseif ($line -match "^\s*\|\s*[A-Z]\s*\|") {
-                    $tokenBrush = New-Object System.Drawing.SolidBrush($palette[$columnIndex % $palette.Count])
-                    $tokenFont = $fontBold
-                    $columnIndex++
-                }
-
-                $gfx.DrawString($token, $tokenFont, $tokenBrush, $x, $y)
-                $x += [Math]::Ceiling($gfx.MeasureString($token, $tokenFont).Width)
-                if ($tokenBrush -is [System.Drawing.SolidBrush] -and $tokenBrush -ne $lineBrush -and $tokenBrush -ne $mutedBrush -and $tokenBrush -ne $textBrush -and $tokenBrush -ne $titleBrush -and $tokenBrush -ne $statusBrush -and $tokenBrush -ne $okBrush -and $tokenBrush -ne $warnBrush) {
-                    $tokenBrush.Dispose()
-                }
-            }
-        } else {
-            $gfx.DrawString($line, $lineFont, $lineBrush, $padding, $y)
-        }
-        $y += $lineHeight
     }
 
+    # -- Save PNG --
     $outName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name) + ".png"
     $outPath = Join-Path $OutputDir $outName
     $bmp.Save($outPath, [System.Drawing.Imaging.ImageFormat]::Png)
 
+    # -- Dispose --
     $bgBrush.Dispose()
     $cardBrush.Dispose()
     $cardPen.Dispose()
     $titleBrush.Dispose()
-    $textBrush.Dispose()
-    $mutedBrush.Dispose()
-    $statusBrush.Dispose()
-    $okBrush.Dispose()
-    $warnBrush.Dispose()
     $gfx.Dispose()
     $bmp.Dispose()
 }
 
-$font.Dispose()
+$fontRegular.Dispose()
 $fontBold.Dispose()
 $fontItalic.Dispose()
+$fontBoldItalic.Dispose()
 $titleFont.Dispose()
 
-Write-Output "Rendered PNG screenshots to $OutputDir"
+Write-Output "Rendered $($files.Count) PNG screenshots to $OutputDir"
