@@ -32,16 +32,23 @@ $fontBoldItalic = New-Object System.Drawing.Font("Consolas", 15, ([System.Drawin
 $titleFont      = New-Object System.Drawing.Font("Consolas", 14, [System.Drawing.FontStyle]::Bold)
 
 # ---------------------------------------------------------------------------
+# StringFormat: GenericTypographic removes the internal padding that causes
+# column drift when GDI+ DrawString renders multi-character strings.
+# ---------------------------------------------------------------------------
+$sf = [System.Drawing.StringFormat]::GenericTypographic.Clone()
+$sf.FormatFlags = $sf.FormatFlags -bor [System.Drawing.StringFormatFlags]::MeasureTrailingSpaces
+
+# ---------------------------------------------------------------------------
 # Measure a single Consolas character width for pixel-perfect monospace grid.
+# Use GenericTypographic so the measurement matches the drawing format.
 # ---------------------------------------------------------------------------
 $dummyBmp  = New-Object System.Drawing.Bitmap(1, 1)
 $gMeasure  = [System.Drawing.Graphics]::FromImage($dummyBmp)
 $gMeasure.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
 
-# MeasureString over-reports due to padding. Measure a long run and divide.
 $sampleLen  = 80
 $sampleText = "M" * $sampleLen
-$sampleSize = $gMeasure.MeasureString($sampleText, $fontRegular)
+$sampleSize = $gMeasure.MeasureString($sampleText, $fontRegular, [int]::MaxValue, $sf)
 $charWidth  = $sampleSize.Width / $sampleLen
 $lineHeight = [Math]::Ceiling($fontRegular.GetHeight($gMeasure)) + 2
 
@@ -68,6 +75,38 @@ function PickFont([bool]$bold, [bool]$italic) {
     if ($bold)              { return $fontBold }
     if ($italic)            { return $fontItalic }
     return $fontRegular
+}
+
+# ---------------------------------------------------------------------------
+# Helper: ensure fg has enough contrast against bg.
+# Uses perceived-brightness difference; when too low, darkens fg on light
+# backgrounds and lightens fg on dark backgrounds.
+# ---------------------------------------------------------------------------
+function EnsureContrast($fgColor, $bgColor) {
+    $fgBright = (0.299 * $fgColor.R + 0.587 * $fgColor.G + 0.114 * $fgColor.B) / 255.0
+    $bgBright = (0.299 * $bgColor.R + 0.587 * $bgColor.G + 0.114 * $bgColor.B) / 255.0
+
+    $diff = [Math]::Abs($fgBright - $bgBright)
+    $minDiff = 0.30
+    if ($diff -ge $minDiff) { return $fgColor }
+
+    # Graduated shift: the smaller the current diff, the stronger the push
+    $need = $minDiff - $diff
+
+    if ($bgBright -gt 0.5) {
+        # Light background -> darken fg
+        $t = [Math]::Min(0.55, $need * 2.5)
+        $r = [int]($fgColor.R * (1.0 - $t))
+        $g = [int]($fgColor.G * (1.0 - $t))
+        $b = [int]($fgColor.B * (1.0 - $t))
+    } else {
+        # Dark background -> lighten fg
+        $t = [Math]::Min(0.55, $need * 2.5)
+        $r = [Math]::Min(255, [int]($fgColor.R + (255 - $fgColor.R) * $t))
+        $g = [Math]::Min(255, [int]($fgColor.G + (255 - $fgColor.G) * $t))
+        $b = [Math]::Min(255, [int]($fgColor.B + (255 - $fgColor.B) * $t))
+    }
+    return [System.Drawing.Color]::FromArgb($r, $g, $b)
 }
 
 # ---------------------------------------------------------------------------
@@ -108,49 +147,59 @@ foreach ($file in $files) {
     # -- Title bar --
     $titleBrush = New-Object System.Drawing.SolidBrush($accentColor)
     $title = "DNA VisiCalc - " + [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-    $gfx.DrawString($title, $titleFont, $titleBrush, 16, 8)
+    $gfx.DrawString($title, $titleFont, $titleBrush, 16, 8, $sf)
 
-    # -- Render rows from JSON spans using character-grid positioning --
+    # -- Render rows from JSON spans --
+    # Each character is drawn individually at its exact grid position to
+    # avoid cumulative drift from GDI+ inter-character spacing.
     foreach ($row in $json.rows) {
         $y = $titleBar + [int]$row.y * $lineHeight
-        $charIdx = 0  # character column index within the row
+        $charIdx = 0
 
         foreach ($span in $row.spans) {
             $text = [string]$span.text
             $spanLen = $text.Length
 
-            # Foreground colour
+            # --- Foreground colour ---
             $fgColor = $defaultFg
             if ($span.fg -and $span.fg -ne "null") {
                 $parsed = HexToColor $span.fg
                 if ($parsed) { $fgColor = $parsed }
             }
 
-            # Background colour
-            $bgColor = $null
+            # --- Background colour ---
+            $bgColorVal = $null
             if ($span.bg -and $span.bg -ne "null") {
-                $bgColor = HexToColor $span.bg
+                $bgColorVal = HexToColor $span.bg
             }
 
-            # Font variant
+            # --- Font variant ---
             $spanBold   = if ($span.bold   -is [bool]) { $span.bold }   else { $false }
             $spanItalic = if ($span.italic -is [bool]) { $span.italic } else { $false }
             $spanFont   = PickFont $spanBold $spanItalic
 
-            # X position: pixel-perfect monospace grid
-            $x = $padding + [Math]::Floor($charIdx * $charWidth)
-
-            # Draw background rectangle if present
-            if ($bgColor) {
-                $bgBr = New-Object System.Drawing.SolidBrush($bgColor)
+            # --- Background rectangle (per-span for efficiency) ---
+            if ($bgColorVal) {
+                $bx  = $padding + [Math]::Floor($charIdx * $charWidth)
+                $bgBr = New-Object System.Drawing.SolidBrush($bgColorVal)
                 $bgW  = [Math]::Ceiling($spanLen * $charWidth)
-                $gfx.FillRectangle($bgBr, [int]$x, [int]$y, [int]$bgW, [int]$lineHeight)
+                $gfx.FillRectangle($bgBr, [int]$bx, [int]$y, [int]$bgW, [int]$lineHeight)
                 $bgBr.Dispose()
             }
 
-            # Draw text
+            # --- Contrast heuristic ---
+            $effectiveBg = if ($bgColorVal) { $bgColorVal } else { $cardColor }
+            $fgColor = EnsureContrast $fgColor $effectiveBg
+
+            # --- Draw text char-by-char at exact grid positions ---
             $fgBrush = New-Object System.Drawing.SolidBrush($fgColor)
-            $gfx.DrawString($text, $spanFont, $fgBrush, [float]$x, [float]$y)
+            for ($i = 0; $i -lt $spanLen; $i++) {
+                $ch = $text[$i]
+                if ($ch -ne ' ') {
+                    $cx = $padding + [Math]::Floor(($charIdx + $i) * $charWidth)
+                    $gfx.DrawString($ch.ToString(), $spanFont, $fgBrush, [float]$cx, [float]$y, $sf)
+                }
+            }
             $fgBrush.Dispose()
 
             $charIdx += $spanLen
@@ -176,5 +225,6 @@ $fontBold.Dispose()
 $fontItalic.Dispose()
 $fontBoldItalic.Dispose()
 $titleFont.Dispose()
+$sf.Dispose()
 
 Write-Output "Rendered $($files.Count) PNG screenshots to $OutputDir"

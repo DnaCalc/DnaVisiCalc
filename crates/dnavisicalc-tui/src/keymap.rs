@@ -59,6 +59,7 @@ fn map_navigate_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('r') => Some(Action::Recalculate),
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Delete | KeyCode::Backspace => Some(Action::ClearSelection),
+        KeyCode::Esc => Some(Action::Cancel),
         _ => None,
     }
 }

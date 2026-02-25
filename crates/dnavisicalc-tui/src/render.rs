@@ -250,7 +250,7 @@ Notes\n\
 - Palette: MIST, SAGE, FERN, MOSS, OLIVE, SEAFOAM, LAGOON, TEAL,\n\
   SKY, CLOUD, SAND, CLAY, PEACH, ROSE, LAVENDER, SLATE.\n\
 \n\
-Press ? or F1 to close help."
+Press ? or F1 or Esc to close help."
     )
 }
 

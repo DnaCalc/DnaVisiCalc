@@ -348,7 +348,7 @@ impl App {
             Action::ToggleHelp => {
                 self.help_visible = !self.help_visible;
                 self.status = if self.help_visible {
-                    "Help shown (press ? to close)".to_string()
+                    "Help shown (press ?/Esc to close)".to_string()
                 } else {
                     "Help hidden".to_string()
                 };
@@ -390,12 +390,17 @@ impl App {
                 Err(err) => self.status = format!("Recalc error: {err}"),
             },
             Action::Quit => return CommandOutcome::Quit,
+            Action::Cancel => {
+                if self.help_visible {
+                    self.help_visible = false;
+                    self.status = "Help hidden".to_string();
+                }
+            }
             Action::PasteModeNext
             | Action::PasteModePrev
             | Action::InputChar(_)
             | Action::Backspace
-            | Action::Submit
-            | Action::Cancel => {}
+            | Action::Submit => {}
         }
 
         self.ensure_visible();
@@ -744,7 +749,7 @@ impl App {
             }
             "help" | "?" => {
                 self.help_visible = true;
-                self.status = "Help shown (press ? to close)".to_string();
+                self.status = "Help shown (press ?/Esc to close)".to_string();
             }
             _ => {
                 self.status = format!("Unknown command: {name}");
@@ -932,10 +937,13 @@ impl App {
             return Err("paste target exceeds sheet bounds".to_string());
         }
 
+        // Normalize line endings for comparison: the system clipboard on Windows
+        // may return \r\n even though our copy buffer uses \n.
+        let normalized_text = text.replace("\r\n", "\n").replace('\r', "\n");
         let source_buffer = self
             .copy_buffer
             .as_ref()
-            .filter(|buffer| buffer.text == text)
+            .filter(|buffer| buffer.text == normalized_text)
             .cloned();
         for row_off in 0..height {
             for col_off in 0..width {
@@ -1551,5 +1559,160 @@ mod tests {
             app.engine().cell_state_a1("A1").expect("A1 value").value,
             Value::Number(3.0)
         );
+    }
+
+    #[test]
+    fn paste_2x2_external_grid() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        app.apply(
+            Action::BeginPasteFromClipboard("1\t2\n3\t4".to_string()),
+            &mut io,
+        );
+        app.apply(Action::Submit, &mut io);
+
+        assert_eq!(
+            app.engine().cell_state_a1("A1").expect("A1").value,
+            Value::Number(1.0)
+        );
+        assert_eq!(
+            app.engine().cell_state_a1("B1").expect("B1").value,
+            Value::Number(2.0)
+        );
+        assert_eq!(
+            app.engine().cell_state_a1("A2").expect("A2").value,
+            Value::Number(3.0)
+        );
+        assert_eq!(
+            app.engine().cell_state_a1("B2").expect("B2").value,
+            Value::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn paste_internal_2x2_copy_buffer() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        // Set up a 2x2 range
+        run_command(&mut app, &mut io, "set A1 10");
+        run_command(&mut app, &mut io, "set B1 20");
+        run_command(&mut app, &mut io, "set A2 30");
+        run_command(&mut app, &mut io, "set B2 40");
+
+        // Select A1:B2
+        app.apply(Action::ExtendRight, &mut io);
+        app.apply(Action::ExtendDown, &mut io);
+
+        // Copy
+        app.apply(Action::CopySelection, &mut io);
+        let clipboard_text = app
+            .last_copy_text()
+            .map(ToString::to_string)
+            .expect("clipboard text");
+
+        // Navigate to C1 (selected is at B2 after ExtendDown, MoveRight clears anchor)
+        app.apply(Action::MoveUp, &mut io);    // B1 (deselects anchor)
+        app.apply(Action::MoveRight, &mut io); // C1
+
+        // Paste
+        app.apply(Action::BeginPasteFromClipboard(clipboard_text), &mut io);
+        app.apply(Action::Submit, &mut io);
+
+        assert_eq!(
+            app.engine().cell_state_a1("C1").expect("C1").value,
+            Value::Number(10.0)
+        );
+        assert_eq!(
+            app.engine().cell_state_a1("D1").expect("D1").value,
+            Value::Number(20.0)
+        );
+        assert_eq!(
+            app.engine().cell_state_a1("C2").expect("C2").value,
+            Value::Number(30.0)
+        );
+        assert_eq!(
+            app.engine().cell_state_a1("D2").expect("D2").value,
+            Value::Number(40.0)
+        );
+    }
+
+    #[test]
+    fn paste_internal_2x2_with_crlf_clipboard() {
+        // Windows clipboard returns \r\n but our copy buffer stores \n.
+        // The paste logic should still match the internal buffer.
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "set A1 =1+1");
+        run_command(&mut app, &mut io, "set B1 =2+2");
+        run_command(&mut app, &mut io, "set A2 =3+3");
+        run_command(&mut app, &mut io, "set B2 =4+4");
+
+        // Select A1:B2 and copy
+        app.apply(Action::ExtendRight, &mut io);
+        app.apply(Action::ExtendDown, &mut io);
+        app.apply(Action::CopySelection, &mut io);
+
+        let original_text = app
+            .last_copy_text()
+            .map(ToString::to_string)
+            .expect("clipboard text");
+        assert!(original_text.contains('\n'));
+        assert!(!original_text.contains('\r'));
+
+        // Simulate Windows clipboard returning \r\n
+        let crlf_text = original_text.replace('\n', "\r\n");
+
+        // Navigate to C1
+        app.apply(Action::MoveUp, &mut io);
+        app.apply(Action::MoveRight, &mut io);
+
+        // Paste with CRLF text
+        app.apply(Action::BeginPasteFromClipboard(crlf_text), &mut io);
+        app.apply(Action::Submit, &mut io);
+
+        // Should have formulas, not just values
+        assert_eq!(
+            app.engine().cell_input_a1("C1").expect("C1"),
+            Some(CellInput::Formula("=1+1".to_string()))
+        );
+        assert_eq!(
+            app.engine().cell_input_a1("D1").expect("D1"),
+            Some(CellInput::Formula("=2+2".to_string()))
+        );
+        assert_eq!(
+            app.engine().cell_input_a1("C2").expect("C2"),
+            Some(CellInput::Formula("=3+3".to_string()))
+        );
+        assert_eq!(
+            app.engine().cell_input_a1("D2").expect("D2"),
+            Some(CellInput::Formula("=4+4".to_string()))
+        );
+    }
+
+    #[test]
+    fn esc_dismisses_help_popup() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+        assert!(!app.help_visible());
+
+        app.apply(Action::ToggleHelp, &mut io);
+        assert!(app.help_visible());
+
+        app.apply(Action::Cancel, &mut io);
+        assert!(!app.help_visible());
+    }
+
+    #[test]
+    fn esc_is_noop_when_help_not_visible() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+        assert!(!app.help_visible());
+
+        app.apply(Action::Cancel, &mut io);
+        assert!(!app.help_visible());
+        assert_eq!(app.mode(), AppMode::Navigate);
     }
 }
