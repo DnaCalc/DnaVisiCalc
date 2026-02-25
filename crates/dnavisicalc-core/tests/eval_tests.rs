@@ -400,3 +400,237 @@ fn evaluates_indirect_and_offset() {
         Value::Number(5.0)
     );
 }
+
+#[test]
+fn now_returns_number_greater_than_45000() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=NOW()").expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    match a1.value {
+        Value::Number(n) => assert!(n > 45000.0, "NOW() should return serial date > 45000, got {n}"),
+        other => panic!("expected number, got {other:?}"),
+    }
+}
+
+#[test]
+fn now_with_arg_returns_error() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=NOW(1)").expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert!(matches!(a1.value, Value::Error(_)));
+}
+
+#[test]
+fn rand_returns_value_in_0_1() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=RAND()").expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    match a1.value {
+        Value::Number(n) => {
+            assert!(n >= 0.0 && n < 1.0, "RAND() should be in [0,1), got {n}");
+        }
+        other => panic!("expected number, got {other:?}"),
+    }
+}
+
+#[test]
+fn rand_differs_across_recalculations() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=RAND()").expect("set A1");
+    let v1 = engine.cell_state_a1("A1").expect("v1").value;
+    engine.recalculate().expect("recalc");
+    let v2 = engine.cell_state_a1("A1").expect("v2").value;
+    assert_ne!(v1, v2, "RAND() should differ across recalculations");
+}
+
+#[test]
+fn rand_with_arg_returns_error() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=RAND(1)").expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert!(matches!(a1.value, Value::Error(_)));
+}
+
+#[test]
+fn now_and_rand_in_compound_formulas() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=INT(NOW())").expect("set A1");
+    engine
+        .set_formula_a1("B1", "=RAND()*100")
+        .expect("set B1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    let b1 = engine.cell_state_a1("B1").expect("query B1");
+    match a1.value {
+        Value::Number(n) => assert!(n > 45000.0, "INT(NOW()) should be > 45000"),
+        other => panic!("expected number, got {other:?}"),
+    }
+    match b1.value {
+        Value::Number(n) => assert!(n >= 0.0 && n < 100.0, "RAND()*100 should be in [0,100)"),
+        other => panic!("expected number, got {other:?}"),
+    }
+}
+
+#[test]
+fn has_volatile_cells_detects_now_and_rand() {
+    let mut engine = Engine::new();
+    assert!(!engine.has_volatile_cells());
+
+    engine.set_formula_a1("A1", "=NOW()").expect("set A1");
+    assert!(engine.has_volatile_cells());
+
+    engine.clear_cell_a1("A1").expect("clear A1");
+    engine.set_formula_a1("A1", "=RAND()").expect("set A1");
+    assert!(engine.has_volatile_cells());
+
+    engine.clear_cell_a1("A1").expect("clear A1");
+    engine.set_number_a1("A1", 42.0).expect("set A1");
+    assert!(!engine.has_volatile_cells());
+}
+
+#[test]
+fn stream_returns_zero_initially() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=STREAM(1)").expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert_eq!(a1.value, Value::Number(0.0));
+}
+
+#[test]
+fn stream_with_lambda_returns_zero_initially() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=STREAM(1, LAMBDA(n, n*10))")
+        .expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert_eq!(a1.value, Value::Number(0.0));
+}
+
+#[test]
+fn stream_advances_with_tick() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=STREAM(1)").expect("set A1");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("initial").value,
+        Value::Number(0.0)
+    );
+
+    engine.tick_streams(1.5);
+    engine.recalculate().expect("recalc after tick");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("after 1.5s").value,
+        Value::Number(1.0)
+    );
+
+    engine.tick_streams(1.0);
+    engine.recalculate().expect("recalc after another 1s");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("after 2.5s").value,
+        Value::Number(2.0)
+    );
+}
+
+#[test]
+fn stream_with_lambda_advances() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=STREAM(1, LAMBDA(n, n*10))")
+        .expect("set A1");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("initial").value,
+        Value::Number(0.0)
+    );
+
+    engine.tick_streams(1.5);
+    engine.recalculate().expect("recalc");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("after tick").value,
+        Value::Number(10.0)
+    );
+
+    engine.tick_streams(1.0);
+    engine.recalculate().expect("recalc2");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("after tick2").value,
+        Value::Number(20.0)
+    );
+}
+
+#[test]
+fn stream_no_args_returns_error() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=STREAM()").expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert!(matches!(a1.value, Value::Error(_)));
+}
+
+#[test]
+fn stream_negative_period_returns_error() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=STREAM(-1)")
+        .expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert!(matches!(a1.value, Value::Error(_)));
+}
+
+#[test]
+fn stream_non_lambda_second_arg_returns_error() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=STREAM(1, \"x\")")
+        .expect("set A1");
+    let a1 = engine.cell_state_a1("A1").expect("query A1");
+    assert!(matches!(a1.value, Value::Error(_)));
+}
+
+#[test]
+fn clearing_stream_cell_removes_stream() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=STREAM(1)").expect("set A1");
+    assert!(engine.has_stream_cells());
+
+    engine.clear_cell_a1("A1").expect("clear A1");
+    engine.recalculate().expect("recalc");
+    assert!(!engine.has_stream_cells());
+}
+
+#[test]
+fn multiple_streams_with_different_periods() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=STREAM(1)").expect("set A1");
+    engine.set_formula_a1("B1", "=STREAM(2)").expect("set B1");
+
+    engine.tick_streams(1.5);
+    engine.recalculate().expect("recalc");
+
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(1.0),
+        "1s period should have ticked once at 1.5s"
+    );
+    assert_eq!(
+        engine.cell_state_a1("B1").expect("B1").value,
+        Value::Number(0.0),
+        "2s period should not have ticked yet at 1.5s"
+    );
+
+    engine.tick_streams(1.0);
+    engine.recalculate().expect("recalc2");
+
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1 after 2.5s").value,
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("B1").expect("B1 after 2.5s").value,
+        Value::Number(1.0)
+    );
+}
+
+#[test]
+fn tick_streams_returns_false_when_no_advance() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=STREAM(1)").expect("set A1");
+    let advanced = engine.tick_streams(0.5);
+    assert!(!advanced, "tick_streams(0.5) with period=1.0 should return false");
+}

@@ -95,6 +95,9 @@ pub const SUPPORTED_FUNCTIONS: &[&str] = &[
     "OFFSET",
     "ROW",
     "COLUMN",
+    "NOW",
+    "RAND",
+    "STREAM",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -213,6 +216,14 @@ pub struct EvalContext<'a> {
     local_scopes: Vec<HashMap<String, RuntimeValue>>,
     recalc_serial: u64,
     random_counter: u64,
+    now_timestamp: f64,
+    stream_counters: &'a HashMap<CellRef, u64>,
+    stream_registrations: HashMap<CellRef, StreamRegistration>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StreamRegistration {
+    pub period_secs: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +251,8 @@ impl<'a> EvalContext<'a> {
         name_text_literals: &'a HashMap<String, String>,
         bounds: SheetBounds,
         recalc_serial: u64,
+        now_timestamp: f64,
+        stream_counters: &'a HashMap<CellRef, u64>,
     ) -> Self {
         Self {
             formulas,
@@ -255,7 +268,14 @@ impl<'a> EvalContext<'a> {
             local_scopes: Vec::new(),
             recalc_serial,
             random_counter: 0,
+            now_timestamp,
+            stream_counters,
+            stream_registrations: HashMap::new(),
         }
+    }
+
+    pub(crate) fn take_stream_registrations(&mut self) -> HashMap<CellRef, StreamRegistration> {
+        std::mem::take(&mut self.stream_registrations)
     }
 
     pub(crate) fn evaluate_cell_runtime(&mut self, cell: CellRef) -> RuntimeValue {
@@ -754,6 +774,9 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         "OFFSET" => eval_offset(args, ctx),
         "ROW" => eval_row(args, ctx),
         "COLUMN" => eval_column(args, ctx),
+        "NOW" => eval_now(args, ctx),
+        "RAND" => eval_rand(args, ctx),
+        "STREAM" => eval_stream(args, ctx),
         other => RuntimeValue::scalar(Value::Error(CellError::Name(other.to_string()))),
     }
 }
@@ -2000,6 +2023,72 @@ fn coerce_bool(value: &Value) -> Result<bool, CellError> {
         )),
         Value::Blank => Ok(false),
         Value::Error(err) => Err(err.clone()),
+    }
+}
+
+fn eval_now(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if !args.is_empty() {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "NOW expects 0 arguments".to_string(),
+        )));
+    }
+    RuntimeValue::scalar(Value::Number(ctx.now_timestamp))
+}
+
+fn eval_rand(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if !args.is_empty() {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "RAND expects 0 arguments".to_string(),
+        )));
+    }
+    let n = (ctx.next_rand_u64() >> 11) as f64 / ((1u64 << 53) as f64);
+    RuntimeValue::scalar(Value::Number(n))
+}
+
+fn eval_stream(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.is_empty() || args.len() > 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "STREAM expects 1-2 arguments (period [, lambda])".to_string(),
+        )));
+    }
+
+    let period = match coerce_number(&ctx.evaluate_expr(&args[0]).to_scalar()) {
+        Ok(v) => v,
+        Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+    };
+    if !period.is_finite() || period <= 0.0 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "STREAM period must be a positive number".to_string(),
+        )));
+    }
+
+    let cell = match ctx.stack.last() {
+        Some(EvalStackNode::Cell(cell)) => *cell,
+        _ => {
+            return RuntimeValue::scalar(Value::Error(CellError::Value(
+                "STREAM can only be used in a cell formula".to_string(),
+            )));
+        }
+    };
+
+    ctx.stream_registrations
+        .insert(cell, StreamRegistration { period_secs: period });
+    let counter = ctx.stream_counters.get(&cell).copied().unwrap_or(0);
+
+    if args.len() == 2 {
+        let lambda_runtime = ctx.evaluate_expr(&args[1]);
+        let lambda = match lambda_runtime {
+            RuntimeValue::Lambda(lambda) => lambda,
+            _ => {
+                return RuntimeValue::scalar(Value::Error(CellError::Value(
+                    "STREAM expects LAMBDA as its second argument".to_string(),
+                )));
+            }
+        };
+        let lambda_args = vec![RuntimeValue::scalar(Value::Number(counter as f64))];
+        ctx.invoke_lambda_runtime(&lambda, lambda_args)
+    } else {
+        RuntimeValue::scalar(Value::Number(counter as f64))
     }
 }
 

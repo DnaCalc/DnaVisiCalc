@@ -176,6 +176,13 @@ struct StoredValue {
 }
 
 #[derive(Debug, Clone)]
+struct StreamState {
+    period_secs: f64,
+    counter: u64,
+    elapsed_accumulator: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct Engine {
     bounds: SheetBounds,
     mode: RecalcMode,
@@ -191,6 +198,7 @@ pub struct Engine {
     calc_tree: Option<CalcTree>,
     recalc_serial: u64,
     dynamic_array_strategy: DynamicArrayStrategy,
+    stream_cells: HashMap<CellRef, StreamState>,
 }
 
 impl Default for Engine {
@@ -220,6 +228,7 @@ impl Engine {
             calc_tree: None,
             recalc_serial: 0,
             dynamic_array_strategy: DynamicArrayStrategy::OverlayInline,
+            stream_cells: HashMap::new(),
         }
     }
 
@@ -253,6 +262,7 @@ impl Engine {
         self.spill_owners.clear();
         self.spill_ranges.clear();
         self.calc_tree = None;
+        self.stream_cells.clear();
         if self.mode == RecalcMode::Automatic {
             self.stabilized_epoch = self.committed_epoch;
         }
@@ -427,6 +437,12 @@ impl Engine {
 
         let tree = build_calc_tree(&formulas)?;
         self.recalc_serial = self.recalc_serial.wrapping_add(1);
+        let now_timestamp = excel_now_timestamp();
+        let stream_counters: HashMap<CellRef, u64> = self
+            .stream_cells
+            .iter()
+            .map(|(cell, state)| (*cell, state.counter))
+            .collect();
         let mut evaluator = EvalContext::new(
             &formulas,
             &literals,
@@ -436,6 +452,8 @@ impl Engine {
             &name_text_literals,
             self.bounds,
             self.recalc_serial,
+            now_timestamp,
+            &stream_counters,
         );
         let mut new_values: HashMap<CellRef, StoredValue> = HashMap::new();
         let mut new_name_values: HashMap<String, StoredValue> = HashMap::new();
@@ -518,6 +536,31 @@ impl Engine {
             }
         }
 
+        let registrations = evaluator.take_stream_registrations();
+        let mut new_stream_cells: HashMap<CellRef, StreamState> = HashMap::new();
+        for (cell, reg) in registrations {
+            if let Some(existing) = self.stream_cells.get(&cell) {
+                new_stream_cells.insert(
+                    cell,
+                    StreamState {
+                        period_secs: reg.period_secs,
+                        counter: existing.counter,
+                        elapsed_accumulator: existing.elapsed_accumulator,
+                    },
+                );
+            } else {
+                new_stream_cells.insert(
+                    cell,
+                    StreamState {
+                        period_secs: reg.period_secs,
+                        counter: 0,
+                        elapsed_accumulator: 0.0,
+                    },
+                );
+            }
+        }
+        self.stream_cells = new_stream_cells;
+
         self.values = new_values;
         self.name_values = new_name_values;
         self.spill_owners = spill_owners;
@@ -525,6 +568,37 @@ impl Engine {
         self.stabilized_epoch = self.committed_epoch;
         self.calc_tree = Some(tree);
         Ok(())
+    }
+
+    pub fn has_volatile_cells(&self) -> bool {
+        for entry in self.cells.values() {
+            if let CellEntry::Formula(formula) = entry {
+                if expr_contains_volatile(&formula.expr) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn has_stream_cells(&self) -> bool {
+        !self.stream_cells.is_empty()
+    }
+
+    pub fn tick_streams(&mut self, elapsed_secs: f64) -> bool {
+        let mut any_advanced = false;
+        for state in self.stream_cells.values_mut() {
+            state.elapsed_accumulator += elapsed_secs;
+            while state.elapsed_accumulator >= state.period_secs {
+                state.elapsed_accumulator -= state.period_secs;
+                state.counter += 1;
+                any_advanced = true;
+            }
+        }
+        if any_advanced {
+            self.committed_epoch += 1;
+        }
+        any_advanced
     }
 
     pub fn cell_state(&self, cell: CellRef) -> Result<CellState, EngineError> {
@@ -1072,6 +1146,39 @@ impl Engine {
                 CellError::Spill("internal rewrite shape mismatch".to_string())
             }
         }
+    }
+}
+
+fn excel_now_timestamp() -> f64 {
+    match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs_f64() / 86400.0 + 25569.0,
+        Err(_) => 0.0,
+    }
+}
+
+fn expr_contains_volatile(expr: &Expr) -> bool {
+    match expr {
+        Expr::FunctionCall { name, args } => {
+            let upper = name.to_ascii_uppercase();
+            if upper == "NOW" || upper == "RAND" || upper == "STREAM" || upper == "RANDARRAY" {
+                return true;
+            }
+            args.iter().any(expr_contains_volatile)
+        }
+        Expr::Unary { expr, .. } => expr_contains_volatile(expr),
+        Expr::Binary { left, right, .. } => {
+            expr_contains_volatile(left) || expr_contains_volatile(right)
+        }
+        Expr::Invoke { callee, args } => {
+            expr_contains_volatile(callee) || args.iter().any(expr_contains_volatile)
+        }
+        Expr::Number(_)
+        | Expr::Text(_)
+        | Expr::Bool(_)
+        | Expr::Cell(_)
+        | Expr::Name(_)
+        | Expr::SpillRef(_)
+        | Expr::Range(_) => false,
     }
 }
 

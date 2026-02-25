@@ -231,6 +231,22 @@ impl App {
         self.status = status.into();
     }
 
+    pub fn volatile_recalc(&mut self) {
+        let _ = self.engine.recalculate();
+    }
+
+    pub fn tick_streams(&mut self, elapsed_secs: f64) -> bool {
+        self.engine.tick_streams(elapsed_secs)
+    }
+
+    pub fn has_volatile_cells(&self) -> bool {
+        self.engine.has_volatile_cells()
+    }
+
+    pub fn has_stream_cells(&self) -> bool {
+        self.engine.has_stream_cells()
+    }
+
     fn is_dirty(&self) -> bool {
         match self.last_saved_epoch {
             Some(saved_epoch) => self.engine.committed_epoch() != saved_epoch,

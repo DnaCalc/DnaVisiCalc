@@ -1,6 +1,6 @@
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{self, Event};
@@ -76,6 +76,9 @@ fn run_event_loop(
     clipboard: &mut impl ClipboardAccess,
     trace: &mut Option<EventTrace>,
 ) -> Result<()> {
+    let mut last_tick = Instant::now();
+    let mut volatile_accumulator: f64 = 0.0;
+
     loop {
         let term_size = terminal.size()?;
         let grid_area_height = term_size.height.saturating_sub(6).max(1);
@@ -117,6 +120,30 @@ fn run_event_loop(
                 }
                 _ => {}
             }
+        }
+
+        let now = Instant::now();
+        let elapsed = now.duration_since(last_tick).as_secs_f64();
+        last_tick = now;
+
+        let mut needs_recalc = false;
+
+        if app.has_stream_cells() {
+            needs_recalc |= app.tick_streams(elapsed);
+        }
+
+        if app.has_volatile_cells() || app.has_stream_cells() {
+            volatile_accumulator += elapsed;
+            if volatile_accumulator >= 1.0 {
+                volatile_accumulator -= 1.0;
+                needs_recalc = true;
+            }
+        } else {
+            volatile_accumulator = 0.0;
+        }
+
+        if needs_recalc {
+            app.volatile_recalc();
         }
     }
 
