@@ -19,9 +19,29 @@ Command mode:
 
 ![Command Mode](docs/images/04_command_mode.png)
 
-Numerical model (formulas + financial functions):
+Numerical model (formulas visible in input panel + financial functions):
 
 ![Numerical Model](docs/images/05_numerical_model.png)
+
+Names-driven model (`TAX_RATE`, `DISCOUNT`) with formula references:
+
+![Names Model](docs/images/06_names_model.png)
+
+Paste Special picker (`Ctrl+V`, choose mode):
+
+![Paste Special Picker](docs/images/07_paste_special_picker.png)
+
+Paste Special applied (`Values+KeepDestFmt`):
+
+![Paste Special Result](docs/images/08_paste_special_result.png)
+
+Formatting pass (decimals, bold/italic, fg/bg palette commands on selection):
+
+![Formatting and Colors](docs/images/09_formatting_colors.png)
+
+Dynamic arrays (`SEQUENCE`, `RANDARRAY`, spill ranges, `A1#` aggregates):
+
+![Dynamic Arrays](docs/images/10_dynamic_arrays.png)
 
 ## Scope
 The `dnavisicalc-core` crate stays library-only and I/O free:
