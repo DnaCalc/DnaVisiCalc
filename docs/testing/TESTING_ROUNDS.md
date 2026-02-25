@@ -283,3 +283,22 @@
   - Added regression tests for new functions and help-popup list rendering.
 - Open questions:
   - Exact historical VisiCalc coercion/error text behavior should be validated against additional public evidence fixtures.
+
+## Round 19
+- Status: completed
+- Scope: Windows Rust-free release verification, README screenshot/structure refresh, and release artifact packaging for v0.1.1.
+- Suites:
+  - `CARGO_TARGET_DIR=target_tmp cargo test --workspace`
+  - `cargo run -p dnavisicalc-tui --bin capture_scenes`
+  - `powershell -ExecutionPolicy Bypass -File scripts/windows/render_scene_pngs.ps1`
+  - `powershell -ExecutionPolicy Bypass -File scripts/windows/build_release_v0.1.1.ps1`
+- Result:
+  - Verified full workspace test pass before packaging.
+  - Added numerical-model screenshot scene and regenerated README screenshots.
+  - Produced release zip `dnavisicalc-v0.1.1-windows-x64.zip` containing runnable app + help docs.
+  - Confirmed packaged runtime flow does not require Rust/Cargo for end users.
+- Fixes:
+  - Added dedicated v0.1.1 release script and release docs with explicit no-Rust runtime instructions.
+  - Reordered README sections to make screenshots first and move layering/layout story to the end.
+- Open questions:
+  - Should future release scripts be consolidated into a single parameterized script to avoid per-version duplication?

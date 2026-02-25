@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_editing(out_dir.join("02_editing.txt"))?;
     capture_help(out_dir.join("03_help_popup.txt"))?;
     capture_command(out_dir.join("04_command_mode.txt"))?;
+    capture_numerical_model(out_dir.join("05_numerical_model.txt"))?;
 
     Ok(())
 }
@@ -52,11 +53,52 @@ fn capture_help(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>
 fn capture_command(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
     let mut io = MemoryWorkbookIo::new();
-    app.apply(Action::StartCommand, &mut io);
-    for ch in "mode manual".chars() {
-        app.apply(Action::InputChar(ch), &mut io);
-    }
+    apply_command(&mut app, &mut io, "mode manual");
     write_scene(&app, path)
+}
+
+fn capture_numerical_model(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = App::new();
+    let mut io = MemoryWorkbookIo::new();
+
+    let commands = [
+        "set A1 Price",
+        "set B1 Qty",
+        "set C1 Revenue",
+        "set D1 Growth%",
+        "set E1 PMT",
+        "set A2 12.5",
+        "set B2 48",
+        "set C2 =ROUND(A2*B2,2)",
+        "set A3 13.4",
+        "set B3 54",
+        "set C3 =ROUND(A3*B3,2)",
+        "set D3 =ROUND((C3-C2)/C2*100,2)",
+        "set E3 =ROUND(PMT(0.05/12,360,300000),2)",
+        "set F1 NPV",
+        "set F3 =ROUND(NPV(0.1,C2:C3),2)",
+    ];
+
+    for command in commands {
+        apply_command(&mut app, &mut io, command);
+    }
+
+    for _ in 0..4 {
+        app.apply(Action::MoveDown, &mut io);
+    }
+    for _ in 0..4 {
+        app.apply(Action::MoveRight, &mut io);
+    }
+
+    write_scene(&app, path)
+}
+
+fn apply_command(app: &mut App, io: &mut MemoryWorkbookIo, command: &str) {
+    app.apply(Action::StartCommand, io);
+    for ch in command.chars() {
+        app.apply(Action::InputChar(ch), io);
+    }
+    app.apply(Action::Submit, io);
 }
 
 fn write_scene(app: &App, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
