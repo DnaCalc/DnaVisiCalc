@@ -53,5 +53,5 @@ Palette colors:
 - `LOOKUP`, `NA`, `ERROR`
 - `CONCAT`, `LEN`
 - `SEQUENCE`, `RANDARRAY`
-- `LET`, `LAMBDA`, `MAP`
-- `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`
+- `LET`, `LAMBDA`, `MAP` (including array-returning lambda spill tiling)
+- `INDIRECT` (A1 and R1C1), `OFFSET`, `ROW`, `COLUMN`

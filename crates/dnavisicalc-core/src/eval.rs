@@ -1291,7 +1291,7 @@ fn eval_map(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
         cols = shape.1;
     }
 
-    let mut out = Vec::with_capacity(rows * cols);
+    let mut mapped = Vec::with_capacity(rows * cols);
     for row in 0..rows {
         for col in 0..cols {
             let mut lambda_args = Vec::with_capacity(input_arrays.len());
@@ -1301,21 +1301,61 @@ fn eval_map(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
                 lambda_args.push(RuntimeValue::scalar(array.value_at(src_row, src_col)));
             }
             let item = ctx.invoke_lambda_runtime(&lambda, lambda_args);
-            match item {
-                RuntimeValue::Scalar(value) => out.push(value),
-                RuntimeValue::Array(_) | RuntimeValue::Lambda(_) => {
-                    return RuntimeValue::scalar(Value::Error(CellError::Value(
-                        "MAP lambda must return a scalar value".to_string(),
-                    )));
+            if matches!(item, RuntimeValue::Lambda(_)) {
+                return RuntimeValue::scalar(Value::Error(CellError::Value(
+                    "MAP lambda may not return a lambda value".to_string(),
+                )));
+            }
+            mapped.push(item);
+        }
+    }
+
+    let mut item_rows = 1usize;
+    let mut item_cols = 1usize;
+    for item in &mapped {
+        let (next_rows, next_cols) = match item {
+            RuntimeValue::Scalar(_) => (1usize, 1usize),
+            RuntimeValue::Array(array) => (array.rows(), array.cols()),
+            RuntimeValue::Lambda(_) => unreachable!("lambda return is rejected above"),
+        };
+        let shape = match broadcast_shape(item_rows, item_cols, next_rows, next_cols) {
+            Ok(shape) => shape,
+            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+        };
+        item_rows = shape.0;
+        item_cols = shape.1;
+    }
+
+    let out_rows = rows * item_rows;
+    let out_cols = cols * item_cols;
+    let mut out = Vec::with_capacity(out_rows * out_cols);
+    for row in 0..rows {
+        for item_row in 0..item_rows {
+            for col in 0..cols {
+                let item = &mapped[row * cols + col];
+                match item {
+                    RuntimeValue::Scalar(value) => {
+                        for _ in 0..item_cols {
+                            out.push(value.clone());
+                        }
+                    }
+                    RuntimeValue::Array(array) => {
+                        let src_row = if array.rows() == 1 { 0 } else { item_row };
+                        for item_col in 0..item_cols {
+                            let src_col = if array.cols() == 1 { 0 } else { item_col };
+                            out.push(array.value_at(src_row, src_col));
+                        }
+                    }
+                    RuntimeValue::Lambda(_) => unreachable!("lambda return is rejected above"),
                 }
             }
         }
     }
 
-    if rows == 1 && cols == 1 {
+    if out_rows == 1 && out_cols == 1 {
         RuntimeValue::scalar(out.into_iter().next().unwrap_or(Value::Blank))
     } else {
-        RuntimeValue::Array(ArrayValue::new(rows, cols, out))
+        RuntimeValue::Array(ArrayValue::new(out_rows, out_cols, out))
     }
 }
 
@@ -1326,20 +1366,21 @@ fn eval_indirect(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
         )));
     }
 
+    let mut use_a1_style = true;
     if args.len() == 2 {
-        let a1_style = match coerce_bool(&ctx.evaluate_expr(&args[1]).to_scalar()) {
+        use_a1_style = match coerce_bool(&ctx.evaluate_expr(&args[1]).to_scalar()) {
             Ok(v) => v,
             Err(err) => return RuntimeValue::scalar(Value::Error(err)),
         };
-        if !a1_style {
-            return RuntimeValue::scalar(Value::Error(CellError::Value(
-                "INDIRECT R1C1 mode is not supported".to_string(),
-            )));
-        }
     }
 
     let text = value_to_text(&ctx.evaluate_expr(&args[0]).to_scalar());
-    match resolve_reference_text(&text, ctx.bounds) {
+    let target = if use_a1_style {
+        resolve_reference_text_a1(&text, ctx.bounds)
+    } else {
+        resolve_reference_text_r1c1(&text, ctx.bounds, ctx.current_context_cell())
+    };
+    match target {
         Ok(ReferenceTarget::Cell(cell)) => {
             RuntimeValue::scalar(ctx.evaluate_cell_runtime(cell).to_scalar())
         }
@@ -1693,7 +1734,10 @@ fn runtime_for_range(range: CellRange, ctx: &mut EvalContext<'_>) -> RuntimeValu
     }
 }
 
-fn resolve_reference_text(input: &str, bounds: SheetBounds) -> Result<ReferenceTarget, CellError> {
+fn resolve_reference_text_a1(
+    input: &str,
+    bounds: SheetBounds,
+) -> Result<ReferenceTarget, CellError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(CellError::Ref("reference text is empty".to_string()));
@@ -1711,6 +1755,31 @@ fn resolve_reference_text(input: &str, bounds: SheetBounds) -> Result<ReferenceT
     }
 
     let cell = parse_cell_ref(trimmed, bounds).map_err(address_err_to_ref)?;
+    Ok(ReferenceTarget::Cell(cell))
+}
+
+fn resolve_reference_text_r1c1(
+    input: &str,
+    bounds: SheetBounds,
+    context: Option<CellRef>,
+) -> Result<ReferenceTarget, CellError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(CellError::Ref("reference text is empty".to_string()));
+    }
+
+    if let Some(anchor) = trimmed.strip_suffix('#') {
+        let cell = parse_r1c1_ref(anchor, bounds, context)?;
+        return Ok(ReferenceTarget::Spill(cell));
+    }
+
+    if let Some((left, right)) = split_range_text(trimmed) {
+        let start = parse_r1c1_ref(left, bounds, context)?;
+        let end = parse_r1c1_ref(right, bounds, context)?;
+        return Ok(ReferenceTarget::Range(CellRange::new(start, end)));
+    }
+
+    let cell = parse_r1c1_ref(trimmed, bounds, context)?;
     Ok(ReferenceTarget::Cell(cell))
 }
 
@@ -1750,7 +1819,7 @@ fn resolve_reference_argument(
         },
         _ => {
             let text = value_to_text(&ctx.evaluate_expr(arg).to_scalar());
-            match resolve_reference_text(&text, ctx.bounds)? {
+            match resolve_reference_text_a1(&text, ctx.bounds)? {
                 ReferenceTarget::Cell(cell) => Ok(CellRange::new(cell, cell)),
                 ReferenceTarget::Range(range) => Ok(range),
                 ReferenceTarget::Spill(cell) => {
@@ -1769,6 +1838,73 @@ fn resolve_reference_argument(
             }
         }
     }
+}
+
+fn parse_r1c1_ref(
+    input: &str,
+    bounds: SheetBounds,
+    context: Option<CellRef>,
+) -> Result<CellRef, CellError> {
+    let upper = input.trim().to_ascii_uppercase();
+    let Some(stripped) = upper.strip_prefix('R') else {
+        return Err(CellError::Ref(format!("invalid R1C1 reference: {input}")));
+    };
+    let Some(c_idx) = stripped.find('C') else {
+        return Err(CellError::Ref(format!("invalid R1C1 reference: {input}")));
+    };
+    let row_part = &stripped[..c_idx];
+    let col_part = &stripped[c_idx + 1..];
+    if col_part.contains('C') {
+        return Err(CellError::Ref(format!("invalid R1C1 reference: {input}")));
+    }
+
+    let row = parse_r1c1_axis(row_part, context.map(|c| c.row as i32), "row", input)?;
+    let col = parse_r1c1_axis(col_part, context.map(|c| c.col as i32), "column", input)?;
+    if row < 1 || row > bounds.max_rows as i32 || col < 1 || col > bounds.max_columns as i32 {
+        return Err(CellError::Ref(format!(
+            "R1C1 reference {input} is out of sheet bounds"
+        )));
+    }
+
+    Ok(CellRef {
+        col: col as u16,
+        row: row as u16,
+    })
+}
+
+fn parse_r1c1_axis(
+    part: &str,
+    current: Option<i32>,
+    axis_name: &str,
+    original: &str,
+) -> Result<i32, CellError> {
+    if part.is_empty() {
+        return current.ok_or_else(|| {
+            CellError::Ref(format!(
+                "R1C1 {axis_name} in {original} requires a current-cell context"
+            ))
+        });
+    }
+
+    if part.starts_with('[') {
+        if !part.ends_with(']') || part.len() < 3 {
+            return Err(CellError::Ref(format!(
+                "invalid R1C1 reference: {original}"
+            )));
+        }
+        let delta = part[1..part.len() - 1]
+            .parse::<i32>()
+            .map_err(|_| CellError::Ref(format!("invalid R1C1 reference: {original}")))?;
+        let base = current.ok_or_else(|| {
+            CellError::Ref(format!(
+                "R1C1 {axis_name} in {original} requires a current-cell context"
+            ))
+        })?;
+        return Ok(base + delta);
+    }
+
+    part.parse::<i32>()
+        .map_err(|_| CellError::Ref(format!("invalid R1C1 reference: {original}")))
 }
 
 fn eval_dimension_arg(

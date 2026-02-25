@@ -31,7 +31,7 @@ See `docs/testing/TESTING_ROUNDS.md`.
 
 ## Execution status
 - All 10 planned rounds have been executed in this iteration.
-- Additional hardening rounds (11-24) were executed for terminal behavior, dynamic arrays, TUI UX, function-surface expansion, release packaging, named-formula support, formatting/selection support, clipboard/paste-special UX, and lambda/indirect function-surface expansion.
+- Additional hardening rounds (11-25) were executed for terminal behavior, dynamic arrays, TUI UX, function-surface expansion, release packaging, named-formula support, formatting/selection support, clipboard/paste-special UX, lambda/indirect function-surface expansion, and R1C1/dynamic-map screenshot+semantics polish.
 - Detailed evidence and outcomes are recorded in `docs/testing/TESTING_ROUNDS.md`.
 
 ## Platform harness extension (Windows Terminal)

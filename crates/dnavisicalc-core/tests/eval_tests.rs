@@ -285,6 +285,33 @@ fn evaluates_map_with_lambda_over_range() {
 }
 
 #[test]
+fn evaluates_map_with_lambda_returning_arrays() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A1", 1.0).expect("A1");
+    engine.set_number_a1("A2", 2.0).expect("A2");
+    engine
+        .set_formula_a1("B1", "=MAP(A1:A2,LAMBDA(x,SEQUENCE(1,2,x,1)))")
+        .expect("set MAP array-return formula");
+
+    assert_eq!(
+        engine.cell_state_a1("B1").expect("B1").value,
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("C1").expect("C1").value,
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("B2").expect("B2").value,
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("C2").expect("C2").value,
+        Value::Number(3.0)
+    );
+}
+
+#[test]
 fn evaluates_row_and_column() {
     let mut engine = Engine::new();
     engine.set_formula_a1("C5", "=ROW()").expect("ROW");
@@ -331,6 +358,18 @@ fn evaluates_indirect_and_offset() {
     engine
         .set_formula_a1("C3", "=SUM(OFFSET(A1,1,1,2,1))")
         .expect("OFFSET range");
+    engine
+        .set_formula_a1("D1", "=INDIRECT(\"R2C2\",FALSE)")
+        .expect("INDIRECT R1C1 absolute");
+    engine
+        .set_formula_a1("E5", "=INDIRECT(\"R[-3]C[-3]\",FALSE)")
+        .expect("INDIRECT R1C1 relative");
+    engine
+        .set_formula_a1("F1", "=SUM(INDIRECT(\"R2C2:R3C2\",FALSE))")
+        .expect("INDIRECT R1C1 range");
+    engine
+        .set_formula_a1("G3", "=INDIRECT(\"RC[-5]\",FALSE)")
+        .expect("INDIRECT R1C1 RC form");
 
     assert_eq!(
         engine.cell_state_a1("C1").expect("C1").value,
@@ -343,5 +382,21 @@ fn evaluates_indirect_and_offset() {
     assert_eq!(
         engine.cell_state_a1("C3").expect("C3").value,
         Value::Number(30.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("D1").expect("D1").value,
+        Value::Number(25.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("E5").expect("E5").value,
+        Value::Number(25.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("F1").expect("F1").value,
+        Value::Number(30.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("G3").expect("G3").value,
+        Value::Number(5.0)
     );
 }

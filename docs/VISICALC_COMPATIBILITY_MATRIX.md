@@ -22,6 +22,8 @@ This file tracks which historically VisiCalc-like features are implemented in Dn
 - Financial/table/error: `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`, `NA`, `ERROR`.
 - Text: `CONCAT`, `LEN`.
 - Modern Excel-style functional/reference extensions: `LET`, `LAMBDA`, `MAP`, `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`.
+  - `INDIRECT` includes A1 and R1C1 text-reference modes.
+  - `MAP` supports scalar and array-returning lambda results with deterministic tiling.
 
 ## 2. Implemented but Semantics Need Deeper Compatibility Validation
 

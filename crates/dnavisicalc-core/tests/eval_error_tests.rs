@@ -62,3 +62,33 @@ fn let_rejects_invalid_binding_name_conflicts() {
         other => panic!("expected error value, got {other:?}"),
     }
 }
+
+#[test]
+fn map_rejects_incompatible_array_shapes_from_lambda_results() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A1", 10.0).expect("A1");
+    engine.set_number_a1("A2", 20.0).expect("A2");
+    engine
+        .set_formula_a1(
+            "B1",
+            "=MAP(A1:A2,LAMBDA(x,OFFSET(A1,0,0,IF(x=10,1,2),IF(x=10,2,1))))",
+        )
+        .expect("set formula");
+
+    let value = engine.cell_state_a1("B1").expect("query").value;
+    assert!(matches!(value, Value::Error(_)));
+}
+
+#[test]
+fn indirect_r1c1_relative_requires_cell_context() {
+    let mut engine = Engine::new();
+    engine
+        .set_name_formula("REL_REF", "=INDIRECT(\"RC\",FALSE)")
+        .expect("set name formula");
+    engine
+        .set_formula_a1("A1", "=REL_REF")
+        .expect("set formula");
+
+    let value = engine.cell_state_a1("A1").expect("query").value;
+    assert!(matches!(value, Value::Error(_)));
+}

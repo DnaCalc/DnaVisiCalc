@@ -95,8 +95,9 @@ Explicit exclusions for v0:
   - `LET(name, value, ..., result)` evaluates pairs left-to-right with local lexical scope.
   - `LAMBDA(param..., body)` returns a closure value.
   - `MAP(array..., LAMBDA(...))` performs element-wise lambda application with scalar broadcasting.
+  - `MAP` lambda results may be scalar or array; array results are deterministically tiled/broadcast into the final spill.
 - Reference indirection helpers:
-  - `INDIRECT(text_ref[, a1])` supports A1 text references (single cell, range, or spill reference with `#`).
+  - `INDIRECT(text_ref[, a1])` supports both A1 and R1C1 text references (single cell, range, or spill reference with `#`).
   - `OFFSET(reference, rows, cols[, height, width])` returns reference-backed values/ranges.
   - `ROW([reference])` / `COLUMN([reference])` return row/column indices.
 

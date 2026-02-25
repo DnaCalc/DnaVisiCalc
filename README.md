@@ -43,6 +43,30 @@ Dynamic arrays (`SEQUENCE`, `RANDARRAY`, spill ranges, `A1#` aggregates):
 
 ![Dynamic Arrays](docs/images/10_dynamic_arrays.png)
 
+Bioreactor operations dashboard (imaginary domain model, names + formulas + formatting):
+
+![Bioreactor Dashboard](docs/images/11_bioreactor_dashboard.png)
+
+Palette and text-format showcase (bold/italic/decimals with mixed color styling):
+
+![Palette Showcase](docs/images/12_palette_showcase.png)
+
+Names with `LET` + `LAMBDA` in a financial mini-model:
+
+![Names LET LAMBDA](docs/images/13_names_let_lambda.png)
+
+`INDIRECT` (A1 + R1C1 mode) and `OFFSET` behavior model:
+
+![INDIRECT R1C1 OFFSET](docs/images/14_indirect_r1c1_offset.png)
+
+`MAP` with dynamic-array lambda results (tiled spill outputs):
+
+![MAP Array Tiles](docs/images/15_map_array_tiles.png)
+
+Dynamic array lab view (multiple spills and aggregate summary panel):
+
+![Dynamic Array Lab](docs/images/16_dynamic_array_lab.png)
+
 ## Scope
 The `dnavisicalc-core` crate stays library-only and I/O free:
 - VisiCalc-sized bounds (`A1`..`BK254`).
@@ -50,6 +74,8 @@ The `dnavisicalc-core` crate stays library-only and I/O free:
 - Workbook names for reusable values/formulas (names can reference cells and other names).
 - Per-cell formatting: decimals, text style (bold/italic), foreground/background palette colors.
 - Functions: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`, `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`, `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`, `NA`, `ERROR`, `CONCAT`, `LEN`, `LET`, `LAMBDA`, `MAP`, `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`.
+- `INDIRECT` supports both A1 and R1C1 reference text modes.
+- `MAP` supports scalar and array-returning lambda outputs with deterministic tiling/broadcast behavior.
 - Dynamic arrays: `SEQUENCE`, `RANDARRAY`, spill references (`A1#`), `#SPILL`/`#REF` errors.
 - Deterministic dependency graph and cycle detection.
 - Manual/automatic recalc with epoch staleness tracking.

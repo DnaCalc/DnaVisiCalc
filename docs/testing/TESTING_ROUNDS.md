@@ -397,3 +397,23 @@
   - Added regression tests for valid and invalid LET/LAMBDA/MAP and reference-helper usage.
 - Open questions:
   - Whether to add full Excel-style `R1C1` handling for `INDIRECT` second argument in a future compatibility pass.
+
+## Round 25
+- Status: completed
+- Scope: edge-semantics completion for `INDIRECT` R1C1 mode and array-returning `MAP` lambdas, plus expanded README screenshot showcase.
+- Suites:
+  - `cargo test -p dnavisicalc-core`
+  - `cargo run -p dnavisicalc-tui --bin capture_scenes`
+  - `powershell -ExecutionPolicy Bypass -File scripts/windows/render_scene_pngs.ps1`
+  - `cargo test --workspace`
+- Result:
+  - `INDIRECT(text,FALSE)` now supports R1C1 references (absolute, relative, mixed, range, spill anchor with `#`).
+  - `MAP` now supports scalar and array-returning lambda outputs with deterministic broadcast+tile shaping.
+  - Added evaluator regression tests for R1C1 references and MAP array-return behavior.
+  - Added six new polished screenshot scenes and refreshed README screenshot coverage.
+- Fixes:
+  - Added R1C1 parser helpers in evaluator with explicit context/bounds error handling.
+  - Refactored MAP output assembly to compose block outputs from per-item lambda runtime values.
+  - Improved screenshot renderer theming and per-line/per-column color treatment for richer README visuals.
+- Open questions:
+  - Whether to add multi-dimensional map combinators (`BYROW`/`BYCOL`/`REDUCE`/`SCAN`) in a dedicated follow-on pass.
