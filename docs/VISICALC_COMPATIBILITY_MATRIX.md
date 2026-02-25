@@ -14,6 +14,7 @@ This file tracks which historically VisiCalc-like features are implemented in Dn
 - Arithmetic: `+ - * / ^`.
 - Comparisons: `= <> < <= > >=`.
 - Text literals (`"..."` with doubled quote escaping) and concatenation (`&`).
+- Workbook names (`NAME`) for reusable values/formulas.
 
 ### 1.3 Functions
 - Aggregates/logical: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`.
@@ -39,6 +40,7 @@ These are available in v0.1, but historical edge semantics should still be cross
 
 ### 3.2 Architecture-era differences (intentional)
 - Dynamic arrays (`SEQUENCE`, `RANDARRAY`, spill semantics) are modern extensions and not historical VisiCalc features.
+- Workbook-level named formulas/values are modernized behavior and not historical VisiCalc scope.
 - Current TUI command shell is modernized and test-oriented, not a strict clone of VisiCalc UI flows.
 
 ## 4. Recommended Next Compatibility Steps

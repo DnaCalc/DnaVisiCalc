@@ -318,3 +318,21 @@
   - Updated README release section to v0.1.2 and direct executable launch instructions.
 - Open questions:
   - Whether to replace versioned release scripts with one parameterized script before v0.2.0.
+
+## Round 21
+- Status: completed
+- Scope: workbook names feature (named values/formulas) across parser, evaluator, engine, file format, and TUI command layer.
+- Suites:
+  - `CARGO_TARGET_DIR=target_tmp cargo test --workspace`
+- Result:
+  - Added workbook-level names that can hold numeric/text/formula inputs.
+  - Names can be referenced from formulas and can depend on cells and other names.
+  - Name cycles now resolve to explicit evaluation errors (non-panic) in dependent formulas.
+  - File format now persists names with deterministic `NAME` records.
+  - TUI command mode now supports `name <NAME> <value|formula>` and `name clear <NAME>`.
+- Fixes:
+  - Added parser support for bare identifier name references (including leading `_` names).
+  - Added name validation/normalization rules and collision checks (cell refs and built-in function names are rejected).
+  - Added end-to-end tests for core eval, serialization, and command behavior.
+- Open questions:
+  - If needed later, add a dedicated dependency-plan representation that includes names explicitly (not just runtime name evaluation with memoization/cycle detection).

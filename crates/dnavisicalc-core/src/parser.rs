@@ -261,7 +261,7 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
                     position: start,
                 });
             }
-            ch if ch.is_ascii_alphabetic() => {
+            ch if ch.is_ascii_alphabetic() || ch == '_' => {
                 let start = i;
                 i += 1;
                 while i < bytes.len() {
@@ -517,28 +517,25 @@ impl Parser {
                 }
             }
             TokenKind::Ident(name) => {
-                if !self.match_kind(TokenKind::LParen) {
-                    return Err(ParseError::new(
-                        format!("unknown identifier '{name}'"),
-                        token.position,
-                    ));
-                }
-                let mut args = Vec::new();
-                if !self.match_kind(TokenKind::RParen) {
-                    loop {
-                        let arg = self.parse_expression()?;
-                        args.push(arg);
-                        if self.match_kind(TokenKind::Comma) {
-                            continue;
+                if self.match_kind(TokenKind::LParen) {
+                    let mut args = Vec::new();
+                    if !self.match_kind(TokenKind::RParen) {
+                        loop {
+                            let arg = self.parse_expression()?;
+                            args.push(arg);
+                            if self.match_kind(TokenKind::Comma) {
+                                continue;
+                            }
+                            self.expect_kind(TokenKind::RParen)?;
+                            break;
                         }
-                        self.expect_kind(TokenKind::RParen)?;
-                        break;
                     }
+                    return Ok(Expr::FunctionCall {
+                        name: name.clone(),
+                        args,
+                    });
                 }
-                Ok(Expr::FunctionCall {
-                    name: name.clone(),
-                    args,
-                })
+                Ok(Expr::Name(name.clone()))
             }
             TokenKind::LParen => {
                 let inner = self.parse_expression()?;

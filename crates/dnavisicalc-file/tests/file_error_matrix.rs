@@ -48,3 +48,17 @@ fn cell_extra_fields_are_rejected() {
     let err = load_from_str(input).expect_err("expected parse error");
     assert!(err.to_string().contains("extra fields"));
 }
+
+#[test]
+fn missing_name_fields_are_rejected() {
+    let input = "DVISICALC\t1\nNAME\tRATE\tN\n";
+    let err = load_from_str(input).expect_err("expected parse error");
+    assert!(err.to_string().contains("missing value"));
+}
+
+#[test]
+fn unknown_name_type_is_rejected() {
+    let input = "DVISICALC\t1\nNAME\tRATE\tX\t1\n";
+    let err = load_from_str(input).expect_err("expected parse error");
+    assert!(err.to_string().contains("unknown NAME type"));
+}

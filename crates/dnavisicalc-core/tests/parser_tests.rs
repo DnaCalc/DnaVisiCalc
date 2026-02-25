@@ -105,3 +105,35 @@ fn parses_function_name_that_looks_like_cell_ref() {
         _ => panic!("expected function call"),
     }
 }
+
+#[test]
+fn parses_named_reference() {
+    let expr = parse_formula("=tax_rate*B2", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
+    match expr {
+        Expr::Binary {
+            op: BinaryOp::Mul,
+            left,
+            right,
+        } => {
+            assert_eq!(*left, Expr::Name("TAX_RATE".to_string()));
+            assert_eq!(*right, Expr::Cell(CellRef::from_a1("B2").expect("valid")));
+        }
+        _ => panic!("expected multiply expression"),
+    }
+}
+
+#[test]
+fn parses_name_starting_with_underscore() {
+    let expr = parse_formula("=_discount+1", DEFAULT_SHEET_BOUNDS).expect("formula should parse");
+    match expr {
+        Expr::Binary {
+            op: BinaryOp::Add,
+            left,
+            right,
+        } => {
+            assert_eq!(*left, Expr::Name("_DISCOUNT".to_string()));
+            assert_eq!(*right, Expr::Number(1.0));
+        }
+        _ => panic!("expected addition"),
+    }
+}

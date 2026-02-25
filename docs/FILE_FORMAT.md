@@ -25,6 +25,13 @@ CELL	<A1>	T	<text>
 CELL	<A1>	F	<formula>
 ```
 
+### Name
+```text
+NAME	<IDENT>	N	<number>
+NAME	<IDENT>	T	<text>
+NAME	<IDENT>	F	<formula>
+```
+
 Where:
 - `N` means numeric literal.
 - `T` means text literal.
@@ -39,8 +46,10 @@ Where:
 - Header required.
 - At most one `MODE` record.
 - Duplicate `CELL` addresses are rejected.
+- Duplicate `NAME` identifiers are rejected.
 - Unknown record kinds are rejected.
 - Unknown `CELL` type tags are rejected.
+- Unknown `NAME` type tags are rejected.
 - Numeric parse must succeed for `N` records.
 
 ## Design intent

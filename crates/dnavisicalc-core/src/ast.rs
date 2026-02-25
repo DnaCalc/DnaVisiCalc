@@ -6,6 +6,7 @@ pub enum Expr {
     Text(String),
     Bool(bool),
     Cell(CellRef),
+    Name(String),
     SpillRef(CellRef),
     Range(CellRange),
     Unary {

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use dnavisicalc_core::{CellInput, CellRef, Engine, EngineError, RecalcMode};
+use dnavisicalc_core::{CellInput, CellRef, Engine, EngineError, NameInput, RecalcMode};
 use thiserror::Error;
 
 const MAGIC: &str = "DVISICALC\t1";
@@ -52,6 +52,32 @@ pub fn save_to_string(engine: &Engine) -> Result<String, FileError> {
         }
     }
 
+    for (name, input) in engine.all_name_inputs() {
+        match input {
+            NameInput::Number(n) => {
+                out.push_str("NAME\t");
+                out.push_str(&name);
+                out.push_str("\tN\t");
+                out.push_str(&n.to_string());
+                out.push('\n');
+            }
+            NameInput::Text(text) => {
+                out.push_str("NAME\t");
+                out.push_str(&name);
+                out.push_str("\tT\t");
+                out.push_str(&escape_field(&text));
+                out.push('\n');
+            }
+            NameInput::Formula(formula) => {
+                out.push_str("NAME\t");
+                out.push_str(&name);
+                out.push_str("\tF\t");
+                out.push_str(&escape_field(&formula));
+                out.push('\n');
+            }
+        }
+    }
+
     Ok(out)
 }
 
@@ -71,7 +97,9 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
     let mut mode = RecalcMode::Automatic;
     let mut seen_mode = false;
     let mut seen_cells = BTreeSet::new();
+    let mut seen_names = BTreeSet::new();
     let mut entries: Vec<(usize, CellRef, CellInput)> = Vec::new();
+    let mut name_entries: Vec<(usize, String, NameInput)> = Vec::new();
 
     for (idx, raw_line) in input.lines().enumerate() {
         let line_no = idx + 1;
@@ -200,6 +228,73 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
 
                 entries.push((line_no, cell, input));
             }
+            "NAME" => {
+                let Some(raw_name) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "NAME record missing identifier".to_string(),
+                    });
+                };
+                let Some(name_type) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "NAME record missing type".to_string(),
+                    });
+                };
+                let Some(value) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "NAME record missing value".to_string(),
+                    });
+                };
+                if parts.next().is_some() {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "NAME record has extra fields".to_string(),
+                    });
+                }
+
+                let name = raw_name.trim().to_ascii_uppercase();
+                if !seen_names.insert(name.clone()) {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: format!("duplicate name record for {name}"),
+                    });
+                }
+
+                let input = match name_type.trim() {
+                    "N" => {
+                        let number = value.trim().parse::<f64>().map_err(|_| FileError::Parse {
+                            line: line_no,
+                            message: format!("invalid number '{value}'"),
+                        })?;
+                        NameInput::Number(number)
+                    }
+                    "T" => {
+                        let text = unescape_field(value).map_err(|message| FileError::Parse {
+                            line: line_no,
+                            message,
+                        })?;
+                        NameInput::Text(text)
+                    }
+                    "F" => {
+                        let formula =
+                            unescape_field(value).map_err(|message| FileError::Parse {
+                                line: line_no,
+                                message,
+                            })?;
+                        NameInput::Formula(formula)
+                    }
+                    other => {
+                        return Err(FileError::Parse {
+                            line: line_no,
+                            message: format!("unknown NAME type '{other}'"),
+                        });
+                    }
+                };
+
+                name_entries.push((line_no, name, input));
+            }
             other => {
                 return Err(FileError::Parse {
                     line: line_no,
@@ -223,6 +318,14 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
             return Err(FileError::Parse {
                 line: line_no,
                 message: format!("failed to apply cell {cell}: {err}"),
+            });
+        }
+    }
+    for (line_no, name, input) in name_entries {
+        if let Err(err) = engine.set_name_input(&name, input) {
+            return Err(FileError::Parse {
+                line: line_no,
+                message: format!("failed to apply name {name}: {err}"),
             });
         }
     }
@@ -276,19 +379,26 @@ fn unescape_field(input: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dnavisicalc_core::Value;
+    use dnavisicalc_core::{NameInput, Value};
 
     #[test]
     fn roundtrips_engine_document() {
         let mut engine = Engine::new();
         engine.set_number_a1("A1", 12.5).expect("set A1");
         engine.set_text_a1("A2", "hello").expect("set A2");
+        engine.set_name_number("RATE", 0.2).expect("set RATE");
+        engine
+            .set_name_formula("BONUS", "=A1*RATE")
+            .expect("set BONUS");
         engine
             .set_formula_a1("B1", "@SUM(A1...A1)")
             .expect("set B1 formula");
         engine
             .set_formula_a1("B2", "=A2&\" world\"")
             .expect("set B2 formula");
+        engine
+            .set_formula_a1("C1", "=BONUS")
+            .expect("set C1 formula");
 
         let text = save_to_string(&engine).expect("serialize engine");
         let loaded = load_from_str(&text).expect("deserialize engine");
@@ -308,6 +418,14 @@ mod tests {
         assert_eq!(
             loaded.cell_state_a1("B2").expect("query").value,
             Value::Text("hello world".to_string())
+        );
+        assert_eq!(
+            loaded.cell_state_a1("C1").expect("query").value,
+            Value::Number(2.5)
+        );
+        assert_eq!(
+            loaded.name_input("RATE").expect("query RATE"),
+            Some(NameInput::Number(0.2))
         );
     }
 
@@ -366,5 +484,21 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("line 2"));
         assert!(msg.contains("failed to apply cell"));
+    }
+
+    #[test]
+    fn rejects_duplicate_name_records() {
+        let input = "DVISICALC\t1\nNAME\tRATE\tN\t0.2\nNAME\tRATE\tN\t0.3\n";
+        let err = load_from_str(input).expect_err("expected parse error");
+        assert!(err.to_string().contains("duplicate name"));
+    }
+
+    #[test]
+    fn reports_line_for_invalid_name_record() {
+        let input = "DVISICALC\t1\nNAME\tA1\tN\t1\n";
+        let err = load_from_str(input).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("line 2"));
+        assert!(msg.contains("failed to apply name"));
     }
 }

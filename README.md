@@ -27,6 +27,7 @@ Numerical model (formulas + financial functions):
 The `dnavisicalc-core` crate stays library-only and I/O free:
 - VisiCalc-sized bounds (`A1`..`BK254`).
 - Formula parser with arithmetic, comparisons, references, ranges.
+- Workbook names for reusable values/formulas (names can reference cells and other names).
 - Functions: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`, `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`, `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`, `NA`, `ERROR`, `CONCAT`, `LEN`.
 - Dynamic arrays: `SEQUENCE`, `RANDARRAY`, spill references (`A1#`), `#SPILL`/`#REF` errors.
 - Deterministic dependency graph and cycle detection.
@@ -42,6 +43,7 @@ The `dnavisicalc-file` crate provides deterministic workbook serialization:
 The `dnavisicalc-tui` crate provides a terminal UI using `ratatui` + `crossterm`:
 - Grid navigation and cell editing.
 - Command mode (`:w`, `:o`, `:mode`, `:recalc`, `:set`, `:q`).
+- Name commands (`:name <NAME> <value|formula>`, `:name clear <NAME>`).
 - Full help popup (`?` / `F1`) including the supported function list.
 - Workbook header showing file, save status, and recalc mode.
 - Status messages that persist during navigation.

@@ -431,6 +431,39 @@ impl App {
                     self.status = format!("Set {cell}");
                 }
             }
+            "name" => {
+                let Some(arg1) = parts.next() else {
+                    self.status =
+                        "Usage: name <NAME> <value|formula> | name clear <NAME>".to_string();
+                    return CommandOutcome::Continue;
+                };
+                if arg1.eq_ignore_ascii_case("clear") {
+                    let Some(name) = parts.next() else {
+                        self.status =
+                            "Usage: name <NAME> <value|formula> | name clear <NAME>".to_string();
+                        return CommandOutcome::Continue;
+                    };
+                    match self.engine.clear_name(name) {
+                        Ok(()) => {
+                            self.status = format!("Cleared name {}", name.to_ascii_uppercase())
+                        }
+                        Err(err) => self.status = format!("Name error: {err}"),
+                    }
+                    return CommandOutcome::Continue;
+                }
+
+                let name = arg1;
+                let value = parts.collect::<Vec<_>>().join(" ");
+                if value.trim().is_empty() {
+                    self.status =
+                        "Usage: name <NAME> <value|formula> | name clear <NAME>".to_string();
+                    return CommandOutcome::Continue;
+                }
+                match apply_input_to_name(&mut self.engine, name, value.trim()) {
+                    Ok(()) => self.status = format!("Set name {}", name.to_ascii_uppercase()),
+                    Err(err) => self.status = format!("Name error: {err}"),
+                }
+            }
             "help" | "?" => {
                 self.help_visible = true;
                 self.status = "Help shown (press ? to close)".to_string();
@@ -511,6 +544,26 @@ fn apply_input_to_cell(engine: &mut Engine, cell_ref: &str, input: &str) -> Resu
 
     engine
         .set_text_a1(cell_ref, input.to_string())
+        .map_err(|err| err.to_string())
+}
+
+fn apply_input_to_name(engine: &mut Engine, name: &str, input: &str) -> Result<(), String> {
+    if input.starts_with('=') || input.starts_with('@') {
+        engine
+            .set_name_formula(name, input)
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    if let Ok(number) = input.parse::<f64>() {
+        engine
+            .set_name_number(name, number)
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    engine
+        .set_name_text(name, input.to_string())
         .map_err(|err| err.to_string())
 }
 

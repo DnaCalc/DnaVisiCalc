@@ -188,3 +188,38 @@ fn evaluates_lookup_and_error_functions() {
         Value::Error(_)
     ));
 }
+
+#[test]
+fn evaluates_named_values_and_formulas() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A1", 120.0).expect("A1");
+    engine
+        .set_name_formula("BASE_TOTAL", "=A1*1.1")
+        .expect("base name");
+    engine.set_name_number("TAX_RATE", 0.2).expect("tax name");
+    engine
+        .set_name_formula("GRAND_TOTAL", "=BASE_TOTAL*(1+TAX_RATE)")
+        .expect("grand name");
+    engine
+        .set_formula_a1("B1", "=GRAND_TOTAL")
+        .expect("B1 formula");
+
+    match engine.cell_state_a1("B1").expect("B1").value {
+        Value::Number(v) => assert!((v - 158.4).abs() < 1e-9),
+        other => panic!("expected numeric B1, got {other:?}"),
+    }
+}
+
+#[test]
+fn reports_name_cycle_as_cell_error() {
+    let mut engine = Engine::new();
+    engine.set_name_formula("A", "=B+1").expect("set name A");
+    engine.set_name_formula("B", "=A+1").expect("set name B");
+    engine.set_formula_a1("C1", "=A").expect("set C1");
+
+    let value = engine.cell_state_a1("C1").expect("query C1").value;
+    match value {
+        Value::Error(err) => assert!(err.to_string().contains("circular reference")),
+        other => panic!("expected cycle error, got {other:?}"),
+    }
+}

@@ -172,6 +172,8 @@ Command mode\n\
 - o <path> or open <path>: open workbook\n\
 - w with no path: write to last saved path\n\
 - set <A1> <value|formula>: assign a cell\n\
+- name <NAME> <value|formula>: assign workbook name\n\
+- name clear <NAME>: remove workbook name\n\
 - mode auto|manual: recalc mode\n\
 - r or recalc: recalculate now\n\
 - q or quit: quit\n\
@@ -281,5 +283,6 @@ mod tests {
         assert!(text.contains("Supported functions"));
         assert!(text.contains("LOOKUP"));
         assert!(text.contains("PMT"));
+        assert!(text.contains("name <NAME> <value|formula>"));
     }
 }

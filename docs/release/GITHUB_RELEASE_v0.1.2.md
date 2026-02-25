@@ -25,7 +25,7 @@ $env:DNAVISICALC_EVENT_TRACE = "event-trace.log"
 
 ## Help summary
 - Navigation: arrows / `h j k l`, `Enter`, `e`, `:`, `r`, `q`, `?`, `F1`
-- Commands: `w`, `o`, `set`, `mode auto|manual`, `recalc`, `quit`
+- Commands: `w`, `o`, `set`, `name`, `name clear`, `mode auto|manual`, `recalc`, `quit`
 - Functions:
   - aggregates/logical: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`
   - math/trig: `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`

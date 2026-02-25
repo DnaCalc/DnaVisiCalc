@@ -1,4 +1,4 @@
-use dnavisicalc_core::{CellInput, CellRef, Engine, EngineError, RecalcMode, Value};
+use dnavisicalc_core::{CellInput, CellRef, Engine, EngineError, NameInput, RecalcMode, Value};
 
 #[test]
 fn clear_resets_cells_and_values() {
@@ -59,4 +59,42 @@ fn manual_mode_allows_stale_after_clear_cell() {
     engine.clear_cell_a1("A1").expect("clear A1");
     let state = engine.cell_state_a1("B1").expect("query B1");
     assert!(state.stale);
+}
+
+#[test]
+fn name_input_accessors_roundtrip() {
+    let mut engine = Engine::new();
+    engine
+        .set_name_input("tax_rate", NameInput::Number(0.21))
+        .expect("set name");
+    engine
+        .set_name_input(
+            "greeting",
+            NameInput::Formula("=CONCAT(\"hi\", \" there\")".to_string()),
+        )
+        .expect("set formula name");
+
+    let name = engine.name_input("TAX_RATE").expect("query TAX_RATE");
+    assert_eq!(name, Some(NameInput::Number(0.21)));
+    let greeting = engine.name_input("greeting").expect("query greeting");
+    assert_eq!(
+        greeting,
+        Some(NameInput::Formula(
+            "=CONCAT(\"hi\", \" there\")".to_string()
+        ))
+    );
+}
+
+#[test]
+fn rejects_invalid_name_collisions() {
+    let mut engine = Engine::new();
+    let err = engine
+        .set_name_number("A1", 1.0)
+        .expect_err("expected invalid name");
+    assert!(err.to_string().contains("conflicts with a cell reference"));
+
+    let err = engine
+        .set_name_number("SUM", 1.0)
+        .expect_err("expected invalid name");
+    assert!(err.to_string().contains("built-in function"));
 }

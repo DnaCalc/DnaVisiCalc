@@ -43,6 +43,7 @@ Supported syntax:
 - Parentheses and unary `+ -`.
 - Comparisons: `= <> < <= > >=`.
 - Cell references: `A1`, `BK254`.
+- Workbook names: `TAX_RATE`, `_FOO` (named values/formulas).
 - Ranges: `A1...B7` and `A1:B7` (alias accepted for convenience).
 - Functions (case-insensitive; `@NAME` and `NAME` accepted):
   - `SUM`
@@ -81,6 +82,15 @@ Explicit exclusions for v0:
 - Date/time semantics.
 - Volatile functions.
 - Iterative/circular calculation semantics beyond deterministic cycle detection error.
+
+### 3.3.1 Workbook names (implemented extension)
+- Workbook-level names can be assigned to numeric/text values or formulas.
+- Name formulas can reference cells and other names.
+- Names are case-insensitive and normalized to uppercase.
+- Invalid names are rejected when they:
+  - conflict with cell addresses (for example `A1`),
+  - conflict with built-in function names,
+  - violate identifier rules (must start with letter or `_`; then letters/digits/`_`).
 
 ### 3.4 Calc tree and evaluation
 - Parse formulas into an expression AST.

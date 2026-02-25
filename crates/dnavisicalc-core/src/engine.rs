@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::address::{
-    AddressError, CellRange, CellRef, DEFAULT_SHEET_BOUNDS, SheetBounds, parse_cell_ref,
+    AddressError, CellRange, CellRef, DEFAULT_SHEET_BOUNDS, SheetBounds, is_cell_reference_token,
+    parse_cell_ref,
 };
 use crate::ast::Expr;
 use crate::deps::{CalcTree, DependencyError, build_calc_tree};
-use crate::eval::{CellError, EvalContext, RuntimeValue, Value};
+use crate::eval::{CellError, EvalContext, RuntimeValue, SUPPORTED_FUNCTIONS, Value};
 use crate::experiments::spill_overlay::{SpillOverlayError, SpillOverlayPlanner};
 use crate::experiments::spill_rewrite::{RewriteError, materialize_array_values};
 use crate::parser::{ParseError, parse_formula};
@@ -32,6 +33,13 @@ pub enum CellInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum NameInput {
+    Number(f64),
+    Text(String),
+    Formula(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CellState {
     pub value: Value,
     pub value_epoch: u64,
@@ -40,6 +48,13 @@ pub struct CellState {
 
 #[derive(Debug, Clone)]
 enum CellEntry {
+    Number(f64),
+    Text(String),
+    Formula(FormulaEntry),
+}
+
+#[derive(Debug, Clone)]
+enum NameEntry {
     Number(f64),
     Text(String),
     Formula(FormulaEntry),
@@ -64,7 +79,9 @@ pub struct Engine {
     committed_epoch: u64,
     stabilized_epoch: u64,
     cells: HashMap<CellRef, CellEntry>,
+    names: HashMap<String, NameEntry>,
     values: HashMap<CellRef, StoredValue>,
+    name_values: HashMap<String, StoredValue>,
     spill_owners: HashMap<CellRef, CellRef>,
     spill_ranges: HashMap<CellRef, CellRange>,
     calc_tree: Option<CalcTree>,
@@ -90,7 +107,9 @@ impl Engine {
             committed_epoch: 0,
             stabilized_epoch: 0,
             cells: HashMap::new(),
+            names: HashMap::new(),
             values: HashMap::new(),
+            name_values: HashMap::new(),
             spill_owners: HashMap::new(),
             spill_ranges: HashMap::new(),
             calc_tree: None,
@@ -122,7 +141,9 @@ impl Engine {
     pub fn clear(&mut self) {
         self.committed_epoch += 1;
         self.cells.clear();
+        self.names.clear();
         self.values.clear();
+        self.name_values.clear();
         self.spill_owners.clear();
         self.spill_ranges.clear();
         self.calc_tree = None;
@@ -190,6 +211,55 @@ impl Engine {
         self.maybe_recalculate()
     }
 
+    pub fn set_name_number(&mut self, name: &str, number: f64) -> Result<(), EngineError> {
+        let key = self.normalize_name(name)?;
+        self.names.insert(key, NameEntry::Number(number));
+        self.committed_epoch += 1;
+        self.maybe_recalculate()
+    }
+
+    pub fn set_name_text(
+        &mut self,
+        name: &str,
+        text: impl Into<String>,
+    ) -> Result<(), EngineError> {
+        let key = self.normalize_name(name)?;
+        let text = text.into();
+        self.names.insert(key, NameEntry::Text(text));
+        self.committed_epoch += 1;
+        self.maybe_recalculate()
+    }
+
+    pub fn set_name_formula(&mut self, name: &str, formula: &str) -> Result<(), EngineError> {
+        let key = self.normalize_name(name)?;
+        let expr = parse_formula(formula, self.bounds)?;
+        self.names.insert(
+            key,
+            NameEntry::Formula(FormulaEntry {
+                source: formula.to_string(),
+                expr,
+            }),
+        );
+        self.committed_epoch += 1;
+        self.maybe_recalculate()
+    }
+
+    pub fn set_name_input(&mut self, name: &str, input: NameInput) -> Result<(), EngineError> {
+        match input {
+            NameInput::Number(n) => self.set_name_number(name, n),
+            NameInput::Text(t) => self.set_name_text(name, t),
+            NameInput::Formula(f) => self.set_name_formula(name, &f),
+        }
+    }
+
+    pub fn clear_name(&mut self, name: &str) -> Result<(), EngineError> {
+        let key = self.normalize_name(name)?;
+        self.names.remove(&key);
+        self.name_values.remove(&key);
+        self.committed_epoch += 1;
+        self.maybe_recalculate()
+    }
+
     pub fn set_number_a1(&mut self, cell_ref: &str, number: f64) -> Result<(), EngineError> {
         let cell = parse_cell_ref(cell_ref, self.bounds)?;
         self.set_number(cell, number)
@@ -218,6 +288,9 @@ impl Engine {
         let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
         let mut literals: HashMap<CellRef, f64> = HashMap::new();
         let mut text_literals: HashMap<CellRef, String> = HashMap::new();
+        let mut name_formulas: HashMap<String, Expr> = HashMap::new();
+        let mut name_literals: HashMap<String, f64> = HashMap::new();
+        let mut name_text_literals: HashMap<String, String> = HashMap::new();
 
         for (cell, entry) in &self.cells {
             match entry {
@@ -232,6 +305,19 @@ impl Engine {
                 }
             }
         }
+        for (name, entry) in &self.names {
+            match entry {
+                NameEntry::Number(n) => {
+                    name_literals.insert(name.clone(), *n);
+                }
+                NameEntry::Text(t) => {
+                    name_text_literals.insert(name.clone(), t.clone());
+                }
+                NameEntry::Formula(formula) => {
+                    name_formulas.insert(name.clone(), formula.expr.clone());
+                }
+            }
+        }
 
         let tree = build_calc_tree(&formulas)?;
         self.recalc_serial = self.recalc_serial.wrapping_add(1);
@@ -239,10 +325,14 @@ impl Engine {
             &formulas,
             &literals,
             &text_literals,
+            &name_formulas,
+            &name_literals,
+            &name_text_literals,
             self.bounds,
             self.recalc_serial,
         );
         let mut new_values: HashMap<CellRef, StoredValue> = HashMap::new();
+        let mut new_name_values: HashMap<String, StoredValue> = HashMap::new();
         let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
 
         for (cell, number) in &literals {
@@ -270,6 +360,19 @@ impl Engine {
             let value = runtime.to_scalar();
             new_values.insert(
                 *cell,
+                StoredValue {
+                    value,
+                    value_epoch: self.committed_epoch,
+                },
+            );
+        }
+
+        let mut sorted_names: Vec<String> = self.names.keys().cloned().collect();
+        sorted_names.sort();
+        for name in sorted_names {
+            let value = evaluator.evaluate_name_runtime(&name).to_scalar();
+            new_name_values.insert(
+                name,
                 StoredValue {
                     value,
                     value_epoch: self.committed_epoch,
@@ -310,6 +413,7 @@ impl Engine {
         }
 
         self.values = new_values;
+        self.name_values = new_name_values;
         self.spill_owners = spill_owners;
         self.spill_ranges = spill_ranges;
         self.stabilized_epoch = self.committed_epoch;
@@ -436,6 +540,33 @@ impl Engine {
         entries
     }
 
+    pub fn name_input(&self, name: &str) -> Result<Option<NameInput>, EngineError> {
+        let key = self.normalize_name(name)?;
+        let entry = self.names.get(&key).map(|entry| match entry {
+            NameEntry::Number(n) => NameInput::Number(*n),
+            NameEntry::Text(t) => NameInput::Text(t.clone()),
+            NameEntry::Formula(f) => NameInput::Formula(f.source.clone()),
+        });
+        Ok(entry)
+    }
+
+    pub fn all_name_inputs(&self) -> Vec<(String, NameInput)> {
+        let mut entries: Vec<(String, NameInput)> = self
+            .names
+            .iter()
+            .map(|(name, entry)| {
+                let input = match entry {
+                    NameEntry::Number(n) => NameInput::Number(*n),
+                    NameEntry::Text(t) => NameInput::Text(t.clone()),
+                    NameEntry::Formula(f) => NameInput::Formula(f.source.clone()),
+                };
+                (name.clone(), input)
+            })
+            .collect();
+        entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+        entries
+    }
+
     fn maybe_recalculate(&mut self) -> Result<(), EngineError> {
         match self.mode {
             RecalcMode::Automatic => self.recalculate(),
@@ -451,6 +582,44 @@ impl Engine {
             return Err(EngineError::OutOfBounds(cell));
         }
         Ok(())
+    }
+
+    fn normalize_name(&self, name: &str) -> Result<String, EngineError> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(EngineError::Name("name cannot be empty".to_string()));
+        }
+        let upper = trimmed.to_ascii_uppercase();
+        let mut chars = upper.chars();
+        let Some(first) = chars.next() else {
+            return Err(EngineError::Name("name cannot be empty".to_string()));
+        };
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return Err(EngineError::Name(
+                "name must start with a letter or '_'".to_string(),
+            ));
+        }
+        if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return Err(EngineError::Name(
+                "name may only contain letters, digits, or '_'".to_string(),
+            ));
+        }
+        if upper == "TRUE" || upper == "FALSE" {
+            return Err(EngineError::Name(
+                "name cannot be TRUE or FALSE".to_string(),
+            ));
+        }
+        if is_cell_reference_token(&upper) {
+            return Err(EngineError::Name(format!(
+                "name '{upper}' conflicts with a cell reference"
+            )));
+        }
+        if SUPPORTED_FUNCTIONS.contains(&upper.as_str()) {
+            return Err(EngineError::Name(format!(
+                "name '{upper}' conflicts with a built-in function"
+            )));
+        }
+        Ok(upper)
     }
 
     fn apply_spills_overlay_inline(
@@ -750,6 +919,7 @@ pub enum EngineError {
     Address(AddressError),
     Parse(ParseError),
     Dependency(DependencyError),
+    Name(String),
     OutOfBounds(CellRef),
 }
 
@@ -759,6 +929,7 @@ impl fmt::Display for EngineError {
             Self::Address(err) => write!(f, "{err}"),
             Self::Parse(err) => write!(f, "{err}"),
             Self::Dependency(err) => write!(f, "{err}"),
+            Self::Name(message) => write!(f, "invalid name: {message}"),
             Self::OutOfBounds(cell) => write!(f, "cell {cell} is out of engine bounds"),
         }
     }

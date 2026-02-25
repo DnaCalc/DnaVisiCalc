@@ -28,9 +28,10 @@ pub enum CellError {
     DivisionByZero,
     Value(String),
     Name(String),
+    UnknownName(String),
     Ref(String),
     Spill(String),
-    Cycle(Vec<CellRef>),
+    Cycle(Vec<String>),
 }
 
 impl fmt::Display for CellError {
@@ -39,14 +40,11 @@ impl fmt::Display for CellError {
             Self::DivisionByZero => write!(f, "division by zero"),
             Self::Value(msg) => write!(f, "value error: {msg}"),
             Self::Name(name) => write!(f, "unknown function: {name}"),
+            Self::UnknownName(name) => write!(f, "unknown name: {name}"),
             Self::Ref(msg) => write!(f, "reference error: {msg}"),
             Self::Spill(msg) => write!(f, "spill error: {msg}"),
             Self::Cycle(path) => {
-                let joined = path
-                    .iter()
-                    .map(|cell| cell.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" -> ");
+                let joined = path.join(" -> ");
                 write!(f, "circular reference during evaluation: {joined}")
             }
         }
@@ -180,11 +178,30 @@ pub struct EvalContext<'a> {
     formulas: &'a HashMap<CellRef, Expr>,
     literals: &'a HashMap<CellRef, f64>,
     text_literals: &'a HashMap<CellRef, String>,
+    name_formulas: &'a HashMap<String, Expr>,
+    name_literals: &'a HashMap<String, f64>,
+    name_text_literals: &'a HashMap<String, String>,
     bounds: SheetBounds,
     cache: HashMap<CellRef, RuntimeValue>,
-    stack: Vec<CellRef>,
+    name_cache: HashMap<String, RuntimeValue>,
+    stack: Vec<EvalStackNode>,
     recalc_serial: u64,
     random_counter: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EvalStackNode {
+    Cell(CellRef),
+    Name(String),
+}
+
+impl EvalStackNode {
+    fn label(&self) -> String {
+        match self {
+            Self::Cell(cell) => cell.to_string(),
+            Self::Name(name) => format!("${name}"),
+        }
+    }
 }
 
 impl<'a> EvalContext<'a> {
@@ -192,6 +209,9 @@ impl<'a> EvalContext<'a> {
         formulas: &'a HashMap<CellRef, Expr>,
         literals: &'a HashMap<CellRef, f64>,
         text_literals: &'a HashMap<CellRef, String>,
+        name_formulas: &'a HashMap<String, Expr>,
+        name_literals: &'a HashMap<String, f64>,
+        name_text_literals: &'a HashMap<String, String>,
         bounds: SheetBounds,
         recalc_serial: u64,
     ) -> Self {
@@ -199,8 +219,12 @@ impl<'a> EvalContext<'a> {
             formulas,
             literals,
             text_literals,
+            name_formulas,
+            name_literals,
+            name_text_literals,
             bounds,
             cache: HashMap::new(),
+            name_cache: HashMap::new(),
             stack: Vec::new(),
             recalc_serial,
             random_counter: 0,
@@ -211,14 +235,21 @@ impl<'a> EvalContext<'a> {
         if let Some(value) = self.cache.get(&cell) {
             return value.clone();
         }
-        if let Some(index) = self.stack.iter().position(|c| *c == cell) {
-            let mut cycle = self.stack[index..].to_vec();
-            cycle.push(cell);
+        if let Some(index) = self
+            .stack
+            .iter()
+            .position(|node| *node == EvalStackNode::Cell(cell))
+        {
+            let mut cycle: Vec<String> = self.stack[index..]
+                .iter()
+                .map(EvalStackNode::label)
+                .collect();
+            cycle.push(cell.to_string());
             return RuntimeValue::scalar(Value::Error(CellError::Cycle(cycle)));
         }
 
         if let Some(expr) = self.formulas.get(&cell) {
-            self.stack.push(cell);
+            self.stack.push(EvalStackNode::Cell(cell));
             let value = self.evaluate_expr(expr);
             self.stack.pop();
             self.cache.insert(cell, value.clone());
@@ -239,12 +270,48 @@ impl<'a> EvalContext<'a> {
         RuntimeValue::scalar(Value::Blank)
     }
 
+    pub(crate) fn evaluate_name_runtime(&mut self, name: &str) -> RuntimeValue {
+        let upper = name.to_ascii_uppercase();
+        if let Some(value) = self.name_cache.get(&upper) {
+            return value.clone();
+        }
+        if let Some(index) = self
+            .stack
+            .iter()
+            .position(|node| *node == EvalStackNode::Name(upper.clone()))
+        {
+            let mut cycle: Vec<String> = self.stack[index..]
+                .iter()
+                .map(EvalStackNode::label)
+                .collect();
+            cycle.push(format!("${upper}"));
+            return RuntimeValue::scalar(Value::Error(CellError::Cycle(cycle)));
+        }
+
+        if let Some(expr) = self.name_formulas.get(&upper) {
+            self.stack.push(EvalStackNode::Name(upper.clone()));
+            let value = self.evaluate_expr(expr);
+            self.stack.pop();
+            self.name_cache.insert(upper, value.clone());
+            return value;
+        }
+        if let Some(number) = self.name_literals.get(&upper) {
+            return RuntimeValue::scalar(Value::Number(*number));
+        }
+        if let Some(text) = self.name_text_literals.get(&upper) {
+            return RuntimeValue::scalar(Value::Text(text.clone()));
+        }
+
+        RuntimeValue::scalar(Value::Error(CellError::UnknownName(name.to_string())))
+    }
+
     pub(crate) fn evaluate_expr(&mut self, expr: &Expr) -> RuntimeValue {
         match expr {
             Expr::Number(n) => RuntimeValue::scalar(Value::Number(*n)),
             Expr::Text(text) => RuntimeValue::scalar(Value::Text(text.clone())),
             Expr::Bool(b) => RuntimeValue::scalar(Value::Bool(*b)),
             Expr::Cell(cell) => RuntimeValue::scalar(self.evaluate_cell_runtime(*cell).to_scalar()),
+            Expr::Name(name) => RuntimeValue::scalar(self.evaluate_name_runtime(name).to_scalar()),
             Expr::SpillRef(cell) => self.evaluate_spill_ref(*cell),
             Expr::Range(_) => RuntimeValue::scalar(Value::Error(CellError::Value(
                 "range cannot be used as a scalar value".to_string(),
@@ -315,7 +382,10 @@ impl<'a> EvalContext<'a> {
         let anchor = self
             .stack
             .last()
-            .copied()
+            .and_then(|node| match node {
+                EvalStackNode::Cell(cell) => Some(*cell),
+                EvalStackNode::Name(_) => None,
+            })
             .unwrap_or(CellRef { col: 1, row: 1 });
         let mut x = self.recalc_serial
             ^ ((anchor.col as u64) << 16)

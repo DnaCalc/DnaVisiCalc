@@ -110,3 +110,23 @@ fn set_command_accepts_text_payload() {
         dnavisicalc_core::Value::Text("hello".to_string())
     );
 }
+
+#[test]
+fn name_command_sets_and_clears_names() {
+    let mut app = App::new();
+    let mut io = MemoryWorkbookIo::new();
+
+    run_command(&mut app, &mut io, "name rate 0.2");
+    assert!(app.status().contains("Set name RATE"));
+
+    run_command(&mut app, &mut io, "set A1 100");
+    run_command(&mut app, &mut io, "name total =A1*(1+RATE)");
+    run_command(&mut app, &mut io, "set B1 =TOTAL");
+    assert_eq!(
+        app.engine().cell_state_a1("B1").expect("B1").value,
+        dnavisicalc_core::Value::Number(120.0)
+    );
+
+    run_command(&mut app, &mut io, "name clear rate");
+    assert!(app.status().contains("Cleared name RATE"));
+}
