@@ -53,13 +53,15 @@ fn map_navigate_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('L') => Some(Action::ExtendRight),
         KeyCode::Char('K') => Some(Action::ExtendUp),
         KeyCode::Char('J') => Some(Action::ExtendDown),
+        KeyCode::F(3) => Some(Action::ToggleControlsFocus),
         KeyCode::Char('e') | KeyCode::Enter | KeyCode::F(2) => Some(Action::StartEdit),
         KeyCode::Char(':') => Some(Action::StartCommand),
         KeyCode::Char('?') | KeyCode::F(1) => Some(Action::ToggleHelp),
-        KeyCode::Char('r') => Some(Action::Recalculate),
-        KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Delete | KeyCode::Backspace => Some(Action::ClearSelection),
         KeyCode::Esc => Some(Action::Cancel),
+        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(Action::TypeChar(ch))
+        }
         _ => None,
     }
 }
@@ -215,6 +217,30 @@ mod tests {
         assert_eq!(
             action_from_key(AppMode::Command, key(KeyCode::Enter)),
             Some(Action::Submit)
+        );
+    }
+
+    #[test]
+    fn unbound_char_in_navigate_maps_to_type_char() {
+        assert_eq!(
+            action_from_key(AppMode::Navigate, key(KeyCode::Char('5'))),
+            Some(Action::TypeChar('5'))
+        );
+        assert_eq!(
+            action_from_key(AppMode::Navigate, key(KeyCode::Char('='))),
+            Some(Action::TypeChar('='))
+        );
+        assert_eq!(
+            action_from_key(AppMode::Navigate, key(KeyCode::Char('a'))),
+            Some(Action::TypeChar('a'))
+        );
+    }
+
+    #[test]
+    fn f3_maps_to_toggle_controls_focus() {
+        assert_eq!(
+            action_from_key(AppMode::Navigate, key(KeyCode::F(3))),
+            Some(Action::ToggleControlsFocus)
         );
     }
 

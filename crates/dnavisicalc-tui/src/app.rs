@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use dnavisicalc_core::{
-    CellFormat, CellInput, CellRef, Engine, PaletteColor, RecalcMode, Value, col_index_to_label,
+    CellFormat, CellInput, CellRange, CellRef, Engine, PaletteColor, RecalcMode, Value,
+    col_index_to_label,
 };
 
 use crate::io::WorkbookIo;
@@ -38,7 +39,24 @@ pub enum Action {
     Submit,
     Cancel,
     Recalculate,
+    ToggleChart,
+    ToggleControlsFocus,
+    TypeChar(char),
     Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlKind {
+    Slider,
+    Checkbox,
+    Button,
+}
+
+#[derive(Debug, Clone)]
+pub struct PanelControl {
+    pub name: String,
+    pub kind: ControlKind,
+    pub value: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +102,24 @@ impl PasteMode {
 }
 
 #[derive(Debug, Clone)]
+pub struct ChartState {
+    pub source_range: CellRange,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChartData {
+    pub range_label: String,
+    pub labels: Vec<String>,
+    pub series: Vec<ChartSeries>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChartSeries {
+    pub name: String,
+    pub values: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
 struct CopyCell {
     input: Option<CellInput>,
     value: Value,
@@ -118,6 +154,10 @@ pub struct App {
     last_path: Option<String>,
     last_saved_epoch: Option<u64>,
     help_visible: bool,
+    chart_state: Option<ChartState>,
+    controls: Vec<PanelControl>,
+    controls_focus: usize,
+    controls_focused: bool,
 }
 
 impl Default for App {
@@ -149,6 +189,10 @@ impl App {
             last_path: None,
             last_saved_epoch: None,
             help_visible: false,
+            chart_state: None,
+            controls: Vec::new(),
+            controls_focus: 0,
+            controls_focused: false,
         }
     }
 
@@ -231,6 +275,204 @@ impl App {
         self.status = status.into();
     }
 
+    pub fn command_hint(&self) -> &'static str {
+        let buf = self.command_buffer.trim();
+        if buf.is_empty() {
+            return "w|o|set|name|fmt|chart|ctrl|mode|r|q|help";
+        }
+        let mut parts = buf.split_whitespace();
+        let cmd = parts.next().unwrap_or("");
+        let arg1 = parts.next();
+        let arg2 = parts.next();
+
+        match cmd {
+            "w" | "write" => "w [path]",
+            "o" | "open" => "o <path>",
+            "set" => match arg1 {
+                None => "set <cell> <value|formula>",
+                Some(_) if arg2.is_none() => "set <cell> <value|formula>",
+                _ => "set <cell> <value|formula>",
+            },
+            "name" => match arg1 {
+                None => "name <NAME> <expr> | name clear <NAME>",
+                Some(a) if a.eq_ignore_ascii_case("clear") && arg2.is_none() => {
+                    "name clear <NAME>"
+                }
+                Some(_) if arg2.is_none() => "name <NAME> <value|formula>",
+                _ => "",
+            },
+            "fmt" => match arg1 {
+                None => "fmt decimals|bold|italic|fg|bg|clear",
+                Some("decimals") => "fmt decimals <0..9|none>",
+                Some("bold") => "fmt bold on|off",
+                Some("italic") => "fmt italic on|off",
+                Some("fg") => "fmt fg <color|none>",
+                Some("bg") => "fmt bg <color|none>",
+                Some("clear") => "fmt clear",
+                _ => "fmt decimals|bold|italic|fg|bg|clear",
+            },
+            "chart" => "chart — toggle bar chart from selection",
+            "ctrl" => match parts.next() {
+                None => "ctrl add slider|checkbox|button <NAME> | ctrl remove <NAME> | ctrl list",
+                Some("add") => "ctrl add slider|checkbox|button <NAME>",
+                Some("remove") => "ctrl remove <NAME>",
+                Some("list") => "ctrl list",
+                _ => "ctrl add|remove|list",
+            },
+            "mode" => "mode auto|manual",
+            "r" | "recalc" => "r — recalculate",
+            "q" | "quit" => "q — quit",
+            "help" | "?" => "help — show help",
+            _ => {
+                // Prefix match: show commands that start with what's typed
+                let candidates: Vec<&str> = ["w", "o", "set", "name", "fmt", "chart", "ctrl", "mode", "r", "q", "help"]
+                    .into_iter()
+                    .filter(|c| c.starts_with(cmd))
+                    .collect();
+                if candidates.is_empty() {
+                    ""
+                } else if candidates.len() == 1 {
+                    match candidates[0] {
+                        "w" => "w [path]",
+                        "o" => "o <path>",
+                        "set" => "set <cell> <value|formula>",
+                        "name" => "name <NAME> <expr> | name clear <NAME>",
+                        "fmt" => "fmt decimals|bold|italic|fg|bg|clear",
+                        "chart" => "chart — toggle bar chart",
+                        "ctrl" => "ctrl add|remove|list",
+                        "mode" => "mode auto|manual",
+                        _ => "",
+                    }
+                } else {
+                    "w|o|set|name|fmt|chart|ctrl|mode|r|q|help"
+                }
+            }
+        }
+    }
+
+    pub fn chart_state(&self) -> Option<&ChartState> {
+        self.chart_state.as_ref()
+    }
+
+    pub fn controls(&self) -> &[PanelControl] {
+        &self.controls
+    }
+
+    pub fn controls_focused(&self) -> bool {
+        self.controls_focused
+    }
+
+    pub fn controls_focus(&self) -> usize {
+        self.controls_focus
+    }
+
+    pub fn has_right_panel(&self) -> bool {
+        self.chart_state.is_some() || !self.controls.is_empty()
+    }
+
+    pub fn chart_data(&self) -> Option<ChartData> {
+        let chart = self.chart_state.as_ref()?;
+        let range = &chart.source_range;
+        let num_cols = range.end.col - range.start.col + 1;
+        let num_rows = range.end.row - range.start.row + 1;
+
+        let range_label = if range.start == range.end {
+            range.start.to_string()
+        } else {
+            format!("{}:{}", range.start, range.end)
+        };
+
+        let cell_value_f64 = |cell: CellRef| -> f64 {
+            self.engine
+                .cell_state(cell)
+                .ok()
+                .and_then(|s| s.value.as_f64())
+                .unwrap_or(0.0)
+        };
+
+        let cell_value_text = |cell: CellRef| -> String {
+            self.engine
+                .cell_state(cell)
+                .ok()
+                .map(|s| match &s.value {
+                    Value::Text(t) => t.clone(),
+                    Value::Number(n) => format_value(&Value::Number(*n), None),
+                    Value::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+                    Value::Blank => String::new(),
+                    Value::Error(e) => format!("#ERR {e}"),
+                })
+                .unwrap_or_default()
+        };
+
+        if num_rows == 1 {
+            // Single row: each col = a bar
+            let labels: Vec<String> = (range.start.col..=range.end.col)
+                .map(col_index_to_label)
+                .collect();
+            let values: Vec<f64> = (range.start.col..=range.end.col)
+                .map(|c| {
+                    cell_value_f64(CellRef {
+                        col: c,
+                        row: range.start.row,
+                    })
+                })
+                .collect();
+            Some(ChartData {
+                range_label,
+                labels,
+                series: vec![ChartSeries {
+                    name: range.start.row.to_string(),
+                    values,
+                }],
+            })
+        } else if num_cols == 1 {
+            // Single column: each row = a bar
+            let labels: Vec<String> = (range.start.row..=range.end.row)
+                .map(|r| r.to_string())
+                .collect();
+            let values: Vec<f64> = (range.start.row..=range.end.row)
+                .map(|r| {
+                    cell_value_f64(CellRef {
+                        col: range.start.col,
+                        row: r,
+                    })
+                })
+                .collect();
+            Some(ChartData {
+                range_label,
+                labels,
+                series: vec![ChartSeries {
+                    name: col_index_to_label(range.start.col),
+                    values,
+                }],
+            })
+        } else {
+            // Multi-row: first row = labels, remaining rows = value series
+            let labels: Vec<String> = (range.start.col..=range.end.col)
+                .map(|c| {
+                    cell_value_text(CellRef {
+                        col: c,
+                        row: range.start.row,
+                    })
+                })
+                .collect();
+            let series: Vec<ChartSeries> = (range.start.row + 1..=range.end.row)
+                .map(|r| {
+                    let name = r.to_string();
+                    let values: Vec<f64> = (range.start.col..=range.end.col)
+                        .map(|c| cell_value_f64(CellRef { col: c, row: r }))
+                        .collect();
+                    ChartSeries { name, values }
+                })
+                .collect();
+            Some(ChartData {
+                range_label,
+                labels,
+                series,
+            })
+        }
+    }
+
     pub fn volatile_recalc(&mut self) {
         let _ = self.engine.recalculate();
     }
@@ -245,6 +487,87 @@ impl App {
 
     pub fn has_stream_cells(&self) -> bool {
         self.engine.has_stream_cells()
+    }
+
+    fn apply_controls_navigate(&mut self, action: Action) -> CommandOutcome {
+        match action {
+            Action::MoveUp => {
+                if !self.controls.is_empty() && self.controls_focus > 0 {
+                    self.controls_focus -= 1;
+                }
+            }
+            Action::MoveDown => {
+                if !self.controls.is_empty()
+                    && self.controls_focus < self.controls.len() - 1
+                {
+                    self.controls_focus += 1;
+                }
+            }
+            Action::MoveLeft => {
+                if let Some(ctrl) = self.controls.get(self.controls_focus) {
+                    if ctrl.kind == ControlKind::Slider {
+                        let new_val = (ctrl.value - 1.0).max(0.0);
+                        self.controls[self.controls_focus].value = new_val;
+                        self.sync_control_to_engine(self.controls_focus);
+                    }
+                }
+            }
+            Action::MoveRight => {
+                if let Some(ctrl) = self.controls.get(self.controls_focus) {
+                    if ctrl.kind == ControlKind::Slider {
+                        let new_val = (ctrl.value + 1.0).min(100.0);
+                        self.controls[self.controls_focus].value = new_val;
+                        self.sync_control_to_engine(self.controls_focus);
+                    }
+                }
+            }
+            Action::ExtendLeft => {
+                if let Some(ctrl) = self.controls.get(self.controls_focus) {
+                    if ctrl.kind == ControlKind::Slider {
+                        let new_val = (ctrl.value - 10.0).max(0.0);
+                        self.controls[self.controls_focus].value = new_val;
+                        self.sync_control_to_engine(self.controls_focus);
+                    }
+                }
+            }
+            Action::ExtendRight => {
+                if let Some(ctrl) = self.controls.get(self.controls_focus) {
+                    if ctrl.kind == ControlKind::Slider {
+                        let new_val = (ctrl.value + 10.0).min(100.0);
+                        self.controls[self.controls_focus].value = new_val;
+                        self.sync_control_to_engine(self.controls_focus);
+                    }
+                }
+            }
+            Action::Submit | Action::TypeChar(' ') => {
+                if let Some(ctrl) = self.controls.get(self.controls_focus) {
+                    match ctrl.kind {
+                        ControlKind::Checkbox => {
+                            let new_val = if ctrl.value == 0.0 { 1.0 } else { 0.0 };
+                            self.controls[self.controls_focus].value = new_val;
+                            self.sync_control_to_engine(self.controls_focus);
+                        }
+                        ControlKind::Button => {
+                            self.controls[self.controls_focus].value += 1.0;
+                            self.sync_control_to_engine(self.controls_focus);
+                        }
+                        ControlKind::Slider => {}
+                    }
+                }
+            }
+            Action::Cancel | Action::ToggleControlsFocus => {
+                self.controls_focused = false;
+                self.status = "Controls unfocused".to_string();
+            }
+            _ => {}
+        }
+        CommandOutcome::Continue
+    }
+
+    fn sync_control_to_engine(&mut self, index: usize) {
+        if let Some(ctrl) = self.controls.get(index) {
+            let _ = self.engine.set_name_number(&ctrl.name, ctrl.value);
+        }
     }
 
     fn is_dirty(&self) -> bool {
@@ -344,6 +667,9 @@ impl App {
     }
 
     fn apply_navigate(&mut self, action: Action, io: &mut dyn WorkbookIo) -> CommandOutcome {
+        if self.controls_focused {
+            return self.apply_controls_navigate(action);
+        }
         match action {
             Action::MoveLeft => self.move_selection(-1, 0, false),
             Action::MoveRight => self.move_selection(1, 0, false),
@@ -405,6 +731,44 @@ impl App {
                 Ok(()) => self.status = "Recalculated".to_string(),
                 Err(err) => self.status = format!("Recalc error: {err}"),
             },
+            Action::ToggleControlsFocus => {
+                if !self.controls.is_empty() {
+                    self.controls_focused = true;
+                    if self.controls_focus >= self.controls.len() {
+                        self.controls_focus = 0;
+                    }
+                    self.status = "Controls focused (↑↓ navigate, ←→ adjust, Space toggle, Esc back)".to_string();
+                } else {
+                    self.status = "No controls defined. Use :ctrl add slider|checkbox|button <NAME>".to_string();
+                }
+            }
+            Action::ToggleChart => {
+                if self.chart_state.is_some() {
+                    self.chart_state = None;
+                    self.status = "Chart removed".to_string();
+                } else {
+                    let range = self.selected_range();
+                    let label = if range.start == range.end {
+                        range.start.to_string()
+                    } else {
+                        format!("{}:{}", range.start, range.end)
+                    };
+                    self.chart_state = Some(ChartState {
+                        source_range: range,
+                    });
+                    self.status = format!("Chart: {label}");
+                }
+            }
+            Action::TypeChar(ch) => {
+                if let Some(reason) = self.editing_block_reason(self.selected) {
+                    self.status = reason;
+                    return CommandOutcome::Continue;
+                }
+                self.mode = AppMode::Edit;
+                self.edit_buffer.clear();
+                self.edit_buffer.push(ch);
+                self.status = format!("Edit {}", self.selected);
+            }
             Action::Quit => return CommandOutcome::Quit,
             Action::Cancel => {
                 if self.help_visible {
@@ -456,6 +820,9 @@ impl App {
             | Action::PasteModeNext
             | Action::PasteModePrev
             | Action::ToggleHelp
+            | Action::ToggleChart
+            | Action::ToggleControlsFocus
+            | Action::TypeChar(_)
             | Action::StartEdit
             | Action::StartCommand
             | Action::Recalculate
@@ -495,6 +862,9 @@ impl App {
             | Action::PasteModeNext
             | Action::PasteModePrev
             | Action::ToggleHelp
+            | Action::ToggleChart
+            | Action::ToggleControlsFocus
+            | Action::TypeChar(_)
             | Action::StartEdit
             | Action::StartCommand
             | Action::Recalculate
@@ -546,6 +916,9 @@ impl App {
             | Action::PasteFromClipboard
             | Action::BeginPasteFromClipboard(_)
             | Action::ToggleHelp
+            | Action::ToggleChart
+            | Action::ToggleControlsFocus
+            | Action::TypeChar(_)
             | Action::StartEdit
             | Action::StartCommand
             | Action::Backspace
@@ -761,6 +1134,110 @@ impl App {
                 match result {
                     Ok(()) => self.status = format!("Formatted {}", self.selection_label()),
                     Err(err) => self.status = format!("Format error: {err}"),
+                }
+            }
+            "chart" => {
+                if self.chart_state.is_some() {
+                    self.chart_state = None;
+                    self.status = "Chart removed".to_string();
+                } else {
+                    let range = self.selected_range();
+                    let label = if range.start == range.end {
+                        range.start.to_string()
+                    } else {
+                        format!("{}:{}", range.start, range.end)
+                    };
+                    self.chart_state = Some(ChartState {
+                        source_range: range,
+                    });
+                    self.status = format!("Chart: {label}");
+                }
+            }
+            "ctrl" => {
+                let Some(sub) = parts.next() else {
+                    self.status = "Usage: ctrl add slider|checkbox|button <NAME> | ctrl remove <NAME> | ctrl list".to_string();
+                    return CommandOutcome::Continue;
+                };
+                match sub {
+                    "add" => {
+                        let Some(kind_str) = parts.next() else {
+                            self.status = "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
+                            return CommandOutcome::Continue;
+                        };
+                        let kind = match kind_str {
+                            "slider" => ControlKind::Slider,
+                            "checkbox" => ControlKind::Checkbox,
+                            "button" => ControlKind::Button,
+                            _ => {
+                                self.status = "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
+                                return CommandOutcome::Continue;
+                            }
+                        };
+                        let Some(name) = parts.next() else {
+                            self.status = "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
+                            return CommandOutcome::Continue;
+                        };
+                        let name_upper = name.to_ascii_uppercase();
+                        if self.controls.iter().any(|c| c.name == name_upper) {
+                            self.status = format!("Control {name_upper} already exists");
+                            return CommandOutcome::Continue;
+                        }
+                        if self.controls.len() >= 6 {
+                            self.status = "Maximum 6 controls allowed".to_string();
+                            return CommandOutcome::Continue;
+                        }
+                        let initial_value = match kind {
+                            ControlKind::Slider => 50.0,
+                            ControlKind::Checkbox => 0.0,
+                            ControlKind::Button => 0.0,
+                        };
+                        self.controls.push(PanelControl {
+                            name: name_upper.clone(),
+                            kind,
+                            value: initial_value,
+                        });
+                        let idx = self.controls.len() - 1;
+                        self.sync_control_to_engine(idx);
+                        self.status = format!("Added {kind_str} control {name_upper}");
+                    }
+                    "remove" => {
+                        let Some(name) = parts.next() else {
+                            self.status = "Usage: ctrl remove <NAME>".to_string();
+                            return CommandOutcome::Continue;
+                        };
+                        let name_upper = name.to_ascii_uppercase();
+                        if let Some(pos) = self.controls.iter().position(|c| c.name == name_upper) {
+                            self.controls.remove(pos);
+                            let _ = self.engine.clear_name(&name_upper);
+                            if self.controls_focus >= self.controls.len() && !self.controls.is_empty() {
+                                self.controls_focus = self.controls.len() - 1;
+                            }
+                            if self.controls.is_empty() {
+                                self.controls_focused = false;
+                            }
+                            self.status = format!("Removed control {name_upper}");
+                        } else {
+                            self.status = format!("No control named {name_upper}");
+                        }
+                    }
+                    "list" => {
+                        if self.controls.is_empty() {
+                            self.status = "No controls defined".to_string();
+                        } else {
+                            let list: Vec<String> = self.controls.iter().map(|c| {
+                                let kind_str = match c.kind {
+                                    ControlKind::Slider => "slider",
+                                    ControlKind::Checkbox => "checkbox",
+                                    ControlKind::Button => "button",
+                                };
+                                format!("{}({}={}", c.name, kind_str, c.value)
+                            }).collect();
+                            self.status = format!("Controls: {}", list.join(", "));
+                        }
+                    }
+                    _ => {
+                        self.status = "Usage: ctrl add slider|checkbox|button <NAME> | ctrl remove <NAME> | ctrl list".to_string();
+                    }
                 }
             }
             "help" | "?" => {
@@ -1730,5 +2207,240 @@ mod tests {
         app.apply(Action::Cancel, &mut io);
         assert!(!app.help_visible());
         assert_eq!(app.mode(), AppMode::Navigate);
+    }
+
+    #[test]
+    fn toggle_chart_creates_and_removes() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        // Select A1:A3
+        app.apply(Action::ExtendDown, &mut io);
+        app.apply(Action::ExtendDown, &mut io);
+
+        app.apply(Action::ToggleChart, &mut io);
+        assert!(app.chart_state().is_some());
+        let cs = app.chart_state().unwrap();
+        assert_eq!(cs.source_range.start, CellRef::from_a1("A1").unwrap());
+        assert_eq!(cs.source_range.end, CellRef::from_a1("A3").unwrap());
+        assert!(app.status().contains("Chart:"));
+
+        app.apply(Action::ToggleChart, &mut io);
+        assert!(app.chart_state().is_none());
+        assert!(app.status().contains("Chart removed"));
+    }
+
+    #[test]
+    fn chart_data_returns_values_from_source_range() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "set A1 10");
+        run_command(&mut app, &mut io, "set A2 20");
+        run_command(&mut app, &mut io, "set A3 30");
+
+        // Select A1:A3
+        app.apply(Action::ExtendDown, &mut io);
+        app.apply(Action::ExtendDown, &mut io);
+        app.apply(Action::ToggleChart, &mut io);
+
+        let data = app.chart_data().expect("chart data should exist");
+        assert_eq!(data.labels, vec!["1", "2", "3"]);
+        assert_eq!(data.series.len(), 1);
+        assert_eq!(data.series[0].values, vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn type_char_in_navigate_starts_edit_with_fresh_buffer() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        // Pre-populate A1
+        run_command(&mut app, &mut io, "set A1 99");
+        assert_eq!(app.mode(), AppMode::Navigate);
+
+        // Type '5' in Navigate mode → enters Edit with just "5", not "995"
+        app.apply(Action::TypeChar('5'), &mut io);
+        assert_eq!(app.mode(), AppMode::Edit);
+        assert_eq!(app.edit_buffer(), "5");
+
+        // Continue typing and submit
+        app.apply(Action::InputChar('0'), &mut io);
+        app.apply(Action::Submit, &mut io);
+        assert_eq!(app.mode(), AppMode::Navigate);
+        assert_eq!(
+            app.engine().cell_state_a1("A1").expect("A1").value,
+            Value::Number(50.0)
+        );
+    }
+
+    #[test]
+    fn type_char_on_spilled_cell_is_blocked() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "set A1 =SEQUENCE(2)");
+        app.apply(Action::MoveDown, &mut io);
+
+        app.apply(Action::TypeChar('1'), &mut io);
+        assert_eq!(app.mode(), AppMode::Navigate);
+        assert!(app.status().contains("Cannot edit spilled cell"));
+    }
+
+    #[test]
+    fn esc_in_edit_discards_changes() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "set A1 42");
+        app.apply(Action::TypeChar('9'), &mut io);
+        app.apply(Action::InputChar('9'), &mut io);
+        assert_eq!(app.edit_buffer(), "99");
+
+        app.apply(Action::Cancel, &mut io);
+        assert_eq!(app.mode(), AppMode::Navigate);
+        assert_eq!(
+            app.engine().cell_state_a1("A1").expect("A1").value,
+            Value::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn command_hint_changes_with_input() {
+        let app = App::new();
+        assert!(app.command_hint().contains("w"));
+        assert!(app.command_hint().contains("fmt"));
+    }
+
+    #[test]
+    fn ctrl_add_creates_control_and_sets_engine_name() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "ctrl add slider RATE");
+        assert_eq!(app.controls().len(), 1);
+        assert_eq!(app.controls()[0].name, "RATE");
+        assert_eq!(app.controls()[0].kind, ControlKind::Slider);
+        assert_eq!(app.controls()[0].value, 50.0);
+
+        // Engine name should be set — verify via a formula referencing it
+        run_command(&mut app, &mut io, "set A1 =RATE");
+        assert_eq!(
+            app.engine().cell_state_a1("A1").expect("A1").value,
+            Value::Number(50.0)
+        );
+    }
+
+    #[test]
+    fn ctrl_add_checkbox_and_button() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "ctrl add checkbox ENABLED");
+        assert_eq!(app.controls()[0].kind, ControlKind::Checkbox);
+        assert_eq!(app.controls()[0].value, 0.0);
+
+        run_command(&mut app, &mut io, "ctrl add button GO");
+        assert_eq!(app.controls()[1].kind, ControlKind::Button);
+        assert_eq!(app.controls()[1].value, 0.0);
+    }
+
+    #[test]
+    fn ctrl_remove_clears_control_and_name() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "ctrl add slider RATE");
+        assert_eq!(app.controls().len(), 1);
+
+        run_command(&mut app, &mut io, "ctrl remove RATE");
+        assert!(app.controls().is_empty());
+        // Name should be cleared — formula referencing it should error
+        run_command(&mut app, &mut io, "set A1 =RATE");
+        let val = app.engine().cell_state_a1("A1").expect("A1").value;
+        assert!(matches!(val, Value::Error(_)));
+    }
+
+    #[test]
+    fn controls_navigate_adjusts_slider() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "ctrl add slider RATE");
+        // Set up a formula that references RATE before focusing controls
+        run_command(&mut app, &mut io, "set A1 =RATE");
+
+        app.apply(Action::ToggleControlsFocus, &mut io);
+        assert!(app.controls_focused());
+
+        // Right arrow increments by 1
+        app.apply(Action::MoveRight, &mut io);
+        assert_eq!(app.controls()[0].value, 51.0);
+
+        // Left arrow decrements by 1
+        app.apply(Action::MoveLeft, &mut io);
+        assert_eq!(app.controls()[0].value, 50.0);
+
+        // Shift+Right increments by 10
+        app.apply(Action::ExtendRight, &mut io);
+        assert_eq!(app.controls()[0].value, 60.0);
+
+        // Shift+Left decrements by 10
+        app.apply(Action::ExtendLeft, &mut io);
+        assert_eq!(app.controls()[0].value, 50.0);
+
+        // Engine name should reflect
+        assert_eq!(
+            app.engine().cell_state_a1("A1").expect("A1").value,
+            Value::Number(50.0)
+        );
+    }
+
+    #[test]
+    fn checkbox_toggle_via_activate() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "ctrl add checkbox ENABLED");
+        app.apply(Action::ToggleControlsFocus, &mut io);
+        assert!(app.controls_focused());
+
+        assert_eq!(app.controls()[0].value, 0.0);
+        app.apply(Action::TypeChar(' '), &mut io);
+        assert_eq!(app.controls()[0].value, 1.0);
+        app.apply(Action::TypeChar(' '), &mut io);
+        assert_eq!(app.controls()[0].value, 0.0);
+    }
+
+    #[test]
+    fn button_press_increments_count() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "ctrl add button GO");
+        app.apply(Action::ToggleControlsFocus, &mut io);
+
+        app.apply(Action::Submit, &mut io);
+        assert_eq!(app.controls()[0].value, 1.0);
+        app.apply(Action::Submit, &mut io);
+        assert_eq!(app.controls()[0].value, 2.0);
+    }
+
+    #[test]
+    fn toggle_controls_focus() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        // No controls: F3 does nothing
+        app.apply(Action::ToggleControlsFocus, &mut io);
+        assert!(!app.controls_focused());
+
+        run_command(&mut app, &mut io, "ctrl add slider X");
+        app.apply(Action::ToggleControlsFocus, &mut io);
+        assert!(app.controls_focused());
+
+        // Esc exits focus
+        app.apply(Action::Cancel, &mut io);
+        assert!(!app.controls_focused());
     }
 }

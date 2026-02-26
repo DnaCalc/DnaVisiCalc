@@ -59,7 +59,7 @@ fn vim_and_command_keys_map_in_navigation_mode() {
     );
     assert_eq!(
         action_from_key(AppMode::Navigate, key(KeyCode::Char('r'))),
-        Some(Action::Recalculate)
+        Some(Action::TypeChar('r'))
     );
     assert_eq!(
         action_from_key(AppMode::Navigate, key(KeyCode::F(1))),

@@ -14,8 +14,10 @@ fn action_strategy() -> impl Strategy<Value = Action> {
         Just(Action::Submit),
         Just(Action::Cancel),
         Just(Action::Recalculate),
+        Just(Action::ToggleControlsFocus),
         Just(Action::Quit),
         proptest::char::range(' ', '~').prop_map(Action::InputChar),
+        proptest::char::range(' ', '~').prop_map(Action::TypeChar),
     ]
 }
 

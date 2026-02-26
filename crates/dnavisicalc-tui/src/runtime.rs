@@ -82,10 +82,15 @@ fn run_event_loop(
     loop {
         let term_size = terminal.size()?;
         let grid_area_height = term_size.height.saturating_sub(6).max(1);
+        let grid_area_width = if app.has_right_panel() {
+            (term_size.width as u32 * 67 / 100) as u16
+        } else {
+            term_size.width
+        };
         let (grid_width, grid_height) = compute_grid_dimensions(ratatui::layout::Rect {
             x: 0,
             y: 0,
-            width: term_size.width,
+            width: grid_area_width,
             height: grid_area_height,
         });
         app.set_viewport_dimensions(grid_width, grid_height);
@@ -109,11 +114,16 @@ fn run_event_loop(
                 }
                 Event::Resize(width, height) => {
                     let grid_area_height = height.saturating_sub(6).max(1);
+                    let grid_area_width = if app.has_right_panel() {
+                        (width as u32 * 67 / 100) as u16
+                    } else {
+                        width
+                    };
                     let (grid_width, grid_height) =
                         compute_grid_dimensions(ratatui::layout::Rect {
                             x: 0,
                             y: 0,
-                            width,
+                            width: grid_area_width,
                             height: grid_area_height,
                         });
                     app.set_viewport_dimensions(grid_width, grid_height);
