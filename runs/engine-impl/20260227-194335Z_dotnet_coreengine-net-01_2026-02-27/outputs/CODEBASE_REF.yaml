@@ -1,9 +1,4 @@
-runtime: dotnet
-implementation_id: coreengine-net-01
-location:
-  type: in-tree
-  path: engines/dotnet/coreengine-net-01
-git:
-  commit: <fill>
-  branch: <fill>
-  dirty: false
+mode: in-tree
+path: engines/dotnet/coreengine-net-01
+commit: a1021b273bfc56627a319f0a1c7ad8f4f341037e
+artifact_primary: engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/publish/Dvc.Native.dll

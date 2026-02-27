@@ -2,12 +2,8 @@
   "hash_algorithm": "sha256",
   "artifacts": [
     {
-      "path": "outputs/CODEBASE_REF.yaml",
-      "sha256": "<fill>"
-    },
-    {
-      "path": "validation/SUMMARY.yaml",
-      "sha256": "<fill>"
+      "path": "engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/publish/Dvc.Native.dll",
+      "sha256": "005b06e680acb52ea4d0cd8fc31e66a70fef97bf970f71fad509b97da171df62"
     }
   ]
 }

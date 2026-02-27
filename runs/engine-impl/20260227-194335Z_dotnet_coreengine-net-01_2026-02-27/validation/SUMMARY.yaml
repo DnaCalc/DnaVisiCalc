@@ -1,7 +1,14 @@
-status: pass
-summary: <short summary>
-failures: []
-blocked_reason: ""
+status: completed
 forbidden_access_count: 0
 api_boundary_exception_count: 0
-clean_room_attested: false
+clean_room_attested: true
+sdk_target: .NET 10
+sdk_detected:
+  - 10.0.103
+  - 10.0.200-preview.0.26103.119
+build: pass
+tests: pass
+native_publish: pass
+native_artifact: engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/publish/Dvc.Native.dll
+notes:
+  - NativeAOT publish required explicit MSVC and Windows SDK linker environment variables.

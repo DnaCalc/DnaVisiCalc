@@ -3,27 +3,27 @@
   "inputs": [
     {
       "path": "docs/full-engine-spec/2026-02-27/SPEC_v0.md",
-      "sha256": "<fill>"
+      "sha256": "4fb0d4a5ecac278e397e7a9cd08cfe9b3885eefd203dbdb0d51a7d757efdfd97"
     },
     {
       "path": "docs/full-engine-spec/2026-02-27/ENGINE_REQUIREMENTS.md",
-      "sha256": "<fill>"
+      "sha256": "13677b20e70a206fea4187f96ea390895c572053178b1ba77080a587f00f49fb"
     },
     {
       "path": "docs/full-engine-spec/2026-02-27/ENGINE_API.md",
-      "sha256": "<fill>"
+      "sha256": "b686d5b8fecd58d6cfca811857cb0abcd224ca0cf0b018d4d4a23b7751e55765"
     },
     {
       "path": "runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27/inputs/PROMPT_INPUT.md",
-      "sha256": "<fill>"
+      "sha256": "ac40ab92bd06ba86758617189dff999883474c1bd4526eda05a9495dc737188b"
     },
     {
       "path": "runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27/inputs/RUN_ADDITIONAL_REQUIREMENTS.md",
-      "sha256": "<fill>"
+      "sha256": "9f5bc26df44ab6d25c92ec6018789246a5f7403475b836ed33bd6c9540bc5881"
     },
     {
       "path": "runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27/inputs/CONTEXT_POLICY.yaml",
-      "sha256": "<fill>"
+      "sha256": "4fb184432d9a4d154bf551641ccf2cfd2608a967a0ca3f41c17b9e8ce3b788ed"
     }
   ]
 }

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Dvc.Core/Dvc.Core.csproj" />
+    <Project Path="src/Dvc.Native/Dvc.Native.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Dvc.Core.Tests/Dvc.Core.Tests.csproj" />
+    <Project Path="tests/Dvc.E2E.Tests/Dvc.E2E.Tests.csproj" />
+    <Project Path="tests/Dvc.Interop.Tests/Dvc.Interop.Tests.csproj" />
+  </Folder>
+</Solution>
