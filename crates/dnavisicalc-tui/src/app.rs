@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crossterm::event::KeyEvent;
 use dnavisicalc_core::{
     CellFormat, CellInput, CellRange, CellRef, Engine, PaletteColor, RecalcMode, Value,
     col_index_to_label,
@@ -134,7 +135,7 @@ struct CopyBuffer {
     text: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct App {
     engine: Engine,
     mode: AppMode,
@@ -278,7 +279,7 @@ impl App {
     pub fn command_hint(&self) -> &'static str {
         let buf = self.command_buffer.trim();
         if buf.is_empty() {
-            return "w|o|set|name|fmt|chart|ctrl|mode|r|q|help";
+            return "w|o|set|name|fmt|chart|ctrl|insrow|delrow|inscol|delcol|mode|r|q|help";
         }
         let mut parts = buf.split_whitespace();
         let cmd = parts.next().unwrap_or("");
@@ -295,9 +296,7 @@ impl App {
             },
             "name" => match arg1 {
                 None => "name <NAME> <expr> | name clear <NAME>",
-                Some(a) if a.eq_ignore_ascii_case("clear") && arg2.is_none() => {
-                    "name clear <NAME>"
-                }
+                Some(a) if a.eq_ignore_ascii_case("clear") && arg2.is_none() => "name clear <NAME>",
                 Some(_) if arg2.is_none() => "name <NAME> <value|formula>",
                 _ => "",
             },
@@ -319,16 +318,23 @@ impl App {
                 Some("list") => "ctrl list",
                 _ => "ctrl add|remove|list",
             },
+            "insrow" | "insertrow" | "ir" => "insrow [at]",
+            "delrow" | "deleterow" | "dr" => "delrow [at]",
+            "inscol" | "insertcol" | "ic" => "inscol [at]",
+            "delcol" | "deletecol" | "dc" => "delcol [at]",
             "mode" => "mode auto|manual",
             "r" | "recalc" => "r — recalculate",
             "q" | "quit" => "q — quit",
             "help" | "?" => "help — show help",
             _ => {
                 // Prefix match: show commands that start with what's typed
-                let candidates: Vec<&str> = ["w", "o", "set", "name", "fmt", "chart", "ctrl", "mode", "r", "q", "help"]
-                    .into_iter()
-                    .filter(|c| c.starts_with(cmd))
-                    .collect();
+                let candidates: Vec<&str> = [
+                    "w", "o", "set", "name", "fmt", "chart", "ctrl", "insrow", "delrow", "inscol",
+                    "delcol", "mode", "r", "q", "help",
+                ]
+                .into_iter()
+                .filter(|c| c.starts_with(cmd))
+                .collect();
                 if candidates.is_empty() {
                     ""
                 } else if candidates.len() == 1 {
@@ -340,11 +346,15 @@ impl App {
                         "fmt" => "fmt decimals|bold|italic|fg|bg|clear",
                         "chart" => "chart — toggle bar chart",
                         "ctrl" => "ctrl add|remove|list",
+                        "insrow" => "insrow [at]",
+                        "delrow" => "delrow [at]",
+                        "inscol" => "inscol [at]",
+                        "delcol" => "delcol [at]",
                         "mode" => "mode auto|manual",
                         _ => "",
                     }
                 } else {
-                    "w|o|set|name|fmt|chart|ctrl|mode|r|q|help"
+                    "w|o|set|name|fmt|chart|ctrl|insrow|delrow|inscol|delcol|mode|r|q|help"
                 }
             }
         }
@@ -474,7 +484,7 @@ impl App {
     }
 
     pub fn volatile_recalc(&mut self) {
-        let _ = self.engine.recalculate();
+        let _ = self.engine.invalidate_volatile();
     }
 
     pub fn tick_streams(&mut self, elapsed_secs: f64) -> bool {
@@ -497,9 +507,7 @@ impl App {
                 }
             }
             Action::MoveDown => {
-                if !self.controls.is_empty()
-                    && self.controls_focus < self.controls.len() - 1
-                {
+                if !self.controls.is_empty() && self.controls_focus < self.controls.len() - 1 {
                     self.controls_focus += 1;
                 }
             }
@@ -737,9 +745,13 @@ impl App {
                     if self.controls_focus >= self.controls.len() {
                         self.controls_focus = 0;
                     }
-                    self.status = "Controls focused (↑↓ navigate, ←→ adjust, Space toggle, Esc back)".to_string();
+                    self.status =
+                        "Controls focused (↑↓ navigate, ←→ adjust, Space toggle, Esc back)"
+                            .to_string();
                 } else {
-                    self.status = "No controls defined. Use :ctrl add slider|checkbox|button <NAME>".to_string();
+                    self.status =
+                        "No controls defined. Use :ctrl add slider|checkbox|button <NAME>"
+                            .to_string();
                 }
             }
             Action::ToggleChart => {
@@ -1161,7 +1173,8 @@ impl App {
                 match sub {
                     "add" => {
                         let Some(kind_str) = parts.next() else {
-                            self.status = "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
+                            self.status =
+                                "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
                             return CommandOutcome::Continue;
                         };
                         let kind = match kind_str {
@@ -1169,12 +1182,14 @@ impl App {
                             "checkbox" => ControlKind::Checkbox,
                             "button" => ControlKind::Button,
                             _ => {
-                                self.status = "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
+                                self.status =
+                                    "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
                                 return CommandOutcome::Continue;
                             }
                         };
                         let Some(name) = parts.next() else {
-                            self.status = "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
+                            self.status =
+                                "Usage: ctrl add slider|checkbox|button <NAME>".to_string();
                             return CommandOutcome::Continue;
                         };
                         let name_upper = name.to_ascii_uppercase();
@@ -1209,7 +1224,9 @@ impl App {
                         if let Some(pos) = self.controls.iter().position(|c| c.name == name_upper) {
                             self.controls.remove(pos);
                             let _ = self.engine.clear_name(&name_upper);
-                            if self.controls_focus >= self.controls.len() && !self.controls.is_empty() {
+                            if self.controls_focus >= self.controls.len()
+                                && !self.controls.is_empty()
+                            {
                                 self.controls_focus = self.controls.len() - 1;
                             }
                             if self.controls.is_empty() {
@@ -1224,20 +1241,80 @@ impl App {
                         if self.controls.is_empty() {
                             self.status = "No controls defined".to_string();
                         } else {
-                            let list: Vec<String> = self.controls.iter().map(|c| {
-                                let kind_str = match c.kind {
-                                    ControlKind::Slider => "slider",
-                                    ControlKind::Checkbox => "checkbox",
-                                    ControlKind::Button => "button",
-                                };
-                                format!("{}({}={}", c.name, kind_str, c.value)
-                            }).collect();
+                            let list: Vec<String> = self
+                                .controls
+                                .iter()
+                                .map(|c| {
+                                    let kind_str = match c.kind {
+                                        ControlKind::Slider => "slider",
+                                        ControlKind::Checkbox => "checkbox",
+                                        ControlKind::Button => "button",
+                                    };
+                                    format!("{}({}={}", c.name, kind_str, c.value)
+                                })
+                                .collect();
                             self.status = format!("Controls: {}", list.join(", "));
                         }
                     }
                     _ => {
                         self.status = "Usage: ctrl add slider|checkbox|button <NAME> | ctrl remove <NAME> | ctrl list".to_string();
                     }
+                }
+            }
+            "insrow" | "insertrow" | "ir" => {
+                let Some(at) = parse_optional_u16(parts.next(), self.selected.row) else {
+                    self.status = "Usage: insrow [at]".to_string();
+                    return CommandOutcome::Continue;
+                };
+                if parts.next().is_some() {
+                    self.status = "Usage: insrow [at]".to_string();
+                    return CommandOutcome::Continue;
+                }
+                match self.engine.insert_row(at) {
+                    Ok(()) => self.status = format!("Inserted row {at}"),
+                    Err(err) => self.status = format!("Insert row error: {err}"),
+                }
+            }
+            "delrow" | "deleterow" | "dr" => {
+                let Some(at) = parse_optional_u16(parts.next(), self.selected.row) else {
+                    self.status = "Usage: delrow [at]".to_string();
+                    return CommandOutcome::Continue;
+                };
+                if parts.next().is_some() {
+                    self.status = "Usage: delrow [at]".to_string();
+                    return CommandOutcome::Continue;
+                }
+                match self.engine.delete_row(at) {
+                    Ok(()) => self.status = format!("Deleted row {at}"),
+                    Err(err) => self.status = format!("Delete row error: {err}"),
+                }
+            }
+            "inscol" | "insertcol" | "ic" => {
+                let Some(at) = parse_optional_u16(parts.next(), self.selected.col) else {
+                    self.status = "Usage: inscol [at]".to_string();
+                    return CommandOutcome::Continue;
+                };
+                if parts.next().is_some() {
+                    self.status = "Usage: inscol [at]".to_string();
+                    return CommandOutcome::Continue;
+                }
+                match self.engine.insert_col(at) {
+                    Ok(()) => self.status = format!("Inserted col {at}"),
+                    Err(err) => self.status = format!("Insert col error: {err}"),
+                }
+            }
+            "delcol" | "deletecol" | "dc" => {
+                let Some(at) = parse_optional_u16(parts.next(), self.selected.col) else {
+                    self.status = "Usage: delcol [at]".to_string();
+                    return CommandOutcome::Continue;
+                };
+                if parts.next().is_some() {
+                    self.status = "Usage: delcol [at]".to_string();
+                    return CommandOutcome::Continue;
+                }
+                match self.engine.delete_col(at) {
+                    Ok(()) => self.status = format!("Deleted col {at}"),
+                    Err(err) => self.status = format!("Delete col error: {err}"),
                 }
             }
             "help" | "?" => {
@@ -1586,6 +1663,13 @@ fn parse_on_off(input: &str) -> Option<bool> {
     }
 }
 
+fn parse_optional_u16(input: Option<&str>, default: u16) -> Option<u16> {
+    match input {
+        Some(raw) => raw.parse::<u16>().ok(),
+        None => Some(default),
+    }
+}
+
 impl CopyBuffer {
     fn cell_at(&self, col_off: u16, row_off: u16) -> Option<&CopyCell> {
         if col_off >= self.width || row_off >= self.height {
@@ -1747,13 +1831,32 @@ impl ScriptRunner {
     }
 
     pub fn run(&mut self, actions: &[Action]) {
+        self.run_actions(actions);
+    }
+
+    pub fn run_actions(&mut self, actions: &[Action]) {
         for action in actions {
-            let outcome = self.app.apply(action.clone(), &mut self.io);
-            self.outcomes.push(outcome.clone());
-            if outcome == CommandOutcome::Quit {
+            if self.apply_action(action.clone()) == CommandOutcome::Quit {
                 break;
             }
         }
+    }
+
+    pub fn run_keys(&mut self, keys: &[KeyEvent]) {
+        for key in keys {
+            let mode = self.app.mode();
+            if let Some(action) = crate::action_from_key(mode, key.clone())
+                && self.apply_action(action) == CommandOutcome::Quit
+            {
+                break;
+            }
+        }
+    }
+
+    fn apply_action(&mut self, action: Action) -> CommandOutcome {
+        let outcome = self.app.apply(action, &mut self.io);
+        self.outcomes.push(outcome.clone());
+        outcome
     }
 
     pub fn files(&self) -> &HashMap<String, String> {
@@ -1764,6 +1867,7 @@ impl ScriptRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use dnavisicalc_core::{CellInput, PaletteColor};
 
     fn run_command(app: &mut App, io: &mut crate::io::MemoryWorkbookIo, command: &str) {
@@ -1774,27 +1878,32 @@ mod tests {
         app.apply(Action::Submit, io);
     }
 
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    fn append_text_keys(keys: &mut Vec<KeyEvent>, text: &str) {
+        for ch in text.chars() {
+            keys.push(key(KeyCode::Char(ch)));
+        }
+    }
+
     #[test]
     fn script_runner_edits_and_saves() {
         let mut runner = ScriptRunner::new();
-        let actions = vec![
-            Action::StartEdit,
-            Action::InputChar('1'),
-            Action::InputChar('2'),
-            Action::Submit,
-            Action::StartCommand,
-            Action::InputChar('w'),
-            Action::InputChar(' '),
-            Action::InputChar('m'),
-            Action::InputChar('e'),
-            Action::InputChar('m'),
-            Action::InputChar('.'),
-            Action::InputChar('d'),
-            Action::InputChar('v'),
-            Action::InputChar('c'),
-            Action::Submit,
-        ];
-        runner.run(&actions);
+        let mut keys = Vec::new();
+        keys.push(key(KeyCode::Char('1')));
+        keys.push(key(KeyCode::Char('2')));
+        keys.push(key(KeyCode::Enter));
+        keys.push(key(KeyCode::Char(':')));
+        append_text_keys(&mut keys, "w mem.dvc");
+        keys.push(key(KeyCode::Enter));
+        runner.run_keys(&keys);
 
         assert_eq!(
             runner
@@ -1811,15 +1920,10 @@ mod tests {
     #[test]
     fn command_mode_can_set_and_recalc() {
         let mut runner = ScriptRunner::new();
-        let cmd = "set A1 5";
-
-        let mut actions = vec![Action::StartCommand];
-        for ch in cmd.chars() {
-            actions.push(Action::InputChar(ch));
-        }
-        actions.push(Action::Submit);
-
-        runner.run(&actions);
+        let mut keys = vec![key(KeyCode::Char(':'))];
+        append_text_keys(&mut keys, "set A1 5");
+        keys.push(key(KeyCode::Enter));
+        runner.run_keys(&keys);
         assert_eq!(
             runner
                 .app
@@ -2106,7 +2210,7 @@ mod tests {
             .expect("clipboard text");
 
         // Navigate to C1 (selected is at B2 after ExtendDown, MoveRight clears anchor)
-        app.apply(Action::MoveUp, &mut io);    // B1 (deselects anchor)
+        app.apply(Action::MoveUp, &mut io); // B1 (deselects anchor)
         app.apply(Action::MoveRight, &mut io); // C1
 
         // Paste

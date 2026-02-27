@@ -1,5 +1,10 @@
 use dnavisicalc_core::{
-    CellFormat, CellInput, CellRef, Engine, EngineError, NameInput, PaletteColor, RecalcMode, Value,
+    CellFormat, CellInput, CellRef, ChangeEntry, ChartDefinition, ControlDefinition, Engine,
+    EngineError, NameInput, PaletteColor, RecalcMode, UdfHandler, Value, Volatility,
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 #[test]
@@ -143,4 +148,181 @@ fn formatting_change_does_not_mark_values_stale() {
 
     let state = engine.cell_state_a1("B1").expect("B1");
     assert!(!state.stale);
+}
+
+#[test]
+fn stream_is_externally_invalidated_not_volatile() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=STREAM(1)").expect("A1");
+    assert!(!engine.has_volatile_cells());
+    assert!(engine.has_externally_invalidated_cells());
+
+    engine.set_formula_a1("B1", "=NOW()").expect("B1");
+    assert!(engine.has_volatile_cells());
+}
+
+#[test]
+fn invalidate_volatile_marks_rand_dirty_and_recalculates() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=RAND()").expect("A1");
+    let before_epoch = engine.committed_epoch();
+    let before_value = engine.cell_state_a1("A1").expect("A1").value;
+
+    engine.invalidate_volatile().expect("invalidate volatile");
+
+    let after_epoch = engine.committed_epoch();
+    let after_value = engine.cell_state_a1("A1").expect("A1").value;
+    assert_eq!(after_epoch, before_epoch + 1);
+    assert_ne!(before_value, after_value);
+    assert_eq!(engine.last_eval_count(), 1);
+}
+
+#[derive(Debug)]
+struct ExternalCounterUdf {
+    value: Arc<AtomicU64>,
+}
+
+impl UdfHandler for ExternalCounterUdf {
+    fn call(&self, _args: &[Value]) -> Value {
+        Value::Number(self.value.load(Ordering::SeqCst) as f64)
+    }
+
+    fn volatility(&self) -> Volatility {
+        Volatility::ExternallyInvalidated
+    }
+}
+
+#[test]
+fn invalidate_udf_recalculates_externally_invalidated_calls() {
+    let mut engine = Engine::new();
+    let shared = Arc::new(AtomicU64::new(0));
+    engine.register_udf(
+        "EXT_COUNT",
+        Box::new(ExternalCounterUdf {
+            value: Arc::clone(&shared),
+        }),
+    );
+    engine
+        .set_formula_a1("A1", "=EXT_COUNT()")
+        .expect("set formula");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(0.0)
+    );
+
+    shared.store(7, Ordering::SeqCst);
+    engine.invalidate_udf("EXT_COUNT").expect("invalidate udf");
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(7.0)
+    );
+}
+
+#[test]
+fn control_api_roundtrip_and_name_sync() {
+    let mut engine = Engine::new();
+    engine
+        .define_control("rate", ControlDefinition::slider(0.0, 10.0, 1.0))
+        .expect("define control");
+    engine
+        .set_formula_a1("A1", "=RATE*2")
+        .expect("formula using control-backed name");
+
+    engine
+        .set_control_value("RATE", 12.0)
+        .expect("set control value");
+    assert_eq!(engine.control_value("rate"), Some(10.0));
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(20.0)
+    );
+
+    let controls = engine.all_controls();
+    assert_eq!(controls.len(), 1);
+    assert_eq!(controls[0].0, "RATE");
+    assert_eq!(controls[0].2, 10.0);
+
+    assert!(engine.remove_control("RATE"));
+    assert!(engine.control_definition("RATE").is_none());
+    assert_eq!(
+        engine.name_input("RATE").expect("name input"),
+        Some(NameInput::Number(10.0))
+    );
+}
+
+#[test]
+fn chart_output_updates_when_source_cells_change() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A2", 1.0).expect("A2");
+    engine.set_number_a1("A3", 2.0).expect("A3");
+    engine
+        .define_chart(
+            "sales",
+            ChartDefinition {
+                source_range: dnavisicalc_core::CellRange::new(
+                    CellRef::from_a1("A2").expect("A2"),
+                    CellRef::from_a1("A3").expect("A3"),
+                ),
+            },
+        )
+        .expect("define chart");
+
+    let initial = engine.chart_output("SALES").expect("chart output");
+    assert_eq!(initial.series.len(), 1);
+    assert_eq!(initial.series[0].values, vec![1.0, 2.0]);
+
+    engine.set_number_a1("A3", 5.0).expect("A3 update");
+    let updated = engine.chart_output("SALES").expect("chart output");
+    assert_eq!(updated.series[0].values, vec![1.0, 5.0]);
+}
+
+#[test]
+fn change_tracking_collects_cell_chart_and_format_changes() {
+    let mut engine = Engine::new();
+    engine.enable_change_tracking();
+
+    engine.set_number_a1("A1", 42.0).expect("A1");
+    engine
+        .define_chart(
+            "chart_one",
+            ChartDefinition {
+                source_range: dnavisicalc_core::CellRange::new(
+                    CellRef::from_a1("A1").expect("A1"),
+                    CellRef::from_a1("A1").expect("A1"),
+                ),
+            },
+        )
+        .expect("define chart");
+    engine
+        .set_cell_format_a1(
+            "A1",
+            CellFormat {
+                decimals: Some(2),
+                bold: true,
+                italic: false,
+                fg: Some(PaletteColor::Sage),
+                bg: None,
+            },
+        )
+        .expect("format");
+
+    let entries = engine.drain_changes();
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, ChangeEntry::CellValue { cell, .. } if *cell == CellRef::from_a1("A1").expect("A1"))),
+        "expected at least one cell value change for A1",
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, ChangeEntry::ChartOutput { name, .. } if name == "CHART_ONE")),
+        "expected chart output change for CHART_ONE",
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, ChangeEntry::CellFormat { cell, .. } if *cell == CellRef::from_a1("A1").expect("A1"))),
+        "expected cell format change for A1",
+    );
 }

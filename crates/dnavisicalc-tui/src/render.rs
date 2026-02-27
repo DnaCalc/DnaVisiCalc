@@ -179,12 +179,7 @@ fn render_grid(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(grid_block, area);
 }
 
-fn render_right_panel(
-    frame: &mut Frame,
-    app: &App,
-    chart_data: Option<&ChartData>,
-    area: Rect,
-) {
+fn render_right_panel(frame: &mut Frame, app: &App, chart_data: Option<&ChartData>, area: Rect) {
     let has_chart = chart_data.is_some();
     let has_controls = !app.controls().is_empty();
 
@@ -422,9 +417,7 @@ fn quick_help(mode: AppMode) -> &'static str {
             "Nav: arrows/hjkl move | Shift select | Del clear | type to edit | Enter/e/F2 edit | Ctrl+C/V copy/paste | F3 controls | : cmd | ?/F1 help"
         }
         AppMode::Edit => "Edit: type value/formula | Backspace delete | Enter apply | Esc discard",
-        AppMode::Command => {
-            "Cmd: Enter run | Esc cancel"
-        }
+        AppMode::Command => "Cmd: Enter run | Esc cancel",
         AppMode::PasteSpecial => {
             "Paste: 1-5 choose mode | Tab/Arrows/J/K cycle | Enter apply | Esc cancel"
         }

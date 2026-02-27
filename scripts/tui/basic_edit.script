@@ -1,0 +1,9 @@
+# Basic edit + save flow driven only by keystrokes
+capture startup
+text 1
+text 2
+key Enter
+key :
+text w mem.dvc
+key Enter
+capture saved

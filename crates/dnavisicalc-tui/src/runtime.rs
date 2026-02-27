@@ -136,24 +136,18 @@ fn run_event_loop(
         let elapsed = now.duration_since(last_tick).as_secs_f64();
         last_tick = now;
 
-        let mut needs_recalc = false;
-
         if app.has_stream_cells() {
-            needs_recalc |= app.tick_streams(elapsed);
+            app.tick_streams(elapsed);
         }
 
-        if app.has_volatile_cells() || app.has_stream_cells() {
+        if app.has_volatile_cells() {
             volatile_accumulator += elapsed;
             if volatile_accumulator >= 1.0 {
                 volatile_accumulator -= 1.0;
-                needs_recalc = true;
+                app.volatile_recalc();
             }
         } else {
             volatile_accumulator = 0.0;
-        }
-
-        if needs_recalc {
-            app.volatile_recalc();
         }
     }
 

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::address::{CellRef, SheetBounds, is_cell_reference_token, parse_cell_ref};
-use crate::ast::{BinaryOp, Expr, UnaryOp};
+use crate::ast::{BinaryOp, Expr, RefFlags, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
@@ -37,7 +37,7 @@ enum TokenKind {
     Number(f64),
     String(String),
     Bool(bool),
-    Cell(CellRef),
+    Cell(CellRef, RefFlags),
     Ident(String),
     LParen,
     RParen,
@@ -228,6 +228,58 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
                     return Err(ParseError::new("unexpected '.'", i));
                 }
             }
+            '$' => {
+                // Absolute cell reference: $A$1, $A1, etc.
+                // Also handles $NAME named references.
+                let start = i;
+                let col_absolute = true;
+                i += 1; // skip the first $
+                if i >= bytes.len() || !bytes[i].is_ascii_alphabetic() {
+                    return Err(ParseError::new("expected column letter after '$'", start));
+                }
+                // Consume column letters
+                let col_start = i;
+                while i < bytes.len() && (bytes[i] as char).is_ascii_alphabetic() {
+                    i += 1;
+                }
+                let col_label = &input[col_start..i];
+                // Check if next char is '$' (row absolute) or digit (row relative)
+                let row_absolute = if i < bytes.len() && bytes[i] as char == '$' {
+                    i += 1; // skip $
+                    true
+                } else {
+                    false
+                };
+                if i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                    // This is a cell reference with $ prefix
+                    let row_start = i;
+                    while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                        i += 1;
+                    }
+                    let row_part = &input[row_start..i];
+                    let upper = col_label.to_ascii_uppercase();
+                    let ref_str = format!("{upper}{row_part}");
+                    let cell = parse_cell_ref(&ref_str, bounds)
+                        .map_err(|err| ParseError::new(err.to_string(), start))?;
+                    tokens.push(Token {
+                        kind: TokenKind::Cell(
+                            cell,
+                            RefFlags {
+                                col_absolute,
+                                row_absolute,
+                            },
+                        ),
+                        position: start,
+                    });
+                } else {
+                    // Not a cell reference — treat as named reference ($NAME)
+                    let name = col_label.to_ascii_uppercase();
+                    tokens.push(Token {
+                        kind: TokenKind::Ident(name),
+                        position: start,
+                    });
+                }
+            }
             '@' => {
                 let start = i;
                 i += 1;
@@ -272,6 +324,25 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
                         break;
                     }
                 }
+                // Support dotted function names like ERROR.TYPE
+                if i < bytes.len() && bytes[i] as char == '.' {
+                    let dot_pos = i;
+                    let mut j = i + 1;
+                    while j < bytes.len() {
+                        let ch2 = bytes[j] as char;
+                        if ch2.is_ascii_alphabetic() || ch2 == '_' {
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if j > dot_pos + 1 {
+                        let candidate = input[start..j].to_ascii_uppercase();
+                        if is_dotted_function_name(&candidate) {
+                            i = j;
+                        }
+                    }
+                }
                 let raw = &input[start..i];
                 let upper = raw.to_ascii_uppercase();
                 let call_ahead = next_non_whitespace_char(bytes, i) == Some('(');
@@ -293,7 +364,40 @@ fn tokenize(input: &str, bounds: SheetBounds) -> Result<Vec<Token>, ParseError> 
                     let cell = parse_cell_ref(&upper, bounds)
                         .map_err(|err| ParseError::new(err.to_string(), start))?;
                     tokens.push(Token {
-                        kind: TokenKind::Cell(cell),
+                        kind: TokenKind::Cell(cell, RefFlags::RELATIVE),
+                        position: start,
+                    });
+                } else if !call_ahead
+                    && upper.chars().all(|c| c.is_ascii_alphabetic())
+                    && i < bytes.len()
+                    && bytes[i] as char == '$'
+                {
+                    // Potential A$1 pattern: column letters followed by $ + digits
+                    let dollar_pos = i;
+                    let mut j = i + 1;
+                    while j < bytes.len() && (bytes[j] as char).is_ascii_digit() {
+                        j += 1;
+                    }
+                    if j > dollar_pos + 1 {
+                        let row_part = &input[dollar_pos + 1..j];
+                        let ref_str = format!("{upper}{row_part}");
+                        if let Ok(cell) = parse_cell_ref(&ref_str, bounds) {
+                            i = j;
+                            tokens.push(Token {
+                                kind: TokenKind::Cell(
+                                    cell,
+                                    RefFlags {
+                                        col_absolute: false,
+                                        row_absolute: true,
+                                    },
+                                ),
+                                position: start,
+                            });
+                            continue;
+                        }
+                    }
+                    tokens.push(Token {
+                        kind: TokenKind::Ident(upper),
                         position: start,
                     });
                 } else {
@@ -514,9 +618,13 @@ impl Parser {
                 break;
             }
             let rhs = self.parse_primary()?;
-            let left_cell = extract_cell(expr)?;
-            let right_cell = extract_cell(rhs)?;
-            expr = Expr::Range(crate::address::CellRange::new(left_cell, right_cell));
+            let (left_cell, left_flags) = extract_cell_with_flags(expr)?;
+            let (right_cell, right_flags) = extract_cell_with_flags(rhs)?;
+            expr = Expr::Range(
+                crate::address::CellRange::new(left_cell, right_cell),
+                left_flags,
+                right_flags,
+            );
         }
         Ok(expr)
     }
@@ -529,11 +637,11 @@ impl Parser {
             TokenKind::Number(value) => Ok(Expr::Number(*value)),
             TokenKind::String(value) => Ok(Expr::Text(value.clone())),
             TokenKind::Bool(value) => Ok(Expr::Bool(*value)),
-            TokenKind::Cell(cell) => {
+            TokenKind::Cell(cell, flags) => {
                 if self.match_kind(TokenKind::Hash) {
                     Ok(Expr::SpillRef(*cell))
                 } else {
-                    Ok(Expr::Cell(*cell))
+                    Ok(Expr::Cell(*cell, *flags))
                 }
             }
             TokenKind::Ident(name) => {
@@ -628,12 +736,17 @@ impl Parser {
     }
 }
 
-fn extract_cell(expr: Expr) -> Result<CellRef, ParseError> {
+fn extract_cell_with_flags(expr: Expr) -> Result<(CellRef, RefFlags), ParseError> {
     match expr {
-        Expr::Cell(cell) => Ok(cell),
+        Expr::Cell(cell, flags) => Ok((cell, flags)),
         _ => Err(ParseError::new(
             "range boundaries must be cell references",
             0,
         )),
     }
+}
+
+/// Dotted function names recognised by the tokenizer (e.g. `ERROR.TYPE`).
+fn is_dotted_function_name(upper: &str) -> bool {
+    matches!(upper, "ERROR.TYPE")
 }

@@ -103,18 +103,24 @@ Paste Special picker (`Ctrl+V`, choose paste mode):
 ## Scope
 The `dnavisicalc-core` crate stays library-only and I/O free:
 - VisiCalc-sized bounds (`A1`..`BK254`).
-- Formula parser with arithmetic, comparisons, references, ranges.
+- Formula parser with arithmetic, comparisons, references (including mixed/absolute `$` forms), ranges.
 - Workbook names for reusable values/formulas (names can reference cells and other names).
 - Per-cell formatting: decimals, text style (bold/italic), foreground/background palette colors.
 - Functions: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`, `IF`, `AND`, `OR`, `NOT`, `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`, `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`, `NA`, `ERROR`, `CONCAT`, `LEN`, `LET`, `LAMBDA`, `MAP`, `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`.
 - `INDIRECT` supports both A1 and R1C1 reference text modes.
 - `MAP` supports scalar and array-returning lambda outputs with deterministic tiling/broadcast behavior.
 - Dynamic arrays: `SEQUENCE`, `RANDARRAY`, spill references (`A1#`), `#SPILL`/`#REF` errors.
-- Deterministic dependency graph and cycle detection.
+- Structural row/column edits with deterministic formula/name rewrite (`insert/delete` row/col).
+- Deterministic dependency graph, incremental dirty-closure recalculation, and cycle handling.
+- Iterative SCC recalculation mode configuration (`enabled`, max iterations, tolerance).
+- Volatility split for `Standard`, `Volatile`, and `ExternallyInvalidated` invalidation pathways.
+- External UDF registration with volatility metadata.
+- Engine-level controls/charts entities and opt-in change tracking journal APIs.
 - Manual/automatic recalc with epoch staleness tracking.
 
 ## Files
 The `dnavisicalc-file` crate provides deterministic workbook serialization:
+- Current writer format: `DVISICALC v2` (reader supports `v1` + `v2`).
 - Save engine state to string/file.
 - Load string/file with validation and line-specific errors.
 - Format details: `docs/FILE_FORMAT.md`.
@@ -127,10 +133,15 @@ The `dnavisicalc-tui` crate provides a terminal UI using `ratatui` + `crossterm`
 - Command mode (`:w`, `:o`, `:mode`, `:recalc`, `:set`, `:q`).
 - Name commands (`:name <NAME> <value|formula>`, `:name clear <NAME>`).
 - Format commands (`:fmt decimals|bold|italic|fg|bg|clear ...`) and `Delete` to clear selected range contents.
+- Structural commands (`:insrow`, `:delrow`, `:inscol`, `:delcol`, with aliases).
 - Full help popup (`?` / `F1`) including the supported function list.
 - Workbook header showing file, save status, and recalc mode.
 - Status messages that persist during navigation.
 - Layered `WorkbookIo` abstraction for deterministic tests without real filesystem/terminal dependencies.
+- Tool-driving automation binaries:
+  - `capture_scenes` (scene captures to txt/json/svg),
+  - `capture_script` (keystroke script -> timeline + frame artifacts),
+  - `capture_viewer` (CLI playback with transport controls).
 
 ## Windows Release (No Rust Needed)
 Prebuilt Windows x64 artifacts are published on GitHub Releases:
@@ -151,6 +162,13 @@ Run locally with Cargo:
 
 ```bash
 cargo run -p dnavisicalc-tui --bin dnavisicalc
+```
+
+Tool automation examples:
+
+```bash
+cargo run -p dnavisicalc-tui --bin capture_script -- scripts/tui/basic_edit.script artifacts/tui/basic 140 40
+cargo run -p dnavisicalc-tui --bin capture_viewer -- artifacts/tui/basic/timeline.json
 ```
 
 Run all tests:

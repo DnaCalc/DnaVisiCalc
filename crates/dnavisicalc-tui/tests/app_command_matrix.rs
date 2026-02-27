@@ -146,3 +146,53 @@ fn fmt_command_applies_format_to_selection() {
     assert_eq!(format.fg, Some(dnavisicalc_core::PaletteColor::Sage));
     assert_eq!(format.bg, Some(dnavisicalc_core::PaletteColor::Cloud));
 }
+
+#[test]
+fn structural_commands_apply_row_and_col_mutations() {
+    let mut app = App::new();
+    let mut io = MemoryWorkbookIo::new();
+
+    run_command(&mut app, &mut io, "set A1 10");
+    run_command(&mut app, &mut io, "set A2 20");
+    run_command(&mut app, &mut io, "set B1 =A2");
+    assert_eq!(
+        app.engine().cell_state_a1("B1").expect("B1").value,
+        dnavisicalc_core::Value::Number(20.0)
+    );
+
+    run_command(&mut app, &mut io, "insrow 2");
+    assert!(app.status().contains("Inserted row 2"));
+    assert_eq!(
+        app.engine().cell_state_a1("A3").expect("A3").value,
+        dnavisicalc_core::Value::Number(20.0)
+    );
+    assert_eq!(
+        app.engine().cell_state_a1("B1").expect("B1").value,
+        dnavisicalc_core::Value::Number(20.0)
+    );
+
+    run_command(&mut app, &mut io, "inscol 1");
+    assert!(app.status().contains("Inserted col 1"));
+    assert_eq!(
+        app.engine().cell_state_a1("B1").expect("B1").value,
+        dnavisicalc_core::Value::Number(10.0)
+    );
+}
+
+#[test]
+fn structural_commands_validate_usage_and_bounds() {
+    let mut app = App::new();
+    let mut io = MemoryWorkbookIo::new();
+
+    run_command(&mut app, &mut io, "insrow x");
+    assert!(app.status().contains("Usage: insrow [at]"));
+
+    run_command(&mut app, &mut io, "delcol nope");
+    assert!(app.status().contains("Usage: delcol [at]"));
+
+    run_command(&mut app, &mut io, "insrow 9999");
+    assert!(app.status().contains("Insert row error:"));
+
+    run_command(&mut app, &mut io, "delcol 9999");
+    assert!(app.status().contains("Delete col error:"));
+}

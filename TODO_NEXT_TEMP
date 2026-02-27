@@ -1,0 +1,6 @@
+User request (captured for next work pass):
+
+I'd like to formally separate the core engine behind the C API, even for the rust-based file I/O and UI.
+Already put in place a mechanism to configure which coreengine is loaded (we're going to have many).
+
+Also make sure the UI is great for tool interaction - i.e. we want to make loads of scripts etc. that drive the UI (through the UI). It should at least be simple to get the whole screen buffer in full color, with cursor pos, (at some determined size), and send keystrokes. If we need to cahnge the UI layer now to help with this, it's a good time to do so. Make some simple initial scripts taht work this way. We should be able to persist from the buffer to an image file, and make a little viewer (like "glow" but our own one in Rust) to view the buffer grabs. A stream of keystroke (overlay somehow) / buffer grabs should be viewable in our (cli-based) viewer, so we can follow a sequence like a little video (play, pause, forward, back 1 frame or 15, set speed).

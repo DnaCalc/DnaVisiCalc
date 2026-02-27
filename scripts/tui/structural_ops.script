@@ -1,0 +1,17 @@
+# Structural command flow and reference rewrite visibility
+capture startup
+key :
+text set A1 10
+key Enter
+key :
+text set A2 =A1*2
+key Enter
+capture before_structural
+key :
+text insrow 1
+key Enter
+capture after_insert_row
+key :
+text delcol 1
+key Enter
+capture after_delete_col

@@ -10,11 +10,16 @@ pub use address::{
     AddressError, CellRange, CellRef, DEFAULT_SHEET_BOUNDS, MAX_COLUMNS, MAX_ROWS, SheetBounds,
     col_index_to_label, col_label_to_index,
 };
-pub use ast::{BinaryOp, Expr, UnaryOp};
-pub use deps::{CalcNode, CalcTree, DependencyError, build_calc_tree};
-pub use engine::{
-    CellFormat, CellInput, CellState, DynamicArrayStrategy, Engine, EngineError, NameInput,
-    PaletteColor, RecalcMode,
+pub use ast::{BinaryOp, Expr, RefFlags, StructuralOp, UnaryOp, expr_to_formula, rewrite_expr};
+pub use deps::{
+    CalcNode, CalcTree, DependencyError, Scc, build_calc_tree, build_calc_tree_allow_cycles,
 };
-pub use eval::{CellError, SUPPORTED_FUNCTIONS, Value};
+pub use engine::{
+    CellFormat, CellInput, CellState, ChangeEntry, ChartDefinition, ChartOutput, ChartSeriesOutput,
+    ControlDefinition, ControlKind, DynamicArrayStrategy, Engine, EngineError, IterationConfig,
+    NameInput, PaletteColor, RecalcMode,
+};
+pub use eval::{
+    CellError, FnUdf, FnUdfWithVolatility, SUPPORTED_FUNCTIONS, UdfHandler, Value, Volatility,
+};
 pub use parser::{ParseError, parse_formula};

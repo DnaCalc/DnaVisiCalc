@@ -15,6 +15,14 @@ pub enum Value {
     Error(CellError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Volatility {
+    #[default]
+    Standard,
+    Volatile,
+    ExternallyInvalidated,
+}
+
 impl Value {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
@@ -33,6 +41,45 @@ pub enum CellError {
     Ref(String),
     Spill(String),
     Cycle(Vec<String>),
+    Na,
+    Null,
+    Num(String),
+}
+
+impl CellError {
+    /// Returns the Excel-style error tag (e.g. `#DIV/0!`, `#VALUE!`).
+    pub fn excel_tag(&self) -> &'static str {
+        match self {
+            Self::DivisionByZero => "#DIV/0!",
+            Self::Value(_) => "#VALUE!",
+            Self::Name(_) | Self::UnknownName(_) => "#NAME?",
+            Self::Ref(_) => "#REF!",
+            Self::Spill(_) => "#SPILL!",
+            Self::Cycle(_) => "#REF!",
+            Self::Na => "#N/A",
+            Self::Null => "#NULL!",
+            Self::Num(_) => "#NUM!",
+        }
+    }
+
+    /// Returns the `ERROR.TYPE` number for this error, matching Excel's convention.
+    pub fn error_type_number(&self) -> u8 {
+        match self {
+            Self::Null => 1,
+            Self::DivisionByZero => 2,
+            Self::Value(_) => 3,
+            Self::Ref(_) | Self::Cycle(_) => 4,
+            Self::Name(_) | Self::UnknownName(_) => 5,
+            Self::Num(_) => 6,
+            Self::Na => 7,
+            Self::Spill(_) => 9,
+        }
+    }
+
+    /// Returns true if this is an `#N/A` error.
+    pub fn is_na(&self) -> bool {
+        matches!(self, Self::Na)
+    }
 }
 
 impl fmt::Display for CellError {
@@ -48,6 +95,9 @@ impl fmt::Display for CellError {
                 let joined = path.join(" -> ");
                 write!(f, "circular reference during evaluation: {joined}")
             }
+            Self::Na => write!(f, "value not available"),
+            Self::Null => write!(f, "null intersection"),
+            Self::Num(msg) => write!(f, "numeric error: {msg}"),
         }
     }
 }
@@ -61,6 +111,8 @@ pub const SUPPORTED_FUNCTIONS: &[&str] = &[
     "AVERAGE",
     "COUNT",
     "IF",
+    "IFERROR",
+    "IFNA",
     "AND",
     "OR",
     "NOT",
@@ -84,6 +136,13 @@ pub const SUPPORTED_FUNCTIONS: &[&str] = &[
     "LOOKUP",
     "NA",
     "ERROR",
+    "ISERROR",
+    "ISNA",
+    "ISBLANK",
+    "ISTEXT",
+    "ISNUMBER",
+    "ISLOGICAL",
+    "ERROR.TYPE",
     "CONCAT",
     "LEN",
     "SEQUENCE",
@@ -202,6 +261,64 @@ impl RuntimeValue {
     }
 }
 
+/// Trait for user-defined functions (UDFs). Implementors provide a `call`
+/// method that receives evaluated argument values and returns a result value.
+pub trait UdfHandler: std::fmt::Debug {
+    /// Evaluate the UDF with the given arguments.
+    fn call(&self, args: &[Value]) -> Value;
+
+    /// Volatility class used by host-driven invalidation APIs.
+    fn volatility(&self) -> Volatility {
+        Volatility::Standard
+    }
+}
+
+/// Wrapper that turns any `Fn(&[Value]) -> Value` into a [`UdfHandler`].
+pub struct FnUdf<F>(pub F);
+
+impl<F> std::fmt::Debug for FnUdf<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FnUdf(<closure>)")
+    }
+}
+
+impl<F: Fn(&[Value]) -> Value> UdfHandler for FnUdf<F> {
+    fn call(&self, args: &[Value]) -> Value {
+        (self.0)(args)
+    }
+}
+
+/// Wrapper that pairs a closure UDF with an explicit volatility class.
+pub struct FnUdfWithVolatility<F> {
+    pub callback: F,
+    pub volatility: Volatility,
+}
+
+impl<F> FnUdfWithVolatility<F> {
+    pub fn new(callback: F, volatility: Volatility) -> Self {
+        Self {
+            callback,
+            volatility,
+        }
+    }
+}
+
+impl<F> std::fmt::Debug for FnUdfWithVolatility<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FnUdfWithVolatility(<closure>)")
+    }
+}
+
+impl<F: Fn(&[Value]) -> Value> UdfHandler for FnUdfWithVolatility<F> {
+    fn call(&self, args: &[Value]) -> Value {
+        (self.callback)(args)
+    }
+
+    fn volatility(&self) -> Volatility {
+        self.volatility
+    }
+}
+
 pub struct EvalContext<'a> {
     formulas: &'a HashMap<CellRef, Expr>,
     literals: &'a HashMap<CellRef, f64>,
@@ -219,6 +336,13 @@ pub struct EvalContext<'a> {
     now_timestamp: f64,
     stream_counters: &'a HashMap<CellRef, u64>,
     stream_registrations: HashMap<CellRef, StreamRegistration>,
+    /// Previous iteration's cached values for cells in the currently
+    /// iterating SCC. When a cycle is detected during evaluation and the
+    /// cell is in this set, the previous value is returned instead of a
+    /// cycle error.
+    iterating_prev: HashMap<CellRef, RuntimeValue>,
+    /// Registered user-defined functions.
+    udfs: &'a HashMap<String, Box<dyn UdfHandler>>,
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +377,7 @@ impl<'a> EvalContext<'a> {
         recalc_serial: u64,
         now_timestamp: f64,
         stream_counters: &'a HashMap<CellRef, u64>,
+        udfs: &'a HashMap<String, Box<dyn UdfHandler>>,
     ) -> Self {
         Self {
             formulas,
@@ -271,11 +396,39 @@ impl<'a> EvalContext<'a> {
             now_timestamp,
             stream_counters,
             stream_registrations: HashMap::new(),
+            iterating_prev: HashMap::new(),
+            udfs,
         }
     }
 
     pub(crate) fn take_stream_registrations(&mut self) -> HashMap<CellRef, StreamRegistration> {
         std::mem::take(&mut self.stream_registrations)
+    }
+
+    /// Prepares for iterative evaluation of a cyclic SCC. Seeds the cache with
+    /// initial values (0.0) for all SCC members and marks them as iterating so
+    /// that cycle detection returns previous values instead of errors.
+    pub(crate) fn begin_iteration(&mut self, cells: &[CellRef]) {
+        let initial = RuntimeValue::scalar(Value::Number(0.0));
+        for cell in cells {
+            self.cache.insert(*cell, initial.clone());
+            self.iterating_prev.insert(*cell, initial.clone());
+        }
+    }
+
+    /// Moves current cached values to `iterating_prev` and clears the cache
+    /// for the given SCC cells, preparing for the next iteration pass.
+    pub(crate) fn advance_iteration(&mut self, cells: &[CellRef]) {
+        for cell in cells {
+            if let Some(current) = self.cache.remove(cell) {
+                self.iterating_prev.insert(*cell, current);
+            }
+        }
+    }
+
+    /// Finishes iterative evaluation. Clears the iterating_prev state.
+    pub(crate) fn end_iteration(&mut self) {
+        self.iterating_prev.clear();
     }
 
     pub(crate) fn evaluate_cell_runtime(&mut self, cell: CellRef) -> RuntimeValue {
@@ -287,6 +440,11 @@ impl<'a> EvalContext<'a> {
             .iter()
             .position(|node| *node == EvalStackNode::Cell(cell))
         {
+            // During iterative SCC evaluation, return the previous iteration's
+            // value instead of a cycle error.
+            if let Some(prev) = self.iterating_prev.get(&cell) {
+                return prev.clone();
+            }
             let mut cycle: Vec<String> = self.stack[index..]
                 .iter()
                 .map(EvalStackNode::label)
@@ -432,10 +590,12 @@ impl<'a> EvalContext<'a> {
             Expr::Number(n) => RuntimeValue::scalar(Value::Number(*n)),
             Expr::Text(text) => RuntimeValue::scalar(Value::Text(text.clone())),
             Expr::Bool(b) => RuntimeValue::scalar(Value::Bool(*b)),
-            Expr::Cell(cell) => RuntimeValue::scalar(self.evaluate_cell_runtime(*cell).to_scalar()),
+            Expr::Cell(cell, _) => {
+                RuntimeValue::scalar(self.evaluate_cell_runtime(*cell).to_scalar())
+            }
             Expr::Name(name) => self.evaluate_name_runtime(name),
             Expr::SpillRef(cell) => self.evaluate_spill_ref(*cell),
-            Expr::Range(_) => RuntimeValue::scalar(Value::Error(CellError::Value(
+            Expr::Range(_, _, _) => RuntimeValue::scalar(Value::Error(CellError::Value(
                 "range cannot be used as a scalar value".to_string(),
             ))),
             Expr::Unary { op, expr } => self.eval_unary(*op, expr),
@@ -740,6 +900,8 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         "AVERAGE" => aggregate_numbers(args, ctx, AggregateKind::Average),
         "COUNT" => aggregate_numbers(args, ctx, AggregateKind::Count),
         "IF" => eval_if(args, ctx),
+        "IFERROR" => eval_iferror(args, ctx),
+        "IFNA" => eval_ifna(args, ctx),
         "AND" => eval_and(args, ctx),
         "OR" => eval_or(args, ctx),
         "NOT" => eval_not(args, ctx),
@@ -763,6 +925,13 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         "LOOKUP" => eval_lookup(args, ctx),
         "NA" => eval_na(args),
         "ERROR" => eval_error(args, ctx),
+        "ISERROR" => eval_iserror(args, ctx),
+        "ISNA" => eval_isna(args, ctx),
+        "ISBLANK" => eval_isblank(args, ctx),
+        "ISTEXT" => eval_istext(args, ctx),
+        "ISNUMBER" => eval_isnumber(args, ctx),
+        "ISLOGICAL" => eval_islogical(args, ctx),
+        "ERROR.TYPE" => eval_error_type(args, ctx),
         "CONCAT" => eval_concat(args, ctx),
         "LEN" => eval_len(args, ctx),
         "SEQUENCE" => eval_sequence(args, ctx),
@@ -777,7 +946,18 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         "NOW" => eval_now(args, ctx),
         "RAND" => eval_rand(args, ctx),
         "STREAM" => eval_stream(args, ctx),
-        other => RuntimeValue::scalar(Value::Error(CellError::Name(other.to_string()))),
+        other => {
+            // Check for user-defined functions before returning an error.
+            if let Some(handler) = ctx.udfs.get(other) {
+                let evaluated_args: Vec<Value> = args
+                    .iter()
+                    .map(|a| ctx.evaluate_expr(a).to_scalar())
+                    .collect();
+                RuntimeValue::scalar(handler.call(&evaluated_args))
+            } else {
+                RuntimeValue::scalar(Value::Error(CellError::Name(other.to_string())))
+            }
+        }
     }
 }
 
@@ -1099,7 +1279,7 @@ fn eval_lookup(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
         Ok(v) => v,
         Err(err) => return RuntimeValue::scalar(Value::Error(err)),
     };
-    let Expr::Range(table) = &args[1] else {
+    let Expr::Range(table, _, _) = &args[1] else {
         return RuntimeValue::scalar(Value::Error(CellError::Value(
             "LOOKUP expects a range as the second argument".to_string(),
         )));
@@ -1173,7 +1353,7 @@ fn eval_na(args: &[Expr]) -> RuntimeValue {
             "NA expects no arguments".to_string(),
         )));
     }
-    RuntimeValue::scalar(Value::Error(CellError::Value("NA".to_string())))
+    RuntimeValue::scalar(Value::Error(CellError::Na))
 }
 
 fn eval_error(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
@@ -1188,6 +1368,107 @@ fn eval_error(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
 
     let value = ctx.evaluate_expr(&args[0]).to_scalar();
     RuntimeValue::scalar(Value::Error(CellError::Value(value_to_text(&value))))
+}
+
+fn eval_iferror(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "IFERROR expects exactly 2 arguments".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    if matches!(value, Value::Error(_)) {
+        ctx.evaluate_expr(&args[1])
+    } else {
+        RuntimeValue::scalar(value)
+    }
+}
+
+fn eval_ifna(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 2 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "IFNA expects exactly 2 arguments".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    if matches!(value, Value::Error(CellError::Na)) {
+        ctx.evaluate_expr(&args[1])
+    } else {
+        RuntimeValue::scalar(value)
+    }
+}
+
+fn eval_iserror(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ISERROR expects exactly 1 argument".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    RuntimeValue::scalar(Value::Bool(matches!(value, Value::Error(_))))
+}
+
+fn eval_isna(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ISNA expects exactly 1 argument".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    RuntimeValue::scalar(Value::Bool(matches!(value, Value::Error(CellError::Na))))
+}
+
+fn eval_isblank(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ISBLANK expects exactly 1 argument".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    RuntimeValue::scalar(Value::Bool(matches!(value, Value::Blank)))
+}
+
+fn eval_istext(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ISTEXT expects exactly 1 argument".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    RuntimeValue::scalar(Value::Bool(matches!(value, Value::Text(_))))
+}
+
+fn eval_isnumber(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ISNUMBER expects exactly 1 argument".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    RuntimeValue::scalar(Value::Bool(matches!(value, Value::Number(_))))
+}
+
+fn eval_islogical(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ISLOGICAL expects exactly 1 argument".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    RuntimeValue::scalar(Value::Bool(matches!(value, Value::Bool(_))))
+}
+
+fn eval_error_type(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
+    if args.len() != 1 {
+        return RuntimeValue::scalar(Value::Error(CellError::Value(
+            "ERROR.TYPE expects exactly 1 argument".to_string(),
+        )));
+    }
+    let value = ctx.evaluate_expr(&args[0]).to_scalar();
+    match value {
+        Value::Error(err) => RuntimeValue::scalar(Value::Number(err.error_type_number() as f64)),
+        _ => RuntimeValue::scalar(Value::Error(CellError::Na)),
+    }
 }
 
 fn eval_concat(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
@@ -1736,7 +2017,7 @@ fn is_cell_reference_like(name: &str) -> bool {
 
 fn runtime_from_argument(arg: &Expr, ctx: &mut EvalContext<'_>) -> RuntimeValue {
     match arg {
-        Expr::Range(range) => runtime_for_range(*range, ctx),
+        Expr::Range(range, _, _) => runtime_for_range(*range, ctx),
         _ => ctx.evaluate_expr(arg),
     }
 }
@@ -1825,8 +2106,8 @@ fn resolve_reference_argument(
     ctx: &mut EvalContext<'_>,
 ) -> Result<CellRange, CellError> {
     match arg {
-        Expr::Cell(cell) => Ok(CellRange::new(*cell, *cell)),
-        Expr::Range(range) => Ok(*range),
+        Expr::Cell(cell, _) => Ok(CellRange::new(*cell, *cell)),
+        Expr::Range(range, _, _) => Ok(*range),
         Expr::SpillRef(cell) => match ctx.evaluate_spill_ref(*cell) {
             RuntimeValue::Array(array) => {
                 let end = CellRef {
@@ -1993,7 +2274,7 @@ fn parse_time_value_args(
 
 fn expand_argument(arg: &Expr, ctx: &mut EvalContext<'_>) -> Vec<Value> {
     match arg {
-        Expr::Range(range) => range
+        Expr::Range(range, _, _) => range
             .iter()
             .map(|cell| ctx.evaluate_cell_runtime(cell).to_scalar())
             .collect(),
@@ -2071,8 +2352,12 @@ fn eval_stream(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
         }
     };
 
-    ctx.stream_registrations
-        .insert(cell, StreamRegistration { period_secs: period });
+    ctx.stream_registrations.insert(
+        cell,
+        StreamRegistration {
+            period_secs: period,
+        },
+    );
     let counter = ctx.stream_counters.get(&cell).copied().unwrap_or(0);
 
     if args.len() == 2 {

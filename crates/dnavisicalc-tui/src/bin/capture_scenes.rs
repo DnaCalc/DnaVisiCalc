@@ -1,64 +1,11 @@
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
-use dnavisicalc_tui::{Action, App, MemoryWorkbookIo, render_app};
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::style::{Color, Modifier};
-
-// ---------------------------------------------------------------------------
-// JSON helpers
-// ---------------------------------------------------------------------------
-
-struct StyledSpan {
-    text: String,
-    fg: Option<String>,
-    bg: Option<String>,
-    bold: bool,
-    italic: bool,
-}
-
-fn color_to_hex(color: Color) -> Option<String> {
-    match color {
-        Color::Reset => None,
-        Color::Black => Some("#000000".to_string()),
-        Color::Red => Some("#FF0000".to_string()),
-        Color::Green => Some("#00FF00".to_string()),
-        Color::Yellow => Some("#FFFF00".to_string()),
-        Color::Blue => Some("#0000FF".to_string()),
-        Color::Magenta => Some("#FF00FF".to_string()),
-        Color::Cyan => Some("#00FFFF".to_string()),
-        Color::Gray => Some("#808080".to_string()),
-        Color::DarkGray => Some("#A0A0A0".to_string()),
-        Color::LightRed => Some("#FF8080".to_string()),
-        Color::LightGreen => Some("#80FF80".to_string()),
-        Color::LightYellow => Some("#FFFF80".to_string()),
-        Color::LightBlue => Some("#8080FF".to_string()),
-        Color::LightMagenta => Some("#FF80FF".to_string()),
-        Color::LightCyan => Some("#80FFFF".to_string()),
-        Color::White => Some("#FFFFFF".to_string()),
-        Color::Rgb(r, g, b) => Some(format!("#{:02X}{:02X}{:02X}", r, g, b)),
-        Color::Indexed(i) => Some(format!("#{0:02X}{0:02X}{0:02X}", i)),
-    }
-}
-
-fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out
-}
+use dnavisicalc_tui::{
+    Action, App, CaptureSize, MemoryWorkbookIo, capture_app_frame, write_frame_json,
+    write_frame_svg, write_frame_text,
+};
 
 // ---------------------------------------------------------------------------
 // main
@@ -93,97 +40,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // ---------------------------------------------------------------------------
-// Scene writer (txt + json)
+// Scene writer (txt + json + svg)
 // ---------------------------------------------------------------------------
 
 fn write_scene(app: &App, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
-    let backend = TestBackend::new(140, 40);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.draw(|frame| render_app(frame, app))?;
-    let buffer = terminal.backend().buffer();
-
-    let width = buffer.area().width as usize;
-    let height = buffer.area().height as usize;
-
-    // ---- .txt (existing logic) ----
-    let text = buffer
-        .content()
-        .chunks(width)
-        .map(|row| {
-            row.iter()
-                .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    fs::write(&path, &text)?;
-
-    // ---- .json with style data ----
-    let json_path = path.as_ref().with_extension("json");
-    let content = buffer.content();
-    let mut json = format!("{{\"width\":{},\"height\":{},\"rows\":[\n", width, height);
-
-    for y in 0..height {
-        if y > 0 {
-            json.push_str(",\n");
-        }
-        json.push_str(&format!("{{\"y\":{},\"spans\":[", y));
-
-        let row_start = y * width;
-        let mut spans: Vec<StyledSpan> = Vec::new();
-
-        for x in 0..width {
-            let cell = &content[row_start + x];
-            let fg = color_to_hex(cell.fg);
-            let bg = color_to_hex(cell.bg);
-            let bold = cell.modifier.contains(Modifier::BOLD);
-            let italic = cell.modifier.contains(Modifier::ITALIC);
-            let sym = cell.symbol();
-
-            if let Some(last) = spans.last_mut() {
-                if last.fg == fg && last.bg == bg && last.bold == bold && last.italic == italic {
-                    last.text.push_str(sym);
-                    continue;
-                }
-            }
-            spans.push(StyledSpan {
-                text: sym.to_string(),
-                fg,
-                bg,
-                bold,
-                italic,
-            });
-        }
-
-        for (i, span) in spans.iter().enumerate() {
-            if i > 0 {
-                json.push(',');
-            }
-            let fg_json = match &span.fg {
-                Some(c) => format!("\"{}\"", c),
-                None => "null".to_string(),
-            };
-            let bg_json = match &span.bg {
-                Some(c) => format!("\"{}\"", c),
-                None => "null".to_string(),
-            };
-            json.push_str(&format!(
-                "{{\"text\":\"{}\",\"fg\":{},\"bg\":{},\"bold\":{},\"italic\":{}}}",
-                json_escape(&span.text),
-                fg_json,
-                bg_json,
-                span.bold,
-                span.italic,
-            ));
-        }
-        json.push_str("]}");
-    }
-
-    json.push_str("\n]}");
-    fs::write(json_path, &json)?;
+    let frame = capture_app_frame(app, capture_size_from_env())?;
+    write_frame_text(&frame, &path, true)?;
+    write_frame_json(&frame, path.as_ref().with_extension("json"))?;
+    write_frame_svg(&frame, path.as_ref().with_extension("svg"))?;
     Ok(())
+}
+
+fn capture_size_from_env() -> CaptureSize {
+    static CAPTURE_SIZE: OnceLock<CaptureSize> = OnceLock::new();
+    *CAPTURE_SIZE.get_or_init(|| {
+        let default = CaptureSize::default();
+        let width = std::env::var("DNAVISICALC_CAPTURE_WIDTH")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default.width);
+        let height = std::env::var("DNAVISICALC_CAPTURE_HEIGHT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default.height);
+        CaptureSize::new(width, height)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -300,9 +183,7 @@ fn capture_multiplication_table(path: impl AsRef<Path>) -> Result<(), Box<dyn st
     write_scene(&app, path)
 }
 
-fn capture_scientific_calculator(
-    path: impl AsRef<Path>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn capture_scientific_calculator(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
     let mut io = MemoryWorkbookIo::new();
 
@@ -712,7 +593,11 @@ fn capture_sequence_aggregates(path: impl AsRef<Path>) -> Result<(), Box<dyn std
 
     // Aggregate values: bold + Cloud + Lagoon
     select_rect(&mut app, &mut io, 5, 2, 5, 6);
-    apply_commands(&mut app, &mut io, &["fmt bold on", "fmt fg cloud", "fmt bg lagoon"]);
+    apply_commands(
+        &mut app,
+        &mut io,
+        &["fmt bold on", "fmt fg cloud", "fmt bg lagoon"],
+    );
     select_rect(&mut app, &mut io, 6, 2, 6, 6);
     apply_commands(
         &mut app,
@@ -763,7 +648,11 @@ fn capture_randarray_lab(path: impl AsRef<Path>) -> Result<(), Box<dyn std::erro
 
     // Stats values: bold + Cloud + Teal + decimals 2
     select_rect(&mut app, &mut io, 5, 2, 5, 6);
-    apply_commands(&mut app, &mut io, &["fmt bold on", "fmt fg cloud", "fmt bg teal"]);
+    apply_commands(
+        &mut app,
+        &mut io,
+        &["fmt bold on", "fmt fg cloud", "fmt bg teal"],
+    );
     select_rect(&mut app, &mut io, 6, 2, 6, 6);
     apply_commands(
         &mut app,
@@ -878,9 +767,7 @@ fn capture_let_lambda(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::
     write_scene(&app, path)
 }
 
-fn capture_indirect_r1c1_offset(
-    path: impl AsRef<Path>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn capture_indirect_r1c1_offset(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
     let mut io = MemoryWorkbookIo::new();
 
@@ -983,7 +870,12 @@ fn capture_lookup_model(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error
     apply_commands(
         &mut app,
         &mut io,
-        &["fmt bold on", "fmt fg lavender", "fmt bg mist", "fmt decimals 2"],
+        &[
+            "fmt bold on",
+            "fmt fg lavender",
+            "fmt bg mist",
+            "fmt decimals 2",
+        ],
     );
 
     select_rect(&mut app, &mut io, 6, 2, 6, 2);
@@ -1081,10 +973,7 @@ fn capture_text_functions(path: impl AsRef<Path>) -> Result<(), Box<dyn std::err
         commands.push(format!("set B{} {}", r, last));
         commands.push(format!("set C{} =CONCAT(A{},\" \",B{})", r, r, r));
         commands.push(format!("set D{} =LEN(C{})", r, r));
-        commands.push(format!(
-            "set E{} =IF(D{}>=10,\"Long\",\"OK\")",
-            r, r
-        ));
+        commands.push(format!("set E{} =IF(D{}>=10,\"Long\",\"OK\")", r, r));
     }
 
     let cmd_refs: Vec<&str> = commands.iter().map(|s| s.as_str()).collect();
@@ -1141,10 +1030,7 @@ fn capture_paste_special_picker(path: impl AsRef<Path>) -> Result<(), Box<dyn st
 
     // Navigate to destination and begin paste special
     move_to_cell(&mut app, &mut io, 4, 4);
-    app.apply(
-        Action::BeginPasteFromClipboard(clipboard_text),
-        &mut io,
-    );
+    app.apply(Action::BeginPasteFromClipboard(clipboard_text), &mut io);
     app.apply(Action::InputChar('2'), &mut io);
 
     write_scene(&app, path)

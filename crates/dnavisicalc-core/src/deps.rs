@@ -11,10 +11,30 @@ pub struct CalcNode {
     pub dependencies: BTreeSet<CellRef>,
 }
 
+/// A strongly connected component in the dependency graph.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scc {
+    /// Cells in this SCC, in evaluation order (topological within acyclic SCCs).
+    pub cells: Vec<CellRef>,
+    /// True if this SCC contains a cycle (self-loop or mutual dependency).
+    pub is_cyclic: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CalcTree {
     pub nodes: BTreeMap<CellRef, CalcNode>,
+    /// Flat topological evaluation order (only valid when there are no cycles).
     pub order: Vec<CellRef>,
+    /// SCCs in reverse-topological order of the condensation DAG
+    /// (dependencies come before dependents). Each SCC lists its member cells.
+    pub sccs: Vec<Scc>,
+}
+
+impl CalcTree {
+    /// Returns true if the dependency graph contains any cycles.
+    pub fn has_cycles(&self) -> bool {
+        self.sccs.iter().any(|scc| scc.is_cyclic)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,7 +59,47 @@ impl fmt::Display for DependencyError {
 
 impl std::error::Error for DependencyError {}
 
+/// Builds the calculation tree with cycle detection. Returns an error if any
+/// circular dependency is found. This is the original strict-mode behaviour.
 pub fn build_calc_tree(formulas: &HashMap<CellRef, Expr>) -> Result<CalcTree, DependencyError> {
+    let (nodes, formula_edges) = build_nodes_and_edges(formulas);
+    let sccs = tarjan_sccs(&nodes, &formula_edges);
+
+    // Check for cycles — report the first one found.
+    for scc in &sccs {
+        if scc.is_cyclic {
+            let mut cycle = scc.cells.clone();
+            cycle.push(scc.cells[0]);
+            return Err(DependencyError::Cycle(cycle));
+        }
+    }
+
+    let order: Vec<CellRef> = sccs
+        .iter()
+        .flat_map(|scc| scc.cells.iter().copied())
+        .collect();
+    Ok(CalcTree { nodes, order, sccs })
+}
+
+/// Builds the calculation tree allowing circular dependencies. Cycles are
+/// captured as cyclic SCCs rather than producing errors. The Engine can then
+/// choose to iterate cyclic SCCs or report errors.
+pub fn build_calc_tree_allow_cycles(formulas: &HashMap<CellRef, Expr>) -> CalcTree {
+    let (nodes, formula_edges) = build_nodes_and_edges(formulas);
+    let sccs = tarjan_sccs(&nodes, &formula_edges);
+    let order: Vec<CellRef> = sccs
+        .iter()
+        .flat_map(|scc| scc.cells.iter().copied())
+        .collect();
+    CalcTree { nodes, order, sccs }
+}
+
+fn build_nodes_and_edges(
+    formulas: &HashMap<CellRef, Expr>,
+) -> (
+    BTreeMap<CellRef, CalcNode>,
+    BTreeMap<CellRef, BTreeSet<CellRef>>,
+) {
     let mut nodes: BTreeMap<CellRef, CalcNode> = BTreeMap::new();
     for (cell, expr) in formulas {
         let dependencies = dependencies_for_expr(expr);
@@ -65,17 +125,7 @@ pub fn build_calc_tree(formulas: &HashMap<CellRef, Expr>) -> Result<CalcTree, De
         formula_edges.insert(*cell, deps);
     }
 
-    let mut marks: BTreeMap<CellRef, VisitMark> = BTreeMap::new();
-    let mut order: Vec<CellRef> = Vec::new();
-    let mut stack: Vec<CellRef> = Vec::new();
-
-    for cell in nodes.keys().copied() {
-        if marks.get(&cell).is_none() {
-            visit(cell, &formula_edges, &mut marks, &mut stack, &mut order)?;
-        }
-    }
-
-    Ok(CalcTree { nodes, order })
+    (nodes, formula_edges)
 }
 
 pub fn dependencies_for_expr(expr: &Expr) -> BTreeSet<CellRef> {
@@ -86,13 +136,13 @@ pub fn dependencies_for_expr(expr: &Expr) -> BTreeSet<CellRef> {
 
 fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
     match expr {
-        Expr::Cell(cell) => {
+        Expr::Cell(cell, _) => {
             out.insert(*cell);
         }
         Expr::SpillRef(cell) => {
             out.insert(*cell);
         }
-        Expr::Range(range) => {
+        Expr::Range(range, _, _) => {
             for cell in range.iter() {
                 out.insert(cell);
             }
@@ -119,39 +169,99 @@ fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VisitMark {
-    Visiting,
-    Visited,
+// ---------------------------------------------------------------------------
+// Tarjan's SCC algorithm
+// ---------------------------------------------------------------------------
+
+struct TarjanState {
+    index_counter: usize,
+    stack: Vec<CellRef>,
+    on_stack: BTreeSet<CellRef>,
+    indices: BTreeMap<CellRef, usize>,
+    lowlinks: BTreeMap<CellRef, usize>,
+    sccs: Vec<Scc>,
 }
 
-fn visit(
+fn tarjan_sccs(
+    nodes: &BTreeMap<CellRef, CalcNode>,
+    edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
+) -> Vec<Scc> {
+    let mut state = TarjanState {
+        index_counter: 0,
+        stack: Vec::new(),
+        on_stack: BTreeSet::new(),
+        indices: BTreeMap::new(),
+        lowlinks: BTreeMap::new(),
+        sccs: Vec::new(),
+    };
+
+    for cell in nodes.keys() {
+        if !state.indices.contains_key(cell) {
+            tarjan_visit(*cell, edges, &mut state);
+        }
+    }
+
+    // For our dependency graph convention (edges from dependents to
+    // dependencies), Tarjan naturally produces SCCs in evaluation order:
+    // dependencies before dependents. No reversal needed.
+    state.sccs
+}
+
+fn tarjan_visit(
     cell: CellRef,
     edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
-    marks: &mut BTreeMap<CellRef, VisitMark>,
-    stack: &mut Vec<CellRef>,
-    order: &mut Vec<CellRef>,
-) -> Result<(), DependencyError> {
-    marks.insert(cell, VisitMark::Visiting);
-    stack.push(cell);
+    state: &mut TarjanState,
+) {
+    let idx = state.index_counter;
+    state.index_counter += 1;
+    state.indices.insert(cell, idx);
+    state.lowlinks.insert(cell, idx);
+    state.stack.push(cell);
+    state.on_stack.insert(cell);
 
     if let Some(deps) = edges.get(&cell) {
         for dep in deps {
-            match marks.get(dep).copied() {
-                Some(VisitMark::Visiting) => {
-                    let start_idx = stack.iter().position(|c| c == dep).unwrap_or(0);
-                    let mut cycle = stack[start_idx..].to_vec();
-                    cycle.push(*dep);
-                    return Err(DependencyError::Cycle(cycle));
+            if !state.indices.contains_key(dep) {
+                tarjan_visit(*dep, edges, state);
+                let dep_lowlink = state.lowlinks[dep];
+                let cell_lowlink = state.lowlinks.get_mut(&cell).unwrap();
+                if dep_lowlink < *cell_lowlink {
+                    *cell_lowlink = dep_lowlink;
                 }
-                Some(VisitMark::Visited) => {}
-                None => visit(*dep, edges, marks, stack, order)?,
+            } else if state.on_stack.contains(dep) {
+                let dep_index = state.indices[dep];
+                let cell_lowlink = state.lowlinks.get_mut(&cell).unwrap();
+                if dep_index < *cell_lowlink {
+                    *cell_lowlink = dep_index;
+                }
             }
         }
     }
 
-    stack.pop();
-    marks.insert(cell, VisitMark::Visited);
-    order.push(cell);
-    Ok(())
+    if state.lowlinks[&cell] == state.indices[&cell] {
+        let mut scc_cells = Vec::new();
+        loop {
+            let w = state.stack.pop().unwrap();
+            state.on_stack.remove(&w);
+            scc_cells.push(w);
+            if w == cell {
+                break;
+            }
+        }
+        // Tarjan pops in reverse order; reverse for a more natural ordering.
+        scc_cells.reverse();
+
+        let is_cyclic = if scc_cells.len() > 1 {
+            true
+        } else {
+            // Single-node SCC: cyclic only if it has a self-edge.
+            let c = scc_cells[0];
+            edges.get(&c).map_or(false, |deps| deps.contains(&c))
+        };
+
+        state.sccs.push(Scc {
+            cells: scc_cells,
+            is_cyclic,
+        });
+    }
 }

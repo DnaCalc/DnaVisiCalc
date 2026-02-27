@@ -3,11 +3,14 @@ use std::fs;
 use std::path::Path;
 
 use dnavisicalc_core::{
-    CellFormat, CellInput, CellRef, Engine, EngineError, NameInput, PaletteColor, RecalcMode,
+    CellFormat, CellInput, CellRange, CellRef, ChartDefinition, ControlDefinition, ControlKind,
+    DynamicArrayStrategy, Engine, EngineError, IterationConfig, NameInput, PaletteColor,
+    RecalcMode,
 };
 use thiserror::Error;
 
-const MAGIC: &str = "DVISICALC\t1";
+const MAGIC_PREFIX: &str = "DVISICALC\t";
+const CURRENT_VERSION: u8 = 2;
 
 #[derive(Debug, Error)]
 pub enum FileError {
@@ -21,12 +24,26 @@ pub enum FileError {
 
 pub fn save_to_string(engine: &Engine) -> Result<String, FileError> {
     let mut out = String::new();
-    out.push_str(MAGIC);
+    out.push_str(MAGIC_PREFIX);
+    out.push_str(&CURRENT_VERSION.to_string());
     out.push('\n');
     out.push_str(match engine.recalc_mode() {
         RecalcMode::Automatic => "MODE\tAUTO\n",
         RecalcMode::Manual => "MODE\tMANUAL\n",
     });
+    let iter = engine.iteration_config();
+    out.push_str("ITER\t");
+    out.push_str(if iter.enabled { "1" } else { "0" });
+    out.push('\t');
+    out.push_str(&iter.max_iterations.to_string());
+    out.push('\t');
+    out.push_str(&iter.convergence_tolerance.to_string());
+    out.push('\n');
+    out.push_str("DYNARR\t");
+    out.push_str(dynamic_array_strategy_to_text(
+        engine.dynamic_array_strategy(),
+    ));
+    out.push('\n');
 
     for (cell, input) in engine.all_cell_inputs() {
         match input {
@@ -80,6 +97,30 @@ pub fn save_to_string(engine: &Engine) -> Result<String, FileError> {
         }
     }
 
+    for (name, def, _) in engine.all_controls() {
+        out.push_str("CONTROL\t");
+        out.push_str(&name);
+        out.push('\t');
+        out.push_str(control_kind_to_text(def.kind));
+        out.push('\t');
+        out.push_str(&def.min.to_string());
+        out.push('\t');
+        out.push_str(&def.max.to_string());
+        out.push('\t');
+        out.push_str(&def.step.to_string());
+        out.push('\n');
+    }
+
+    for (name, def) in engine.all_charts() {
+        out.push_str("CHART\t");
+        out.push_str(&name);
+        out.push('\t');
+        out.push_str(&def.source_range.start.to_string());
+        out.push('\t');
+        out.push_str(&def.source_range.end.to_string());
+        out.push('\n');
+    }
+
     for (cell, format) in engine.all_cell_formats() {
         out.push_str("FMT\t");
         out.push_str(&cell.to_string());
@@ -116,15 +157,23 @@ pub fn load_from_path(path: impl AsRef<Path>) -> Result<Engine, FileError> {
 }
 
 pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
-    let mut found_header = false;
+    let mut format_version: Option<u8> = None;
     let mut mode = RecalcMode::Automatic;
     let mut seen_mode = false;
+    let mut iteration_config = IterationConfig::default();
+    let mut seen_iter = false;
+    let mut dynamic_array_strategy = DynamicArrayStrategy::OverlayInline;
+    let mut seen_dynarr = false;
     let mut seen_cells = BTreeSet::new();
     let mut seen_names = BTreeSet::new();
     let mut seen_formats = BTreeSet::new();
+    let mut seen_controls = BTreeSet::new();
+    let mut seen_charts = BTreeSet::new();
     let mut entries: Vec<(usize, CellRef, CellInput)> = Vec::new();
     let mut name_entries: Vec<(usize, String, NameInput)> = Vec::new();
     let mut format_entries: Vec<(usize, CellRef, CellFormat)> = Vec::new();
+    let mut control_entries: Vec<(usize, String, ControlDefinition)> = Vec::new();
+    let mut chart_entries: Vec<(usize, String, ChartDefinition)> = Vec::new();
 
     for (idx, raw_line) in input.lines().enumerate() {
         let line_no = idx + 1;
@@ -133,22 +182,39 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
             continue;
         }
 
-        if !found_header {
-            let header_line = line.strip_prefix('\u{feff}').unwrap_or(line);
-            if header_line != MAGIC {
+        if format_version.is_none() {
+            let header_line = line.strip_prefix('\u{feff}').unwrap_or(line).trim();
+            let version = parse_header_version(header_line).ok_or_else(|| FileError::Parse {
+                line: line_no,
+                message: format!(
+                    "expected header '{}<version>' with supported versions 1..={CURRENT_VERSION}",
+                    MAGIC_PREFIX
+                ),
+            })?;
+            if !(1..=CURRENT_VERSION).contains(&version) {
                 return Err(FileError::Parse {
                     line: line_no,
-                    message: format!("expected header '{MAGIC}'"),
+                    message: format!(
+                        "unsupported DVISICALC version '{version}' (supported: 1..={CURRENT_VERSION})"
+                    ),
                 });
             }
-            found_header = true;
+            format_version = Some(version);
             continue;
         }
 
+        let version = format_version.expect("set above");
         let mut parts = raw_line.split('\t');
         let Some(kind) = parts.next() else {
             continue;
         };
+
+        if version < 2 && matches!(kind, "ITER" | "DYNARR" | "CONTROL" | "CHART") {
+            return Err(FileError::Parse {
+                line: line_no,
+                message: format!("record kind '{kind}' is not supported in DVISICALC\t{version}"),
+            });
+        }
 
         match kind {
             "MODE" => {
@@ -181,6 +247,87 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
                     }
                 };
                 seen_mode = true;
+            }
+            "ITER" => {
+                if seen_iter {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "duplicate ITER record".to_string(),
+                    });
+                }
+                let Some(enabled) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "ITER record missing enabled flag".to_string(),
+                    });
+                };
+                let Some(max_iterations) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "ITER record missing max_iterations".to_string(),
+                    });
+                };
+                let Some(convergence_tolerance) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "ITER record missing convergence_tolerance".to_string(),
+                    });
+                };
+                if parts.next().is_some() {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "ITER record has extra fields".to_string(),
+                    });
+                }
+
+                let enabled = parse_bool_flag(enabled, line_no, "enabled")?;
+                let max_iterations =
+                    max_iterations
+                        .trim()
+                        .parse::<u32>()
+                        .map_err(|_| FileError::Parse {
+                            line: line_no,
+                            message: format!("invalid max_iterations '{max_iterations}'"),
+                        })?;
+                let convergence_tolerance =
+                    convergence_tolerance
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| FileError::Parse {
+                            line: line_no,
+                            message: format!(
+                                "invalid convergence_tolerance '{convergence_tolerance}'"
+                            ),
+                        })?;
+
+                iteration_config = IterationConfig {
+                    enabled,
+                    max_iterations,
+                    convergence_tolerance,
+                };
+                seen_iter = true;
+            }
+            "DYNARR" => {
+                if seen_dynarr {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "duplicate DYNARR record".to_string(),
+                    });
+                }
+                let Some(strategy) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "DYNARR record missing strategy".to_string(),
+                    });
+                };
+                if parts.next().is_some() {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "DYNARR record has extra fields".to_string(),
+                    });
+                }
+                dynamic_array_strategy = parse_dynamic_array_strategy(strategy.trim(), line_no)?;
+                seen_dynarr = true;
             }
             "CELL" => {
                 let Some(addr) = parts.next() else {
@@ -320,6 +467,132 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
 
                 name_entries.push((line_no, name, input));
             }
+            "CONTROL" => {
+                let Some(raw_name) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CONTROL record missing name".to_string(),
+                    });
+                };
+                let Some(raw_kind) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CONTROL record missing kind".to_string(),
+                    });
+                };
+                let Some(raw_min) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CONTROL record missing min".to_string(),
+                    });
+                };
+                let Some(raw_max) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CONTROL record missing max".to_string(),
+                    });
+                };
+                let Some(raw_step) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CONTROL record missing step".to_string(),
+                    });
+                };
+                if parts.next().is_some() {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CONTROL record has extra fields".to_string(),
+                    });
+                }
+                let name = raw_name.trim().to_ascii_uppercase();
+                if !seen_controls.insert(name.clone()) {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: format!("duplicate control record for {name}"),
+                    });
+                }
+
+                let kind = parse_control_kind(raw_kind.trim(), line_no)?;
+                let min = raw_min
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| FileError::Parse {
+                        line: line_no,
+                        message: format!("invalid control min '{raw_min}'"),
+                    })?;
+                let max = raw_max
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| FileError::Parse {
+                        line: line_no,
+                        message: format!("invalid control max '{raw_max}'"),
+                    })?;
+                let step = raw_step
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| FileError::Parse {
+                        line: line_no,
+                        message: format!("invalid control step '{raw_step}'"),
+                    })?;
+                control_entries.push((
+                    line_no,
+                    name,
+                    ControlDefinition {
+                        kind,
+                        min,
+                        max,
+                        step,
+                    },
+                ));
+            }
+            "CHART" => {
+                let Some(raw_name) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CHART record missing name".to_string(),
+                    });
+                };
+                let Some(raw_start) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CHART record missing start address".to_string(),
+                    });
+                };
+                let Some(raw_end) = parts.next() else {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CHART record missing end address".to_string(),
+                    });
+                };
+                if parts.next().is_some() {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: "CHART record has extra fields".to_string(),
+                    });
+                }
+                let name = raw_name.trim().to_ascii_uppercase();
+                if !seen_charts.insert(name.clone()) {
+                    return Err(FileError::Parse {
+                        line: line_no,
+                        message: format!("duplicate chart record for {name}"),
+                    });
+                }
+                let start = CellRef::from_a1(raw_start).map_err(|err| FileError::Parse {
+                    line: line_no,
+                    message: format!("invalid chart start '{raw_start}': {err}"),
+                })?;
+                let end = CellRef::from_a1(raw_end).map_err(|err| FileError::Parse {
+                    line: line_no,
+                    message: format!("invalid chart end '{raw_end}': {err}"),
+                })?;
+                chart_entries.push((
+                    line_no,
+                    name,
+                    ChartDefinition {
+                        source_range: CellRange::new(start, end),
+                    },
+                ));
+            }
             "FMT" => {
                 let Some(addr) = parts.next() else {
                     return Err(FileError::Parse {
@@ -416,15 +689,17 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
         }
     }
 
-    if !found_header {
+    if format_version.is_none() {
         return Err(FileError::Parse {
             line: 1,
-            message: format!("missing header '{MAGIC}'"),
+            message: format!("missing header '{}<version>'", MAGIC_PREFIX),
         });
     }
 
     let mut engine = Engine::new();
     engine.set_recalc_mode(RecalcMode::Manual);
+    engine.set_iteration_config(iteration_config);
+    engine.set_dynamic_array_strategy(dynamic_array_strategy);
     for (line_no, cell, input) in entries {
         if let Err(err) = engine.set_cell_input(cell, input) {
             return Err(FileError::Parse {
@@ -449,6 +724,22 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
             });
         }
     }
+    for (line_no, name, def) in control_entries {
+        if let Err(err) = engine.define_control(&name, def) {
+            return Err(FileError::Parse {
+                line: line_no,
+                message: format!("failed to apply control {name}: {err}"),
+            });
+        }
+    }
+    for (line_no, name, def) in chart_entries {
+        if let Err(err) = engine.define_chart(&name, def) {
+            return Err(FileError::Parse {
+                line: line_no,
+                message: format!("failed to apply chart {name}: {err}"),
+            });
+        }
+    }
     if let Err(err) = engine.recalculate() {
         return Err(FileError::Parse {
             line: 1,
@@ -457,6 +748,54 @@ pub fn load_from_str(input: &str) -> Result<Engine, FileError> {
     }
     engine.set_recalc_mode(mode);
     Ok(engine)
+}
+
+fn parse_header_version(line: &str) -> Option<u8> {
+    let suffix = line.strip_prefix(MAGIC_PREFIX)?;
+    suffix.trim().parse::<u8>().ok()
+}
+
+fn dynamic_array_strategy_to_text(strategy: DynamicArrayStrategy) -> &'static str {
+    match strategy {
+        DynamicArrayStrategy::OverlayInline => "OVERLAY_INLINE",
+        DynamicArrayStrategy::OverlayPlanner => "OVERLAY_PLANNER",
+        DynamicArrayStrategy::RewriteMaterialize => "REWRITE_MATERIALIZE",
+    }
+}
+
+fn parse_dynamic_array_strategy(
+    input: &str,
+    line_no: usize,
+) -> Result<DynamicArrayStrategy, FileError> {
+    match input {
+        "OVERLAY_INLINE" => Ok(DynamicArrayStrategy::OverlayInline),
+        "OVERLAY_PLANNER" => Ok(DynamicArrayStrategy::OverlayPlanner),
+        "REWRITE_MATERIALIZE" => Ok(DynamicArrayStrategy::RewriteMaterialize),
+        other => Err(FileError::Parse {
+            line: line_no,
+            message: format!("unknown dynamic array strategy '{other}'"),
+        }),
+    }
+}
+
+fn control_kind_to_text(kind: ControlKind) -> &'static str {
+    match kind {
+        ControlKind::Slider => "SLIDER",
+        ControlKind::Checkbox => "CHECKBOX",
+        ControlKind::Button => "BUTTON",
+    }
+}
+
+fn parse_control_kind(input: &str, line_no: usize) -> Result<ControlKind, FileError> {
+    match input {
+        "SLIDER" => Ok(ControlKind::Slider),
+        "CHECKBOX" => Ok(ControlKind::Checkbox),
+        "BUTTON" => Ok(ControlKind::Button),
+        other => Err(FileError::Parse {
+            line: line_no,
+            message: format!("unknown control kind '{other}'"),
+        }),
+    }
 }
 
 fn parse_bool_flag(value: &str, line_no: usize, field: &str) -> Result<bool, FileError> {
@@ -527,7 +866,10 @@ fn unescape_field(input: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dnavisicalc_core::{CellFormat, NameInput, PaletteColor, Value};
+    use dnavisicalc_core::{
+        CellFormat, CellRange, CellRef, ChartDefinition, ControlDefinition, DynamicArrayStrategy,
+        IterationConfig, NameInput, PaletteColor, Value,
+    };
 
     #[test]
     fn roundtrips_engine_document() {
@@ -597,6 +939,60 @@ mod tests {
                 bg: Some(PaletteColor::Cloud),
             }
         );
+    }
+
+    #[test]
+    fn roundtrips_v2_extended_records() {
+        let mut engine = Engine::new();
+        engine.set_iteration_config(IterationConfig {
+            enabled: true,
+            max_iterations: 25,
+            convergence_tolerance: 0.0001,
+        });
+        engine.set_dynamic_array_strategy(DynamicArrayStrategy::OverlayPlanner);
+        engine.set_number_a1("A1", 10.0).expect("set A1");
+        engine.set_number_a1("A2", 20.0).expect("set A2");
+        engine
+            .define_control("GAIN", ControlDefinition::slider(0.0, 100.0, 5.0))
+            .expect("define control");
+        engine
+            .set_control_value("GAIN", 35.0)
+            .expect("set control value");
+        engine
+            .define_chart(
+                "TREND",
+                ChartDefinition {
+                    source_range: CellRange::new(
+                        CellRef::from_a1("A1").expect("A1"),
+                        CellRef::from_a1("A2").expect("A2"),
+                    ),
+                },
+            )
+            .expect("define chart");
+
+        let text = save_to_string(&engine).expect("serialize v2");
+        assert!(text.starts_with("DVISICALC\t2\n"));
+        assert!(text.contains("\nITER\t1\t25\t0.0001\n"));
+        assert!(text.contains("\nDYNARR\tOVERLAY_PLANNER\n"));
+        assert!(text.contains("\nCONTROL\tGAIN\tSLIDER\t0\t100\t5\n"));
+        assert!(text.contains("\nCHART\tTREND\tA1\tA2\n"));
+
+        let loaded = load_from_str(&text).expect("deserialize v2");
+        assert_eq!(
+            loaded.iteration_config(),
+            IterationConfig {
+                enabled: true,
+                max_iterations: 25,
+                convergence_tolerance: 0.0001,
+            }
+        );
+        assert_eq!(
+            loaded.dynamic_array_strategy(),
+            DynamicArrayStrategy::OverlayPlanner
+        );
+        assert_eq!(loaded.control_value("GAIN"), Some(35.0));
+        assert_eq!(loaded.all_controls().len(), 1);
+        assert_eq!(loaded.all_charts().len(), 1);
     }
 
     #[test]
@@ -679,5 +1075,29 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("line 2"));
         assert!(msg.contains("decimals must be in range"));
+    }
+
+    #[test]
+    fn supports_loading_v1_documents() {
+        let input = "DVISICALC\t1\nMODE\tAUTO\nCELL\tA1\tN\t7\n";
+        let loaded = load_from_str(input).expect("load v1");
+        assert_eq!(
+            loaded.cell_state_a1("A1").expect("query").value,
+            Value::Number(7.0)
+        );
+    }
+
+    #[test]
+    fn rejects_v2_record_in_v1_document() {
+        let input = "DVISICALC\t1\nITER\t1\t10\t0.001\n";
+        let err = load_from_str(input).expect_err("v1 should reject ITER");
+        assert!(err.to_string().contains("not supported"));
+    }
+
+    #[test]
+    fn rejects_unsupported_format_version() {
+        let input = "DVISICALC\t9\nCELL\tA1\tN\t1\n";
+        let err = load_from_str(input).expect_err("unsupported version");
+        assert!(err.to_string().contains("unsupported DVISICALC version"));
     }
 }

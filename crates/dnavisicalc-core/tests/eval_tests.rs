@@ -407,7 +407,10 @@ fn now_returns_number_greater_than_45000() {
     engine.set_formula_a1("A1", "=NOW()").expect("set A1");
     let a1 = engine.cell_state_a1("A1").expect("query A1");
     match a1.value {
-        Value::Number(n) => assert!(n > 45000.0, "NOW() should return serial date > 45000, got {n}"),
+        Value::Number(n) => assert!(
+            n > 45000.0,
+            "NOW() should return serial date > 45000, got {n}"
+        ),
         other => panic!("expected number, got {other:?}"),
     }
 }
@@ -455,9 +458,7 @@ fn rand_with_arg_returns_error() {
 fn now_and_rand_in_compound_formulas() {
     let mut engine = Engine::new();
     engine.set_formula_a1("A1", "=INT(NOW())").expect("set A1");
-    engine
-        .set_formula_a1("B1", "=RAND()*100")
-        .expect("set B1");
+    engine.set_formula_a1("B1", "=RAND()*100").expect("set B1");
     let a1 = engine.cell_state_a1("A1").expect("query A1");
     let b1 = engine.cell_state_a1("B1").expect("query B1");
     match a1.value {
@@ -566,9 +567,7 @@ fn stream_no_args_returns_error() {
 #[test]
 fn stream_negative_period_returns_error() {
     let mut engine = Engine::new();
-    engine
-        .set_formula_a1("A1", "=STREAM(-1)")
-        .expect("set A1");
+    engine.set_formula_a1("A1", "=STREAM(-1)").expect("set A1");
     let a1 = engine.cell_state_a1("A1").expect("query A1");
     assert!(matches!(a1.value, Value::Error(_)));
 }
@@ -632,5 +631,8 @@ fn tick_streams_returns_false_when_no_advance() {
     let mut engine = Engine::new();
     engine.set_formula_a1("A1", "=STREAM(1)").expect("set A1");
     let advanced = engine.tick_streams(0.5);
-    assert!(!advanced, "tick_streams(0.5) with period=1.0 should return false");
+    assert!(
+        !advanced,
+        "tick_streams(0.5) with period=1.0 should return false"
+    );
 }

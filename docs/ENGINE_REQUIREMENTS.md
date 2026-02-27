@@ -1,290 +1,206 @@
 # Engine Requirements — DNA VisiCalc
 
-Formalized requirements for the `dnavisicalc-core` engine, scoped to VisiCalc (Round 0). Drawn from Foundation documents ([CHARTER.md](../../Foundation/CHARTER.md), [ARCHITECTURE_AND_REQUIREMENTS.md](../../Foundation/ARCHITECTURE_AND_REQUIREMENTS.md)) and the current Rust implementation.
+Formal requirements for `dnavisicalc-core`, aligned with `docs/SPEC_v0.md` and the current expanded pathfinder scope.
 
 ## 1. Scope
-
-This document covers the DNA VisiCalc pathfinder engine only. It does not attempt to specify the full Foundation protocol surface (multi-sheet workbooks, OpLog, collaboration, XLL, VBA, structural rewrites). Requirements here must be compatible with evolving toward the Foundation architecture but are not constrained by it.
-
-The engine is a single-sheet calculation engine with:
-- Cell and named-value storage
-- Formula parsing and evaluation
-- Dependency-ordered recalculation
-- Dynamic array spill semantics
-- Cell formatting metadata
-- Volatile function and stream support
-- Externally driven execution (no internal threads or timers)
+- Single-sheet deterministic spreadsheet engine.
+- Externally-driven execution (no internal I/O, no autonomous timers/threads).
+- Includes structural rewrites, iterative cycle mode, volatility split, external UDF registration, controls/charts, and change tracking.
 
 ## 2. Execution Model (REQ-EXEC)
 
 ### REQ-EXEC-001: Externally Driven
+All state transitions occur inside caller-initiated API calls.
 
-The engine performs no internal threading, timer management, or autonomous I/O. All computation occurs synchronously within caller-initiated function calls. The caller is responsible for scheduling recalculation, volatile refreshes, and stream ticks.
+### REQ-EXEC-002: Epoch State
+Engine tracks:
+- `committed_epoch`: increments on accepted mutations/invalidation events.
+- `stabilized_epoch`: latest epoch whose derived outputs are stabilized.
+- Per-value `value_epoch`.
 
-*Rationale:* Foundation CONSTR-002 ("File and network I/O are adapters outside core"). Externally driven execution enables deterministic testing and embedding in any host environment.
+### REQ-EXEC-003: Recalc Modes
+- `Automatic`: mutation/invalidation paths may trigger immediate recalc.
+- `Manual`: mutation/invalidation marks dirty state; caller invokes recalc explicitly.
 
-### REQ-EXEC-002: State Machine
+### REQ-EXEC-004: Determinism
+For identical inputs and operation sequences, observable results are deterministic.
 
-The engine operates in two observable states:
+## 3. Data Model and Addressing (REQ-DATA)
 
-```
-STABLE ──mutation──▶ DIRTY ──recalculate──▶ STABLE
-```
+### REQ-DATA-001: Bounds
+Default bounds are 63 columns x 254 rows (`A1..BK254`) with configurable bounds support.
 
-- **STABLE:** `stabilized_epoch == committed_epoch`. All derived values are current.
-- **DIRTY:** `stabilized_epoch < committed_epoch`. At least one mutation has occurred since the last recalculation.
+### REQ-DATA-002: Cell Inputs
+Cells support number, text, formula, and clear operations.
 
-In Automatic recalc mode, the engine transitions back to STABLE immediately after each mutation (recalculation is triggered internally by the mutation call). In Manual mode, the engine remains DIRTY until the caller explicitly requests recalculation.
+### REQ-DATA-003: Name Inputs
+Names support number, text, formula, and clear operations with case-insensitive uppercase identity.
 
-### REQ-EXEC-003: Epoch Tracking
+### REQ-DATA-004: Reference Forms
+Formula parser and AST support:
+- relative refs (`A1`),
+- mixed refs (`$A1`, `A$1`),
+- absolute refs (`$A$1`),
+- ranges (`A1:B7`, `A1...B7`).
 
-The engine maintains two monotonically increasing epoch counters:
+### REQ-DATA-005: Name Validation
+Names must be valid identifiers and must not collide with built-in functions, boolean literals, or cell references.
 
-- **`committed_epoch`** — incremented on every mutation (cell set, cell clear, name set, name clear, format change, stream tick, clear-all).
-- **`stabilized_epoch`** — set to `committed_epoch` after successful recalculation.
+## 4. Recalculation Model (REQ-CALC)
 
-Derived cell values carry a `value_epoch` indicating which `committed_epoch` they were computed against. A value is **stale** when `value_epoch < committed_epoch`.
+### REQ-CALC-001: Dependency Evaluation
+Recalculation follows deterministic dependency closure semantics.
 
-*Foundation reference:* ARCHITECTURE_AND_REQUIREMENTS §3.3 (Epoch Model).
+### REQ-CALC-002: Incremental Recompute
+Engine supports dirty-closure incremental recompute for targeted mutations/invalidation.
 
-### REQ-EXEC-004: Recalculation Modes
+### REQ-CALC-003: Full-Rebuild Fallback
+Formula-structure and graph-shape changes may force full dependency rebuild/recalc.
 
-Two modes:
+### REQ-CALC-004: Iterative Cycle Mode
+Engine exposes iterative cycle configuration (`enabled`, `max_iterations`, `convergence_tolerance`) and applies SCC-based iterative stabilization when enabled.
 
-| Mode | Behavior |
-|------|----------|
-| **Automatic** | Every mutation triggers immediate recalculation. The engine is always STABLE after a successful mutation. |
-| **Manual** | Mutations do not trigger recalculation. The engine remains DIRTY until the caller explicitly calls `recalculate()`. |
+### REQ-CALC-005: Value Types
+Evaluation produces typed values including number/text/bool/blank/error.
 
-The mode is queryable and settable at any time. Switching from Manual to Automatic does not automatically trigger recalculation — the caller is responsible for requesting it.
+### REQ-CALC-006: Cell State Query
+Cell state query includes computed value, `value_epoch`, and stale visibility (`value_epoch < committed_epoch`).
 
-## 3. Cell Operations (REQ-CELL)
-
-### REQ-CELL-001: Addressing
-
-Cells are addressed by `(col, row)` pairs where both are 1-based `u16` values. Column 1 corresponds to "A", column 2 to "B", etc.
-
-Sheet bounds define the maximum column and row. The default bounds are 63 columns × 254 rows. Custom bounds may be specified at engine creation.
-
-### REQ-CELL-002: A1 String Addressing
-
-The engine provides A1-style string addressing as a convenience layer over numeric `(col, row)` addressing. A1 references are parsed and validated against the current sheet bounds.
-
-### REQ-CELL-003: Input Types
-
-A cell may contain one of:
-
-| Input Type | Description |
-|-----------|-------------|
-| **Number** | IEEE 754 `f64` literal |
-| **Text** | UTF-8 string |
-| **Formula** | Source string beginning with `=` or `@`, parsed into an AST |
-| **Empty** | No input (cell cleared) |
-
-### REQ-CELL-004: Typed Setters
-
-Cell inputs are set through typed functions (`set_number`, `set_text`, `set_formula`) rather than a single polymorphic setter. A separate `clear_cell` function removes all input. A combined `set_cell_input` accepting a tagged union is provided as a convenience.
-
-### REQ-CELL-005: Mutation Advances Epoch
-
-Every mutation to cell content increments `committed_epoch` and (in Automatic mode) triggers recalculation.
-
-### REQ-CELL-006: Bounds Checking
-
-All cell operations validate that the target address is within the engine's sheet bounds. Operations on out-of-bounds cells return an error without modifying state.
-
-### REQ-CELL-007: Input Query
-
-The engine supports querying a cell's current input (returning the input type and original source text for formulas, the number for numeric inputs, and the text for text inputs). Querying an empty cell returns `None`/empty.
-
-### REQ-CELL-008: Spill Detection Before Mutation
-
-Before allowing a cell to be edited, the caller can query whether a cell is a spill member (owned by another cell's dynamic array expansion). The engine provides `spill_anchor_for_cell` to detect this condition.
-
-## 4. Named Values (REQ-NAME)
-
-### REQ-NAME-001: Same Input Types as Cells
-
-Named values support the same input types as cells: Number, Text, and Formula. Named formulas can reference cells and other names.
-
-### REQ-NAME-002: Name Validation
-
-Name identifiers must satisfy:
-- Non-empty after trimming
-- First character is ASCII alphabetic or underscore
-- Remaining characters are ASCII alphanumeric or underscore
-- Stored as uppercase (case-insensitive matching)
-- Must not conflict with: boolean literals (`TRUE`, `FALSE`), cell references (e.g. `A1`, `BK254`), or built-in function names
-
-Invalid names produce an error.
-
-### REQ-NAME-003: Typed Setters
-
-Named values use the same typed-setter pattern as cells: `set_name_number`, `set_name_text`, `set_name_formula`, `clear_name`.
-
-### REQ-NAME-004: Name Query
-
-The engine supports querying a name's current input type and value. Querying a non-existent name returns `None`/empty.
-
-## 5. Recalculation (REQ-CALC)
-
-### REQ-CALC-001: Deterministic Topological Order
-
-Recalculation evaluates formulas in dependency order determined by topological sort of the dependency graph. Literal cells (numbers, text) are resolved first, then formula cells in topological order, then named formulas in sorted name order.
-
-*Foundation reference:* ARCHITECTURE_AND_REQUIREMENTS §3.4 ("Deterministic mode exists").
-
-### REQ-CALC-002: Dependency Graph Construction
-
-The engine builds a calculation tree (dependency graph) from all formula cells. The graph detects circular dependencies and reports them as `CellError::Cycle` errors on affected cells.
-
-### REQ-CALC-003: Automatic vs Manual Modes
-
-In Automatic mode, `recalculate()` is called internally after every mutation. In Manual mode, the caller must call `recalculate()` explicitly. The `recalculate()` function is always available regardless of mode.
-
-### REQ-CALC-004: Stream Tick
-
-The engine supports stream cells (cells containing `STREAM(topic, period)` formulas). Stream state is managed through:
-
-- **`tick_streams(elapsed_secs)`** — accumulates elapsed time for each stream cell. When accumulated time reaches the period, the counter advances and `committed_epoch` increments. Returns `true` if any counter advanced.
-- **`has_stream_cells()`** — returns whether any stream cells exist.
-
-The caller is responsible for calling `tick_streams` at appropriate intervals and triggering recalculation when it returns `true`.
-
-### REQ-CALC-005: Volatile Recalculation
-
-Cells containing volatile functions (`NOW`, `RAND`, `RANDARRAY`, `STREAM`) must be re-evaluated on every recalculation. The engine provides `has_volatile_cells()` so the caller can determine whether periodic recalculation is needed.
-
-### REQ-CALC-006: Value Types
-
-Evaluation produces values of type:
-
-| Value Type | Description |
-|-----------|-------------|
-| **Number** | IEEE 754 `f64` |
-| **Text** | UTF-8 string |
-| **Bool** | `true` / `false` |
-| **Blank** | Empty cell value |
-| **Error** | Cell error with error kind |
-
-### REQ-CALC-007: Cell State
-
-Each cell's computed state consists of:
-- **value** — the evaluated Value
-- **value_epoch** — the `committed_epoch` at which this value was computed
-- **stale** — boolean flag: `true` when `value_epoch < committed_epoch`
-
-## 6. Dynamic Arrays and Spill (REQ-SPILL)
+## 5. Dynamic Arrays and Spill (REQ-SPILL)
 
 ### REQ-SPILL-001: Spill Semantics
-
-Formula cells that produce array results expand ("spill") into adjacent cells. The formula cell is the **anchor**; expanded cells are **members**. Members are not directly editable.
+Array-valued formulas spill from an anchor into member cells with deterministic placement.
 
 ### REQ-SPILL-002: Spill Blocking
-
-A spill is blocked when a member cell would overlap with an existing input cell or another spill region. Blocked spills produce a `CellError::Spill` on the anchor cell.
+Blocked spill placement surfaces explicit spill failure behavior instead of silently overwriting existing inputs.
 
 ### REQ-SPILL-003: Spill Queries
+Engine provides spill-anchor/range query surfaces for anchor/member lookup.
 
-The engine provides:
-- **spill_anchor_for_cell(cell)** — given a spill member, returns the anchor cell
-- **spill_range_for_cell(cell)** — given any cell in a spill region, returns the full range
-- **spill_range_for_anchor(cell)** — given an anchor, returns its spill range
+## 6. Invalidation and Volatility (REQ-INV)
 
-## 7. Formatting (REQ-FMT)
+### REQ-INV-001: Volatility Classes
+Built-ins/UDFs are treated as one of:
+- `Standard`,
+- `Volatile`,
+- `ExternallyInvalidated`.
 
-### REQ-FMT-001: Metadata-Only
+### REQ-INV-002: Volatile Presence Query
+`has_volatile_cells()` reports whether volatile formulas exist.
 
-Cell formatting is pure metadata — it does not affect calculation. Format changes increment `committed_epoch` and set `stabilized_epoch` equal to it (no recalculation needed).
+### REQ-INV-003: External Presence Query
+`has_externally_invalidated_cells()` reports whether externally-invalidated formulas exist.
 
-### REQ-FMT-002: Format Properties
+### REQ-INV-004: Volatile Invalidation Path
+`invalidate_volatile()` marks volatile formulas dirty and propagates through normal recalc flow.
 
-Each cell's format contains:
+### REQ-INV-005: Stream Tick Path
+`tick_streams(elapsed_secs)` advances stream counters and marks fired stream formulas dirty.
+- In automatic mode, recompute may happen immediately.
+- In manual mode, caller-triggered recalc remains required for stabilization.
 
-| Property | Type | Default |
-|----------|------|---------|
-| **decimals** | `Option<u8>` (0–9) | None (auto) |
-| **bold** | boolean | false |
-| **italic** | boolean | false |
-| **fg** | `Option<PaletteColor>` | None |
-| **bg** | `Option<PaletteColor>` | None |
+### REQ-INV-006: UDF Invalidation Path
+`invalidate_udf(name)` targets formulas/names that call the specified externally-invalidated UDF.
 
-### REQ-FMT-003: 16-Color Palette
+## 7. Structural Mutation Path (REQ-STR)
 
-Colors are drawn from a fixed 16-color named palette: Mist, Sage, Fern, Moss, Olive, Seafoam, Lagoon, Teal, Sky, Cloud, Sand, Clay, Peach, Rose, Lavender, Slate.
+### REQ-STR-001: Supported Ops
+Engine provides:
+- `insert_row(at)`,
+- `delete_row(at)`,
+- `insert_col(at)`,
+- `delete_col(at)`.
 
-Colors are identified by name strings (case-insensitive) and by enumeration index.
+### REQ-STR-002: Deterministic Rewrite
+Structural ops rewrite affected formula and name references deterministically.
 
-### REQ-FMT-004: Default Format Optimization
+### REQ-STR-003: Absolute/Mixed Ref Preservation
+Row/column anchoring flags are preserved through rewrites.
 
-A cell with all-default formatting has no format entry stored. Setting a format to all-defaults removes the entry.
+### REQ-STR-004: Invalidated Reference Behavior
+References targeting removed coordinates are surfaced explicitly as invalid references.
 
-## 8. Error Model (REQ-ERR)
+### REQ-STR-005: Bounds Validation
+Out-of-range structural positions are rejected without partial mutation.
 
-### REQ-ERR-001: Engine Errors
+## 8. External UDFs (REQ-UDF)
 
-Engine-level operations may fail with structured errors:
+### REQ-UDF-001: Registration
+Engine supports register/unregister lookup by case-insensitive name identity.
 
-| Error Kind | Description |
-|-----------|-------------|
-| **Address** | Invalid cell reference string |
-| **Parse** | Formula parse failure |
-| **Dependency** | Dependency graph construction failure |
-| **Name** | Invalid name identifier |
-| **OutOfBounds** | Cell address outside sheet bounds |
+### REQ-UDF-002: Volatility Declaration
+UDF handlers can declare volatility class, defaulting to `Standard`.
 
-Engine errors carry a human-readable Display representation.
+### REQ-UDF-003: Engine Integration
+UDF calls participate in normal dependency, recalculation, and invalidation flows.
 
-### REQ-ERR-002: Cell Value Errors
+## 9. Engine Entities: Controls and Charts (REQ-ENT)
 
-Cell evaluation may produce error values:
+### REQ-ENT-001: Controls
+Controls are engine-managed named-value entities with definition metadata and validated value mutation.
 
-| Error Kind | Description |
-|-----------|-------------|
-| **DivisionByZero** | Division by zero |
-| **Value** | Type mismatch or invalid argument |
-| **Name** | Unknown function name |
-| **UnknownName** | Unknown named value |
-| **Ref** | Invalid cell reference |
-| **Spill** | Dynamic array spill failure |
-| **Cycle** | Circular dependency detected |
+### REQ-ENT-002: Charts
+Charts are engine-managed sink entities with deterministic computed chart outputs derived from source ranges.
 
-Cell errors carry descriptive messages and (for Cycle) the cycle path.
+### REQ-ENT-003: Mutation APIs
+Engine supports create/remove/query/iterate surfaces for controls and charts.
 
-### REQ-ERR-003: Mappable to Integer Codes
+## 10. Change Tracking (REQ-DELTA)
 
-Both engine errors and cell value errors must be mappable to distinct integer status codes for the C API boundary. The mapping must be stable across versions.
+### REQ-DELTA-001: Opt-in Journal
+Engine supports enabling/disabling change tracking with drain semantics.
 
-## 9. Bulk Enumeration (REQ-BULK)
+### REQ-DELTA-002: Entry Shape
+Journal entries include typed entities (cell/name/chart/format/spill where applicable) and epoch tagging.
 
-### REQ-BULK-001: All Cell Inputs
+### REQ-DELTA-003: Disable Semantics
+Disabling change tracking discards pending undrained entries.
 
-The engine provides enumeration of all non-empty cell inputs as `(CellRef, CellInput)` pairs in deterministic order (sorted by cell address: column-major, then row).
+## 11. Formatting (REQ-FMT)
 
-### REQ-BULK-002: All Name Inputs
+### REQ-FMT-001: Metadata-only
+Formatting does not alter formula semantics.
 
-The engine provides enumeration of all named values as `(String, NameInput)` pairs in deterministic order (sorted alphabetically by name).
+### REQ-FMT-002: Supported Fields
+- `decimals` (`None` or `0..9`)
+- `bold`
+- `italic`
+- `fg` palette color
+- `bg` palette color
 
-### REQ-BULK-003: All Cell Formats
+### REQ-FMT-003: Deterministic Enumeration
+Non-default format enumeration is deterministic.
 
-The engine provides enumeration of all non-default cell formats as `(CellRef, CellFormat)` pairs in deterministic order (sorted by cell address).
+## 12. Enumeration and Serialization Handoff (REQ-BULK)
 
-### REQ-BULK-004: Serialization Round-Trip
+### REQ-BULK-001: Deterministic Enumerators
+Engine exposes deterministic iterators for:
+- all non-empty cell inputs,
+- all names,
+- all non-default cell formats.
 
-The three bulk enumeration functions together with the corresponding setter functions are sufficient to serialize and deserialize the complete engine state (modulo computed values, which are regenerated by recalculation).
+### REQ-BULK-002: Adapter Sufficiency (Current v2 Scope)
+These enumerators plus typed setters are sufficient for current file adapter persistence scope:
+- `MODE`,
+- `ITER`,
+- `DYNARR`,
+- `CELL`,
+- `NAME`,
+- `CONTROL`,
+- `CHART`,
+- `FMT`.
 
-*Validation:* The `dnavisicalc-file` crate demonstrates this by using `all_cell_inputs()`, `all_name_inputs()`, and `all_cell_formats()` for serialization and `set_cell_input()`, `set_name_input()`, `set_cell_format()`, and `recalculate()` for deserialization.
+## 13. Error Model (REQ-ERR)
 
-## 10. Non-Goals
+### REQ-ERR-001: Structured Engine Errors
+Mutating/querying APIs return structured errors for invalid address/name/parse/dependency/bounds and related contract violations.
 
-The following are explicitly out of scope for the VisiCalc engine:
+### REQ-ERR-002: Explicit Eval Errors
+Evaluation failures surface as explicit value-level errors and remain deterministic.
 
-- **Multi-sheet workbooks** — single sheet only
-- **Row/column insert/delete** — structural rewrites are deferred to later rounds
-- **Collaboration** — no OpLog, no replication
-- **XLL/UDF** — no external function registration
-- **VBA/macros** — no scripting runtime
-- **File format specifics** — file I/O is an external adapter, not an engine concern
-- **OOXML/Excel fidelity** — not a goal for this round
-- **Internal threading** — the engine is purely synchronous and externally driven
-- **Undo/redo** — the caller is responsible for managing undo state if desired
+## 14. Non-goals for this Engine Contract
+- Multi-sheet workbook semantics.
+- OOXML read/write compatibility.
+- Collaboration replication protocol.
+- VBA runtime and macro execution host.
+- Full XLL/COM parity.

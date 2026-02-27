@@ -1,5 +1,5 @@
 use dnavisicalc_core::{
-    BinaryOp, CellRange, CellRef, DEFAULT_SHEET_BOUNDS, Expr, UnaryOp, parse_formula,
+    BinaryOp, CellRange, CellRef, DEFAULT_SHEET_BOUNDS, Expr, RefFlags, UnaryOp, parse_formula,
 };
 
 #[test]
@@ -35,10 +35,14 @@ fn parses_visicalc_style_sum_range() {
         Expr::FunctionCall { name, args } => {
             assert_eq!(name, "SUM");
             assert_eq!(args.len(), 1);
-            let expected = Expr::Range(CellRange::new(
-                CellRef::from_a1("B2").expect("valid cell"),
-                CellRef::from_a1("M2").expect("valid cell"),
-            ));
+            let expected = Expr::Range(
+                CellRange::new(
+                    CellRef::from_a1("B2").expect("valid cell"),
+                    CellRef::from_a1("M2").expect("valid cell"),
+                ),
+                RefFlags::RELATIVE,
+                RefFlags::RELATIVE,
+            );
             assert_eq!(args[0], expected);
         }
         _ => panic!("expected function call"),
@@ -54,7 +58,10 @@ fn parses_unary_minus() {
             expr,
         } => assert_eq!(
             *expr,
-            Expr::Cell(CellRef::from_a1("A1").expect("valid cell"))
+            Expr::Cell(
+                CellRef::from_a1("A1").expect("valid cell"),
+                RefFlags::RELATIVE
+            )
         ),
         _ => panic!("expected unary minus"),
     }
@@ -82,7 +89,10 @@ fn parses_string_concat_operator() {
             right,
         } => {
             assert_eq!(*left, Expr::Text("hi".to_string()));
-            assert_eq!(*right, Expr::Cell(CellRef::from_a1("A1").expect("valid")));
+            assert_eq!(
+                *right,
+                Expr::Cell(CellRef::from_a1("A1").expect("valid"), RefFlags::RELATIVE)
+            );
         }
         _ => panic!("expected concat expression"),
     }
@@ -116,7 +126,10 @@ fn parses_named_reference() {
             right,
         } => {
             assert_eq!(*left, Expr::Name("TAX_RATE".to_string()));
-            assert_eq!(*right, Expr::Cell(CellRef::from_a1("B2").expect("valid")));
+            assert_eq!(
+                *right,
+                Expr::Cell(CellRef::from_a1("B2").expect("valid"), RefFlags::RELATIVE)
+            );
         }
         _ => panic!("expected multiply expression"),
     }

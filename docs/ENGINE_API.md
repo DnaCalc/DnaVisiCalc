@@ -2,7 +2,9 @@
 
 Complete C-style API specification for the `dnavisicalc-core` engine. Prefix: **`dvc_`** (DNA VisiCalc).
 
-This document specifies the public interface. It does not implement the interface — that is the future `dnavisicalc-cabi` crate. The specification is derived from the current Rust `Engine` API and the requirements in [engine-requirements.md](engine-requirements.md), following the patterns in [c-api-guidelines.md](c-api-guidelines.md).
+This document specifies the public interface. It does not implement the interface — that is the future `dnavisicalc-cabi` crate. The specification is derived from the current Rust `Engine` API and the requirements in [ENGINE_REQUIREMENTS.md](ENGINE_REQUIREMENTS.md), following the patterns in [C_API_GUIDELINES.md](C_API_GUIDELINES.md).
+
+Design notes for controls, charts, function classification, and change tracking: [ENGINE_DESIGN_NOTES.md](ENGINE_DESIGN_NOTES.md).
 
 ## 1. Type System
 
@@ -177,6 +179,82 @@ typedef struct {
 typedef struct DvcCellIterator DvcCellIterator;
 typedef struct DvcNameIterator DvcNameIterator;
 typedef struct DvcFormatIterator DvcFormatIterator;
+typedef struct DvcControlIterator DvcControlIterator;
+typedef struct DvcChartIterator DvcChartIterator;
+typedef struct DvcChangeIterator DvcChangeIterator;
+```
+
+### 1.14 Control Kind
+
+```c
+typedef int32_t DvcControlKind;
+
+#define DVC_CONTROL_SLIDER    0
+#define DVC_CONTROL_CHECKBOX  1
+#define DVC_CONTROL_BUTTON    2
+```
+
+### 1.15 Control Definition
+
+```c
+typedef struct {
+    DvcControlKind kind;
+    double         min;    /* Slider: minimum value (default 0.0) */
+    double         max;    /* Slider: maximum value (default 100.0) */
+    double         step;   /* Slider: increment step (default 1.0) */
+} DvcControlDef;
+```
+
+For checkbox controls, `min`/`max`/`step` are ignored (value is always 0.0 or 1.0). For button controls, all three are ignored (value is always 0.0).
+
+### 1.16 Chart Definition
+
+```c
+typedef struct {
+    DvcCellRange source_range;
+} DvcChartDef;
+```
+
+### 1.17 Chart Series Output
+
+```c
+typedef struct DvcChartOutput DvcChartOutput;
+```
+
+Opaque handle to a chart's computed output. The output is queried through accessor functions (series count, series name, series values).
+
+### 1.18 Volatility Classification
+
+```c
+typedef int32_t DvcVolatility;
+
+#define DVC_VOLATILITY_STANDARD                 0
+#define DVC_VOLATILITY_VOLATILE                 1
+#define DVC_VOLATILITY_EXTERNALLY_INVALIDATED   2
+```
+
+See [ENGINE_DESIGN_NOTES.md §4](ENGINE_DESIGN_NOTES.md#4-function-volatility-classification) for the three-category classification rationale.
+
+### 1.19 Change Entry Type
+
+```c
+typedef int32_t DvcChangeType;
+
+#define DVC_CHANGE_CELL_VALUE     0
+#define DVC_CHANGE_NAME_VALUE     1
+#define DVC_CHANGE_CHART_OUTPUT   2
+#define DVC_CHANGE_SPILL_REGION   3
+#define DVC_CHANGE_CELL_FORMAT    4
+```
+
+### 1.20 Iteration Config
+
+```c
+typedef struct {
+    int32_t  enabled;                /* 0=disabled, 1=enabled */
+    uint32_t max_iterations;         /* default: 100 */
+    double   convergence_tolerance;  /* default: 0.001 */
+} DvcIterationConfig;
 ```
 
 ## 2. Lifecycle Functions
@@ -529,9 +607,33 @@ Perform a full recalculation. Evaluates all formulas in dependency order, resolv
 DvcStatus dvc_has_volatile_cells(const DvcEngine *engine, int32_t *out);
 ```
 
-Sets `*out` to 1 if any cell contains a volatile function (NOW, RAND, RANDARRAY, STREAM), 0 otherwise. The caller uses this to decide whether periodic recalculation is needed.
+Sets `*out` to 1 if any cell contains a **volatile** function (NOW, RAND, RANDARRAY) or a UDF registered with `DVC_VOLATILITY_VOLATILE`. Does **not** include externally-invalidated functions (STREAM, externally-invalidated UDFs). The caller uses this to decide whether periodic recalculation via `dvc_invalidate_volatile` is needed.
 
 **Maps to:** `Engine::has_volatile_cells()`
+
+### dvc_has_externally_invalidated_cells
+
+```c
+DvcStatus dvc_has_externally_invalidated_cells(const DvcEngine *engine, int32_t *out);
+```
+
+Sets `*out` to 1 if any cell contains an **externally-invalidated** function (STREAM, or a UDF registered with `DVC_VOLATILITY_EXTERNALLY_INVALIDATED`). The caller uses this to decide whether external invalidation triggers (timers, data feeds) are needed.
+
+**Maps to:** `Engine::has_externally_invalidated_cells()`
+
+### dvc_invalidate_volatile
+
+```c
+DvcStatus dvc_invalidate_volatile(DvcEngine *engine);
+```
+
+Mark all volatile cells (NOW, RAND, RANDARRAY, volatile UDFs) as dirty. Increments `committed_epoch`. In Automatic mode, triggers recalculation. In Manual mode, the caller must call `dvc_recalculate` afterward.
+
+This replaces the previous pattern where the caller called `dvc_recalculate` directly — `dvc_invalidate_volatile` ensures only volatile cells and their dependents are recalculated (incremental), rather than forcing a full recalculation.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::invalidate_volatile()`
 
 ### dvc_has_stream_cells
 
@@ -550,13 +652,28 @@ DvcStatus dvc_tick_streams(DvcEngine *engine, double elapsed_secs,
                            int32_t *any_advanced);
 ```
 
-Accumulate elapsed time for all stream cells. When a stream cell's accumulated time reaches its period, its counter advances. If any counter advanced, `committed_epoch` is incremented and `*any_advanced` is set to 1.
+Accumulate elapsed time for all stream cells. When a stream cell's accumulated time reaches its period, its counter advances. If any counter advanced, the specific stream cells are marked dirty and `committed_epoch` is incremented. `*any_advanced` is set to 1 if any counter advanced, 0 otherwise.
 
-The caller should call `dvc_recalculate` after `*any_advanced == 1` to update computed values.
+In Automatic mode, recalculation is triggered if any stream advanced. In Manual mode, the caller should call `dvc_recalculate` after `*any_advanced == 1`.
+
+Only the affected stream cells and their dependents are recalculated (incremental). This is the key behavioral difference from volatile functions — stream ticks do not force a full recalculation.
 
 **Returns:** `DVC_OK`.
 
 **Maps to:** `Engine::tick_streams()`
+
+### dvc_invalidate_udf
+
+```c
+DvcStatus dvc_invalidate_udf(DvcEngine *engine,
+                              const char *name, uint32_t name_len);
+```
+
+Mark all cells that call the named UDF as dirty. Only meaningful for UDFs registered with `DVC_VOLATILITY_EXTERNALLY_INVALIDATED`. Increments `committed_epoch`.
+
+**Returns:** `DVC_OK`; `DVC_ERR_INVALID_NAME` if no UDF with that name is registered.
+
+**Maps to:** `Engine::invalidate_udf()`
 
 ## 8. Format Functions
 
@@ -709,7 +826,420 @@ Iterates over all cells with non-default formats in deterministic order.
 
 **Maps to:** `Engine::all_cell_formats()`
 
-## 11. Utility Functions
+## 11. Structural Mutation Functions
+
+See [ENGINE_DESIGN_NOTES.md §1](ENGINE_DESIGN_NOTES.md#1-generalized-dependency-graph) for reference rewriting semantics.
+
+### dvc_insert_row
+
+```c
+DvcStatus dvc_insert_row(DvcEngine *engine, uint16_t at);
+```
+
+Insert a row at position `at` (1-based). All cells at row `at` and below shift down by one. Formulas referencing affected cells are rewritten (relative references shift, absolute references are preserved). References that shift out of bounds become `#REF!`. Increments `committed_epoch` and forces full recalculation.
+
+**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS` if `at` is 0 or exceeds sheet bounds.
+
+**Maps to:** `Engine::insert_row()`
+
+### dvc_delete_row
+
+```c
+DvcStatus dvc_delete_row(DvcEngine *engine, uint16_t at);
+```
+
+Delete row `at`. Cells in that row are destroyed. Cells below shift up. References to deleted cells become `#REF!`.
+
+**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`.
+
+**Maps to:** `Engine::delete_row()`
+
+### dvc_insert_col
+
+```c
+DvcStatus dvc_insert_col(DvcEngine *engine, uint16_t at);
+```
+
+Insert a column at position `at` (1-based). Same rewriting semantics as `dvc_insert_row` but along the column axis.
+
+**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`.
+
+**Maps to:** `Engine::insert_col()`
+
+### dvc_delete_col
+
+```c
+DvcStatus dvc_delete_col(DvcEngine *engine, uint16_t at);
+```
+
+Delete column `at`. Same semantics as `dvc_delete_row` along the column axis.
+
+**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`.
+
+**Maps to:** `Engine::delete_col()`
+
+## 12. Iteration Config Functions
+
+### dvc_engine_get_iteration_config
+
+```c
+DvcStatus dvc_engine_get_iteration_config(const DvcEngine *engine,
+                                           DvcIterationConfig *out);
+```
+
+Query the current iterative calculation configuration. See §1.20 for the `DvcIterationConfig` struct definition.
+
+**Returns:** `DVC_OK`; `DVC_ERR_NULL_POINTER`.
+
+**Maps to:** `Engine::iteration_config()`
+
+### dvc_engine_set_iteration_config
+
+```c
+DvcStatus dvc_engine_set_iteration_config(DvcEngine *engine,
+                                           const DvcIterationConfig *config);
+```
+
+Set the iterative calculation configuration. When `enabled == 1`, circular dependencies are resolved by bounded iteration (up to `max_iterations` times, converging within `convergence_tolerance`). When `enabled == 0`, circular dependencies produce `#CYCLE!` errors.
+
+Changing the iteration config does not trigger recalculation — the new config takes effect on the next `dvc_recalculate` call.
+
+**Returns:** `DVC_OK`; `DVC_ERR_NULL_POINTER`; `DVC_ERR_INVALID_ARGUMENT` if `max_iterations` is 0 or `convergence_tolerance` is negative.
+
+**Maps to:** `Engine::set_iteration_config()`
+
+## 13. Control Functions
+
+Controls are named values with additional metadata (kind, min, max, step). See [ENGINE_DESIGN_NOTES.md §2](ENGINE_DESIGN_NOTES.md#2-controls-as-engine-entities) for design rationale.
+
+### dvc_control_define
+
+```c
+DvcStatus dvc_control_define(DvcEngine *engine,
+                              const char *name, uint32_t name_len,
+                              const DvcControlDef *def);
+```
+
+Define a control. Creates the underlying named value if it doesn't exist, with an initial value based on kind (Slider: `def->min`, Checkbox: 0.0, Button: 0.0). If the name already exists as a plain named value, it is promoted to a control. Name validation follows the same rules as `dvc_name_set_number`.
+
+**Returns:** `DVC_OK`; `DVC_ERR_INVALID_NAME`; `DVC_ERR_INVALID_ARGUMENT` (for Slider: if `min > max` or `step <= 0`).
+
+**Maps to:** `Engine::define_control()`
+
+### dvc_control_remove
+
+```c
+DvcStatus dvc_control_remove(DvcEngine *engine,
+                              const char *name, uint32_t name_len,
+                              int32_t *found);
+```
+
+Remove a control definition. The underlying named value is NOT removed — it reverts to a plain name. To also remove the value, call `dvc_name_clear` afterward. `*found` is set to 1 if a control was removed, 0 if the name was not a control.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::remove_control()`
+
+### dvc_control_set_value
+
+```c
+DvcStatus dvc_control_set_value(DvcEngine *engine,
+                                 const char *name, uint32_t name_len,
+                                 double value);
+```
+
+Set a control's value with validation. For Sliders, the value is clamped to `[min, max]`. For Checkboxes, the value must be 0.0 or 1.0. For Buttons, the value is always 0.0 (this function is a no-op for buttons).
+
+Equivalent to `dvc_name_set_number` but with kind-specific validation. Increments `committed_epoch` and triggers recalculation in Automatic mode.
+
+**Returns:** `DVC_OK`; `DVC_ERR_INVALID_NAME` (name is not a control); `DVC_ERR_INVALID_ARGUMENT` (invalid value for checkbox).
+
+**Maps to:** `Engine::set_control_value()`
+
+### dvc_control_get_value
+
+```c
+DvcStatus dvc_control_get_value(const DvcEngine *engine,
+                                 const char *name, uint32_t name_len,
+                                 double *out, int32_t *found);
+```
+
+Get a control's current value. `*found` is set to 1 if the name is a control, 0 otherwise.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::control_value()`
+
+### dvc_control_get_def
+
+```c
+DvcStatus dvc_control_get_def(const DvcEngine *engine,
+                               const char *name, uint32_t name_len,
+                               DvcControlDef *out, int32_t *found);
+```
+
+Get a control's definition. `*found` is set to 1 if the name is a control, 0 otherwise.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::control_definition()`
+
+### Control Iterator
+
+```c
+DvcStatus dvc_control_iterate(const DvcEngine *engine,
+                               DvcControlIterator **out);
+
+DvcStatus dvc_control_iterator_next(DvcControlIterator *iter,
+                                     char *name_buf, uint32_t name_buf_len,
+                                     uint32_t *name_len,
+                                     DvcControlDef *def,
+                                     double *value,
+                                     int32_t *done);
+
+DvcStatus dvc_control_iterator_destroy(DvcControlIterator *iter);
+```
+
+Iterates over all controls in alphabetical order by name. Each iteration step produces the control name, definition, and current value.
+
+**Maps to:** `Engine::all_controls()`
+
+## 14. Chart Functions
+
+Charts are sink nodes in the dependency graph. See [ENGINE_DESIGN_NOTES.md §3](ENGINE_DESIGN_NOTES.md#3-charts-as-engine-entities) for design rationale.
+
+### dvc_chart_define
+
+```c
+DvcStatus dvc_chart_define(DvcEngine *engine,
+                            const char *name, uint32_t name_len,
+                            const DvcChartDef *def);
+```
+
+Define a chart. The chart's source range cells become dependencies — the chart output is recomputed when any source cell changes. Name validation follows named-value rules. Charts occupy a separate namespace from names (a chart and a name can share the same identifier).
+
+**Returns:** `DVC_OK`; `DVC_ERR_INVALID_NAME`; `DVC_ERR_OUT_OF_BOUNDS` (source range exceeds sheet bounds).
+
+**Maps to:** `Engine::define_chart()`
+
+### dvc_chart_remove
+
+```c
+DvcStatus dvc_chart_remove(DvcEngine *engine,
+                            const char *name, uint32_t name_len,
+                            int32_t *found);
+```
+
+Remove a chart definition and its computed output. `*found` is set to 1 if removed, 0 if not found.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::remove_chart()`
+
+### dvc_chart_get_output
+
+```c
+DvcStatus dvc_chart_get_output(const DvcEngine *engine,
+                                const char *name, uint32_t name_len,
+                                DvcChartOutput **out, int32_t *found);
+```
+
+Get a chart's computed output. `*found` is set to 1 if the chart exists and has been computed, 0 otherwise. The output handle is valid until the next recalculation or chart mutation.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::chart_output()`
+
+### Chart Output Accessors
+
+```c
+DvcStatus dvc_chart_output_series_count(const DvcChartOutput *output,
+                                         uint32_t *out);
+
+DvcStatus dvc_chart_output_label_count(const DvcChartOutput *output,
+                                        uint32_t *out);
+
+DvcStatus dvc_chart_output_label(const DvcChartOutput *output,
+                                  uint32_t index,
+                                  char *buf, uint32_t buf_len,
+                                  uint32_t *out_len);
+
+DvcStatus dvc_chart_output_series_name(const DvcChartOutput *output,
+                                        uint32_t series_index,
+                                        char *buf, uint32_t buf_len,
+                                        uint32_t *out_len);
+
+DvcStatus dvc_chart_output_series_values(const DvcChartOutput *output,
+                                          uint32_t series_index,
+                                          double *buf, uint32_t buf_len,
+                                          uint32_t *out_count);
+```
+
+Accessors for the opaque `DvcChartOutput` handle. Labels are category labels (X-axis). Series are named data sequences (Y-axis). `dvc_chart_output_series_values` writes up to `buf_len` doubles to `buf` and sets `*out_count` to the total number of values in the series.
+
+### Chart Iterator
+
+```c
+DvcStatus dvc_chart_iterate(const DvcEngine *engine,
+                             DvcChartIterator **out);
+
+DvcStatus dvc_chart_iterator_next(DvcChartIterator *iter,
+                                   char *name_buf, uint32_t name_buf_len,
+                                   uint32_t *name_len,
+                                   DvcChartDef *def,
+                                   int32_t *done);
+
+DvcStatus dvc_chart_iterator_destroy(DvcChartIterator *iter);
+```
+
+Iterates over all chart definitions in alphabetical order.
+
+**Maps to:** `Engine::all_charts()`
+
+## 15. UDF Registration Functions
+
+### dvc_udf_register
+
+```c
+DvcStatus dvc_udf_register(DvcEngine *engine,
+                             const char *name, uint32_t name_len,
+                             DvcUdfCallback callback,
+                             void *user_data,
+                             DvcVolatility volatility);
+```
+
+Register a user-defined function. The `name` is matched case-insensitively (stored in uppercase). If a UDF with the same name already exists, it is replaced.
+
+```c
+typedef DvcStatus (*DvcUdfCallback)(
+    void *user_data,
+    const DvcCellValue *args, uint32_t arg_count,
+    DvcCellValue *out
+);
+```
+
+The callback receives evaluated argument values and writes a single result value. The callback must not call any other `dvc_*` function on the same engine handle (reentrant calls are undefined behavior).
+
+The `volatility` parameter controls recalculation behavior:
+- `DVC_VOLATILITY_STANDARD` — recalculated only when arguments change
+- `DVC_VOLATILITY_VOLATILE` — recalculated on every `dvc_invalidate_volatile` call
+- `DVC_VOLATILITY_EXTERNALLY_INVALIDATED` — recalculated only when `dvc_invalidate_udf` is called for this name
+
+**Returns:** `DVC_OK`; `DVC_ERR_INVALID_NAME`; `DVC_ERR_NULL_POINTER` (if callback is NULL).
+
+**Maps to:** `Engine::register_udf()`
+
+### dvc_udf_unregister
+
+```c
+DvcStatus dvc_udf_unregister(DvcEngine *engine,
+                               const char *name, uint32_t name_len,
+                               int32_t *found);
+```
+
+Unregister a UDF. `*found` is set to 1 if the UDF existed, 0 otherwise. Cells using the UDF will produce `#NAME?` errors on the next recalculation.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::unregister_udf()`
+
+## 16. Change Tracking Functions
+
+See [ENGINE_DESIGN_NOTES.md §5](ENGINE_DESIGN_NOTES.md#5-change-journal-calcdelta-pathfinder) for the CalcDelta pathfinder design.
+
+### dvc_change_tracking_enable
+
+```c
+DvcStatus dvc_change_tracking_enable(DvcEngine *engine);
+```
+
+Enable change tracking. Change entries accumulate during mutations and recalculations until drained.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::enable_change_tracking()`
+
+### dvc_change_tracking_disable
+
+```c
+DvcStatus dvc_change_tracking_disable(DvcEngine *engine);
+```
+
+Disable change tracking. Pending entries are discarded.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::disable_change_tracking()`
+
+### dvc_change_tracking_is_enabled
+
+```c
+DvcStatus dvc_change_tracking_is_enabled(const DvcEngine *engine,
+                                          int32_t *out);
+```
+
+Sets `*out` to 1 if change tracking is enabled, 0 otherwise.
+
+**Returns:** `DVC_OK`.
+
+**Maps to:** `Engine::is_change_tracking_enabled()`
+
+### Change Iterator
+
+```c
+DvcStatus dvc_change_iterate(DvcEngine *engine, DvcChangeIterator **out);
+```
+
+Drain all accumulated change entries and return them as an iterator. The engine's internal change buffer is cleared. The iterator yields entries in the order they were produced.
+
+**Note:** Unlike other iterators, this function takes a mutable engine pointer because it drains (clears) the internal buffer.
+
+```c
+DvcStatus dvc_change_iterator_next(DvcChangeIterator *iter,
+                                    DvcChangeType *change_type,
+                                    uint64_t *epoch,
+                                    int32_t *done);
+```
+
+Advance to the next change entry. `*change_type` identifies the kind of change and `*epoch` is the `committed_epoch` that produced it.
+
+After a successful `next` call (where `*done == 0`), the following accessors retrieve type-specific details:
+
+```c
+/* For DVC_CHANGE_CELL_VALUE: */
+DvcStatus dvc_change_get_cell(const DvcChangeIterator *iter,
+                               DvcCellAddr *addr);
+
+/* For DVC_CHANGE_NAME_VALUE: */
+DvcStatus dvc_change_get_name(const DvcChangeIterator *iter,
+                               char *buf, uint32_t buf_len,
+                               uint32_t *out_len);
+
+/* For DVC_CHANGE_CHART_OUTPUT: */
+DvcStatus dvc_change_get_chart_name(const DvcChangeIterator *iter,
+                                     char *buf, uint32_t buf_len,
+                                     uint32_t *out_len);
+
+/* For DVC_CHANGE_SPILL_REGION: */
+DvcStatus dvc_change_get_spill(const DvcChangeIterator *iter,
+                                DvcCellAddr *anchor,
+                                DvcCellRange *old_range, int32_t *had_old,
+                                DvcCellRange *new_range, int32_t *has_new);
+
+/* For DVC_CHANGE_CELL_FORMAT: */
+DvcStatus dvc_change_get_format(const DvcChangeIterator *iter,
+                                 DvcCellAddr *addr,
+                                 DvcCellFormat *old_fmt,
+                                 DvcCellFormat *new_fmt);
+```
+
+```c
+DvcStatus dvc_change_iterator_destroy(DvcChangeIterator *iter);
+```
+
+**Maps to:** `Engine::drain_changes()`
+
+## 17. Utility Functions
 
 ### dvc_last_error_message
 
@@ -769,7 +1299,7 @@ uint32_t dvc_api_version(void);
 
 Return the API version as a packed integer: `(major << 16) | (minor << 8) | patch`. This is the only function that does not require an engine handle and does not return `DvcStatus`.
 
-## 12. Thread Safety Contract
+## 18. Thread Safety Contract
 
 | Guarantee | Scope |
 |-----------|-------|
@@ -781,7 +1311,7 @@ Return the API version as a packed integer: `(major << 16) | (minor << 8) | patc
 
 No global mutable state exists. No global initialization function is required.
 
-## 13. String Encoding Contract
+## 19. String Encoding Contract
 
 - All string parameters and outputs are **UTF-8** encoded.
 - All string lengths are in **bytes**, not characters or code points.
@@ -789,7 +1319,7 @@ No global mutable state exists. No global initialization function is required.
 - Output buffers follow the caller-provided buffer protocol: pass `NULL` buffer with non-NULL `out_len` to query required size.
 - The `out_len` value does **not** include a null terminator. If the caller wants a null-terminated string, they must allocate `out_len + 1` bytes and append the terminator themselves.
 
-## 14. Error Detail Contract
+## 20. Error Detail Contract
 
 Each `DvcEngine` handle maintains an internal `last_error` message buffer. This buffer is:
 - Set on every operation that returns a non-`DVC_OK` status
@@ -799,7 +1329,7 @@ Each `DvcEngine` handle maintains an internal `last_error` message buffer. This 
 
 The `dvc_last_error_message` function retrieves this buffer. It provides human-readable detail beyond what the status code alone conveys (e.g., parse error position, the specific name that failed validation).
 
-## 15. Rust Implementation Notes
+## 21. Rust Implementation Notes
 
 The future `dnavisicalc-cabi` crate will wrap the engine:
 
@@ -827,7 +1357,7 @@ Each `#[no_mangle] extern "C"` function will:
 | `EngineError::Name(_)` | `DVC_ERR_INVALID_NAME` |
 | `EngineError::OutOfBounds(_)` | `DVC_ERR_OUT_OF_BOUNDS` |
 
-## 16. API Coverage Cross-Reference
+## 22. API Coverage Cross-Reference
 
 ### Engine methods → API functions
 
@@ -864,8 +1394,11 @@ Each `#[no_mangle] extern "C"` function will:
 | `Engine::name_input()` | `dvc_name_get_input_type`, `dvc_name_get_input_text` |
 | `Engine::recalculate()` | `dvc_recalculate` |
 | `Engine::has_volatile_cells()` | `dvc_has_volatile_cells` |
+| `Engine::has_externally_invalidated_cells()` | `dvc_has_externally_invalidated_cells` |
+| `Engine::invalidate_volatile()` | `dvc_invalidate_volatile` |
 | `Engine::has_stream_cells()` | `dvc_has_stream_cells` |
 | `Engine::tick_streams()` | `dvc_tick_streams` |
+| `Engine::invalidate_udf()` | `dvc_invalidate_udf` |
 | `Engine::cell_format()` | `dvc_cell_get_format` |
 | `Engine::cell_format_a1()` | `dvc_cell_get_format_a1` |
 | `Engine::set_cell_format()` | `dvc_cell_set_format` |
@@ -876,6 +1409,28 @@ Each `#[no_mangle] extern "C"` function will:
 | `Engine::all_cell_inputs()` | `dvc_cell_iterate` + iterator functions |
 | `Engine::all_name_inputs()` | `dvc_name_iterate` + iterator functions |
 | `Engine::all_cell_formats()` | `dvc_format_iterate` + iterator functions |
+| `Engine::insert_row()` | `dvc_insert_row` |
+| `Engine::delete_row()` | `dvc_delete_row` |
+| `Engine::insert_col()` | `dvc_insert_col` |
+| `Engine::delete_col()` | `dvc_delete_col` |
+| `Engine::iteration_config()` | `dvc_engine_get_iteration_config` |
+| `Engine::set_iteration_config()` | `dvc_engine_set_iteration_config` |
+| `Engine::define_control()` | `dvc_control_define` |
+| `Engine::remove_control()` | `dvc_control_remove` |
+| `Engine::set_control_value()` | `dvc_control_set_value` |
+| `Engine::control_value()` | `dvc_control_get_value` |
+| `Engine::control_definition()` | `dvc_control_get_def` |
+| `Engine::all_controls()` | `dvc_control_iterate` + iterator functions |
+| `Engine::define_chart()` | `dvc_chart_define` |
+| `Engine::remove_chart()` | `dvc_chart_remove` |
+| `Engine::chart_output()` | `dvc_chart_get_output` + output accessors |
+| `Engine::all_charts()` | `dvc_chart_iterate` + iterator functions |
+| `Engine::register_udf()` | `dvc_udf_register` |
+| `Engine::unregister_udf()` | `dvc_udf_unregister` |
+| `Engine::enable_change_tracking()` | `dvc_change_tracking_enable` |
+| `Engine::disable_change_tracking()` | `dvc_change_tracking_disable` |
+| `Engine::is_change_tracking_enabled()` | `dvc_change_tracking_is_enabled` |
+| `Engine::drain_changes()` | `dvc_change_iterate` + iterator functions |
 | `PaletteColor::as_name()` | `dvc_palette_color_name` |
 | `parse_cell_ref()` | `dvc_parse_cell_ref` |
 
@@ -922,6 +1477,23 @@ Every `self.engine.*` call in `app.rs` maps to a C API function:
 | `engine.set_name_formula(name, f)` | `dvc_name_set_formula` |
 | `engine.set_name_number(name, n)` | `dvc_name_set_number` |
 | `engine.set_name_text(name, t)` | `dvc_name_set_text` |
+| `engine.insert_row(at)` | `dvc_insert_row` |
+| `engine.delete_row(at)` | `dvc_delete_row` |
+| `engine.insert_col(at)` | `dvc_insert_col` |
+| `engine.delete_col(at)` | `dvc_delete_col` |
+
+Future TUI calls (after engine-backed controls/charts migration):
+
+| app.rs call (planned) | C API function |
+|------------|---------------|
+| `engine.define_control(name, def)` | `dvc_control_define` |
+| `engine.set_control_value(name, val)` | `dvc_control_set_value` |
+| `engine.control_value(name)` | `dvc_control_get_value` |
+| `engine.all_controls()` | `dvc_control_iterate` |
+| `engine.define_chart(name, def)` | `dvc_chart_define` |
+| `engine.chart_output(name)` | `dvc_chart_get_output` |
+| `engine.enable_change_tracking()` | `dvc_change_tracking_enable` |
+| `engine.drain_changes()` | `dvc_change_iterate` |
 
 ### File I/O (lib.rs) call coverage
 
