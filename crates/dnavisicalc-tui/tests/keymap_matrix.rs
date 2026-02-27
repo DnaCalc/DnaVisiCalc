@@ -17,6 +17,19 @@ fn f2_starts_edit_in_navigation() {
 }
 
 #[test]
+fn f9_recalculates_in_any_mode() {
+    for mode in [
+        AppMode::Navigate,
+        AppMode::Edit,
+        AppMode::Command,
+        AppMode::PasteSpecial,
+    ] {
+        let action = action_from_key(mode, key(KeyCode::F(9)));
+        assert_eq!(action, Some(Action::Recalculate));
+    }
+}
+
+#[test]
 fn control_char_in_edit_is_ignored() {
     let key = KeyEvent {
         code: KeyCode::Char('c'),

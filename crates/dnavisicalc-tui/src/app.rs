@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crossterm::event::KeyEvent;
-use dnavisicalc_core::{
+use dnavisicalc_engine::{
     CellFormat, CellInput, CellRange, CellRef, Engine, PaletteColor, RecalcMode, Value,
     col_index_to_label,
 };
@@ -216,9 +216,9 @@ impl App {
         self.selected
     }
 
-    pub fn selected_range(&self) -> dnavisicalc_core::CellRange {
+    pub fn selected_range(&self) -> dnavisicalc_engine::CellRange {
         let anchor = self.selection_anchor.unwrap_or(self.selected);
-        dnavisicalc_core::CellRange::new(anchor, self.selected)
+        dnavisicalc_engine::CellRange::new(anchor, self.selected)
     }
 
     pub fn status(&self) -> &str {
@@ -483,20 +483,19 @@ impl App {
         }
     }
 
-    pub fn volatile_recalc(&mut self) {
-        let _ = self.engine.invalidate_volatile();
-    }
-
     pub fn tick_streams(&mut self, elapsed_secs: f64) -> bool {
         self.engine.tick_streams(elapsed_secs)
     }
 
-    pub fn has_volatile_cells(&self) -> bool {
-        self.engine.has_volatile_cells()
-    }
-
     pub fn has_stream_cells(&self) -> bool {
         self.engine.has_stream_cells()
+    }
+
+    fn recalculate_now(&mut self) {
+        match self.engine.recalculate() {
+            Ok(()) => self.status = "Recalculated".to_string(),
+            Err(err) => self.status = format!("Recalc error: {err}"),
+        }
     }
 
     fn apply_controls_navigate(&mut self, action: Action) -> CommandOutcome {
@@ -567,6 +566,7 @@ impl App {
                 self.controls_focused = false;
                 self.status = "Controls unfocused".to_string();
             }
+            Action::Recalculate => self.recalculate_now(),
             _ => {}
         }
         CommandOutcome::Continue
@@ -735,10 +735,7 @@ impl App {
                 self.command_buffer.clear();
                 self.status = "Command mode".to_string();
             }
-            Action::Recalculate => match self.engine.recalculate() {
-                Ok(()) => self.status = "Recalculated".to_string(),
-                Err(err) => self.status = format!("Recalc error: {err}"),
-            },
+            Action::Recalculate => self.recalculate_now(),
             Action::ToggleControlsFocus => {
                 if !self.controls.is_empty() {
                     self.controls_focused = true;
@@ -817,6 +814,7 @@ impl App {
                 self.mode = AppMode::Navigate;
                 self.status = result;
             }
+            Action::Recalculate => self.recalculate_now(),
             Action::MoveLeft
             | Action::MoveRight
             | Action::MoveUp
@@ -837,7 +835,6 @@ impl App {
             | Action::TypeChar(_)
             | Action::StartEdit
             | Action::StartCommand
-            | Action::Recalculate
             | Action::Quit => {}
         }
         CommandOutcome::Continue
@@ -859,6 +856,7 @@ impl App {
                 self.mode = AppMode::Navigate;
                 return self.execute_command(&cmd, io);
             }
+            Action::Recalculate => self.recalculate_now(),
             Action::MoveLeft
             | Action::MoveRight
             | Action::MoveUp
@@ -879,7 +877,6 @@ impl App {
             | Action::TypeChar(_)
             | Action::StartEdit
             | Action::StartCommand
-            | Action::Recalculate
             | Action::Quit => {}
         }
         CommandOutcome::Continue
@@ -924,6 +921,7 @@ impl App {
                     self.paste_mode_index = (self.paste_mode_index + 1) % PasteMode::ALL.len();
                 }
             }
+            Action::Recalculate => self.recalculate_now(),
             Action::CopySelection
             | Action::PasteFromClipboard
             | Action::BeginPasteFromClipboard(_)
@@ -934,7 +932,6 @@ impl App {
             | Action::StartEdit
             | Action::StartCommand
             | Action::Backspace
-            | Action::Recalculate
             | Action::Quit
             | Action::ClearSelection
             | Action::ExtendLeft
@@ -957,10 +954,7 @@ impl App {
 
         match name {
             "q" | "quit" => return CommandOutcome::Quit,
-            "r" | "recalc" => match self.engine.recalculate() {
-                Ok(()) => self.status = "Recalculated".to_string(),
-                Err(err) => self.status = format!("Recalc error: {err}"),
-            },
+            "r" | "recalc" => self.recalculate_now(),
             "mode" => {
                 let Some(mode_arg) = parts.next() else {
                     self.status = "Usage: mode auto|manual".to_string();
@@ -1780,7 +1774,7 @@ pub struct GridCell {
     pub format: CellFormat,
 }
 
-fn format_range(range: dnavisicalc_core::CellRange) -> String {
+fn format_range(range: dnavisicalc_engine::CellRange) -> String {
     if range.start == range.end {
         range.start.to_string()
     } else {
@@ -1868,7 +1862,7 @@ impl ScriptRunner {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-    use dnavisicalc_core::{CellInput, PaletteColor};
+    use dnavisicalc_engine::{CellInput, PaletteColor};
 
     fn run_command(app: &mut App, io: &mut crate::io::MemoryWorkbookIo, command: &str) {
         app.apply(Action::StartCommand, io);
@@ -1933,6 +1927,25 @@ mod tests {
                 .value,
             Value::Number(5.0)
         );
+    }
+
+    #[test]
+    fn recalculate_action_runs_in_command_mode() {
+        let mut app = App::new();
+        let mut io = crate::io::MemoryWorkbookIo::new();
+
+        run_command(&mut app, &mut io, "set A1 =RAND()");
+        let before = app.engine().cell_state_a1("A1").expect("before").value;
+
+        app.apply(Action::StartCommand, &mut io);
+        app.apply(Action::InputChar('x'), &mut io);
+        app.apply(Action::Recalculate, &mut io);
+
+        assert_eq!(app.mode(), AppMode::Command);
+        let after = app.engine().cell_state_a1("A1").expect("after").value;
+        assert_ne!(before, after);
+        assert_eq!(app.status(), "Recalculated");
+        assert_eq!(app.command_buffer(), "x");
     }
 
     #[test]

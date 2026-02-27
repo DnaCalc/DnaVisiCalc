@@ -21,6 +21,7 @@ Engine tracks:
 ### REQ-EXEC-003: Recalc Modes
 - `Automatic`: mutation/invalidation paths may trigger immediate recalc.
 - `Manual`: mutation/invalidation marks dirty state; caller invokes recalc explicitly.
+- Explicit recalc API is valid in both modes (`force recalc` behavior in Automatic mode).
 
 ### REQ-EXEC-004: Determinism
 For identical inputs and operation sequences, observable results are deterministic.
@@ -66,6 +67,12 @@ Evaluation produces typed values including number/text/bool/blank/error.
 ### REQ-CALC-006: Cell State Query
 Cell state query includes computed value, `value_epoch`, and stale visibility (`value_epoch < committed_epoch`).
 
+### REQ-CALC-007: Random Function Stability Profile
+`RAND` and `RANDARRAY` outputs:
+- stay within their declared bounds,
+- change only on explicit recalculation/invalidation events,
+- evolve via small deterministic perturbations between recalculations.
+
 ## 5. Dynamic Arrays and Spill (REQ-SPILL)
 
 ### REQ-SPILL-001: Spill Semantics
@@ -93,6 +100,7 @@ Built-ins/UDFs are treated as one of:
 
 ### REQ-INV-004: Volatile Invalidation Path
 `invalidate_volatile()` marks volatile formulas dirty and propagates through normal recalc flow.
+Volatile formulas do not autonomously re-evaluate without an explicit recalc/invalidation trigger.
 
 ### REQ-INV-005: Stream Tick Path
 `tick_streams(elapsed_secs)` advances stream counters and marks fired stream formulas dirty.

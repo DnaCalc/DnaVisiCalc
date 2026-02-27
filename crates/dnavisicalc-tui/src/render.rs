@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::{App, AppMode, ChartData, ControlKind, PasteMode, SpillRole};
-use dnavisicalc_core::PaletteColor;
+use dnavisicalc_engine::PaletteColor;
 
 pub fn render_app(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -21,12 +21,12 @@ pub fn render_app(frame: &mut Frame, app: &App) {
 
     let file_name = app.current_path().unwrap_or("[new workbook]");
     let recalc_mode = match app.engine().recalc_mode() {
-        dnavisicalc_core::RecalcMode::Automatic => "auto",
-        dnavisicalc_core::RecalcMode::Manual => "manual",
+        dnavisicalc_engine::RecalcMode::Automatic => "auto",
+        dnavisicalc_engine::RecalcMode::Manual => "manual",
     };
     frame.render_widget(
         Paragraph::new(format!(
-            "File: {file_name} | Save: {} | Recalc: {recalc_mode} | F3 Controls | ?/F1 Help",
+            "File: {file_name} | Save: {} | Recalc: {recalc_mode} | F3 Controls | F9 Recalc | ?/F1 Help",
             app.save_state_label()
         ))
         .block(Block::default().title("Workbook").borders(Borders::ALL)),
@@ -414,7 +414,7 @@ fn truncate_cell_text(input: &str, width: usize) -> String {
 fn quick_help(mode: AppMode) -> &'static str {
     match mode {
         AppMode::Navigate => {
-            "Nav: arrows/hjkl move | Shift select | Del clear | type to edit | Enter/e/F2 edit | Ctrl+C/V copy/paste | F3 controls | : cmd | ?/F1 help"
+            "Nav: arrows/hjkl move | Shift select | Del clear | type to edit | Enter/e/F2 edit | Ctrl+C/V copy/paste | F3 controls | F9 recalc | : cmd | ?/F1 help"
         }
         AppMode::Edit => "Edit: type value/formula | Backspace delete | Enter apply | Esc discard",
         AppMode::Command => "Cmd: Enter run | Esc cancel",
@@ -442,7 +442,7 @@ fn paste_special_text(app: &App) -> String {
 }
 
 fn help_lines() -> Vec<Line<'static>> {
-    let function_list = dnavisicalc_core::SUPPORTED_FUNCTIONS.join(", ");
+    let function_list = dnavisicalc_engine::SUPPORTED_FUNCTIONS.join(", ");
     let mut lines: Vec<Line> = Vec::new();
 
     for s in [
@@ -455,6 +455,7 @@ fn help_lines() -> Vec<Line<'static>> {
         "- Delete: clear selected cell/range contents",
         "- Enter, e, or F2: edit selected cell",
         "- F3: focus controls panel",
+        "- F9: force recalculation now",
         "- : enter command mode | ? or F1: toggle help",
         "",
     ] {
@@ -492,7 +493,7 @@ fn help_lines() -> Vec<Line<'static>> {
         "  ctrl add slider|checkbox|button <NAME>",
         "  ctrl remove <NAME> | ctrl list",
         "  mode auto|manual: recalc mode",
-        "  r: recalculate | q: quit",
+        "  r/recalc: recalculate | q: quit",
         "",
         "Notes",
     ];

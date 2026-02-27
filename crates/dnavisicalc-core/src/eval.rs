@@ -666,24 +666,42 @@ impl<'a> EvalContext<'a> {
         }
     }
 
-    fn next_rand_u64(&mut self) -> u64 {
-        self.random_counter = self.random_counter.wrapping_add(1);
-        let anchor = self
-            .stack
+    fn current_eval_anchor(&self) -> CellRef {
+        self.stack
             .last()
             .and_then(|node| match node {
                 EvalStackNode::Cell(cell) => Some(*cell),
                 EvalStackNode::Name(_) => None,
             })
-            .unwrap_or(CellRef { col: 1, row: 1 });
-        let mut x = self.recalc_serial
-            ^ ((anchor.col as u64) << 16)
+            .unwrap_or(CellRef { col: 1, row: 1 })
+    }
+
+    fn mix_u64(mut x: u64) -> u64 {
+        // SplitMix64 finalizer for deterministic bit-mixing.
+        x ^= x >> 30;
+        x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+
+    fn unit_from_u64(x: u64) -> f64 {
+        (x >> 11) as f64 / ((1u64 << 53) as f64)
+    }
+
+    fn next_rand_unit(&mut self) -> f64 {
+        self.random_counter = self.random_counter.wrapping_add(1);
+        let anchor = self.current_eval_anchor();
+        let slot_seed = ((anchor.col as u64) << 16)
             ^ ((anchor.row as u64) << 32)
-            ^ self.random_counter;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        x
+            ^ self.random_counter.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        let base_seed = Self::mix_u64(slot_seed);
+        let base = Self::unit_from_u64(base_seed);
+        let phase_seed = Self::mix_u64(base_seed ^ 0xd1b5_4a32_d192_ed03);
+        let phase = Self::unit_from_u64(phase_seed) * std::f64::consts::TAU;
+        let drift = self.recalc_serial as f64 * 0.09;
+        let perturbation = (phase + drift).sin() * 0.005;
+        (base + perturbation).clamp(0.0, 1.0 - f64::EPSILON)
     }
 
     fn resolve_spilled_cell_value(&mut self, target: CellRef) -> Option<Value> {
@@ -1933,15 +1951,18 @@ fn eval_randarray(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
                 "RANDARRAY integer bounds are invalid".to_string(),
             )));
         }
-        let span = (max_i - min_i + 1) as u64;
+        let span = (max_i - min_i + 1) as f64;
         for _ in 0..total {
-            let value = min_i + (ctx.next_rand_u64() % span) as i64;
+            let mut value = min_i + (ctx.next_rand_unit() * span).floor() as i64;
+            if value > max_i {
+                value = max_i;
+            }
             values.push(Value::Number(value as f64));
         }
     } else {
         let span = max - min;
         for _ in 0..total {
-            let n = (ctx.next_rand_u64() >> 11) as f64 / ((1u64 << 53) as f64);
+            let n = ctx.next_rand_unit();
             values.push(Value::Number(min + span * n));
         }
     }
@@ -2322,7 +2343,7 @@ fn eval_rand(args: &[Expr], ctx: &mut EvalContext<'_>) -> RuntimeValue {
             "RAND expects 0 arguments".to_string(),
         )));
     }
-    let n = (ctx.next_rand_u64() >> 11) as f64 / ((1u64 << 53) as f64);
+    let n = ctx.next_rand_unit();
     RuntimeValue::scalar(Value::Number(n))
 }
 

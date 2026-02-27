@@ -3,6 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::app::{Action, AppMode};
 
 pub fn action_from_key(mode: AppMode, key: KeyEvent) -> Option<Action> {
+    if is_actionable_key_event(key.kind) && key.code == KeyCode::F(9) {
+        return Some(Action::Recalculate);
+    }
     match mode {
         AppMode::Navigate => map_navigate_key(key),
         AppMode::Edit | AppMode::Command => map_text_entry_key(key),
@@ -242,6 +245,21 @@ mod tests {
             action_from_key(AppMode::Navigate, key(KeyCode::F(3))),
             Some(Action::ToggleControlsFocus)
         );
+    }
+
+    #[test]
+    fn f9_maps_to_recalculate_in_all_modes() {
+        for mode in [
+            AppMode::Navigate,
+            AppMode::Edit,
+            AppMode::Command,
+            AppMode::PasteSpecial,
+        ] {
+            assert_eq!(
+                action_from_key(mode, key(KeyCode::F(9))),
+                Some(Action::Recalculate)
+            );
+        }
     }
 
     #[test]

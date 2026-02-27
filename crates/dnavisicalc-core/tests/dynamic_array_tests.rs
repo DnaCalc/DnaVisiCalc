@@ -122,6 +122,41 @@ fn randarray_spills_within_bounds() {
 }
 
 #[test]
+fn randarray_changes_are_small_across_recalculations() {
+    let mut engine = Engine::new();
+    engine
+        .set_formula_a1("A1", "=RANDARRAY(2,2,0,100,FALSE)")
+        .expect("set formula");
+
+    let cells = ["A1", "B1", "A2", "B2"];
+    let mut before = Vec::new();
+    for cell in cells {
+        let value = engine.cell_state_a1(cell).expect("before state").value;
+        match value {
+            Value::Number(n) => before.push(n),
+            other => panic!("expected number in {cell}, got {other:?}"),
+        }
+    }
+
+    engine.recalculate().expect("recalc");
+
+    let mut changed = false;
+    for (index, cell) in cells.into_iter().enumerate() {
+        let value = engine.cell_state_a1(cell).expect("after state").value;
+        let n = match value {
+            Value::Number(n) => n,
+            other => panic!("expected number in {cell}, got {other:?}"),
+        };
+        let delta = (n - before[index]).abs();
+        if delta > 0.0 {
+            changed = true;
+        }
+        assert!(delta <= 0.2, "RANDARRAY delta too large at {cell}: {delta}");
+    }
+    assert!(changed, "RANDARRAY should change across recalculations");
+}
+
+#[test]
 fn direct_reference_to_spilled_interior_cell_works() {
     let mut engine = Engine::new();
     engine

@@ -642,6 +642,10 @@ DvcStatus dvc_recalculate(DvcEngine *engine);
 
 Perform a full recalculation. Evaluates all formulas in dependency order, resolves dynamic array spills, and sets `stabilized_epoch = committed_epoch`.
 
+This function is always valid in both recalc modes:
+- In `DVC_RECALC_MANUAL`, it is the explicit trigger to stabilize pending work.
+- In `DVC_RECALC_AUTOMATIC`, it is an explicit force-recalc entrypoint and is still allowed.
+
 **Returns:** `DVC_OK`; `DVC_ERR_DEPENDENCY` (circular dependency or graph construction failure).
 
 **Maps to:** `Engine::recalculate()`
@@ -652,7 +656,7 @@ Perform a full recalculation. Evaluates all formulas in dependency order, resolv
 DvcStatus dvc_has_volatile_cells(const DvcEngine *engine, int32_t *out);
 ```
 
-Sets `*out` to 1 if any cell contains a **volatile** function (NOW, RAND, RANDARRAY) or a UDF registered with `DVC_VOLATILITY_VOLATILE`. Does **not** include externally-invalidated functions (STREAM, externally-invalidated UDFs). The caller uses this to decide whether periodic recalculation via `dvc_invalidate_volatile` is needed.
+Sets `*out` to 1 if any cell contains a **volatile** function (NOW, RAND, RANDARRAY) or a UDF registered with `DVC_VOLATILITY_VOLATILE`. Does **not** include externally-invalidated functions (STREAM, externally-invalidated UDFs). The caller uses this to decide whether to expose/trigger explicit volatile invalidation via `dvc_invalidate_volatile` (for example user action or host timer policy).
 
 **Maps to:** `Engine::has_volatile_cells()`
 

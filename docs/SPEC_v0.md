@@ -37,6 +37,7 @@ This repo contains four crates with explicit boundaries:
 - Dynamic arrays and spill semantics including spill references (`A1#`).
 - Functional surface includes aggregates, logical, math/trig, financial, text, error helpers, lambda family (`LET`/`LAMBDA`/`MAP`), and reference helpers (`INDIRECT`, `OFFSET`, `ROW`, `COLUMN`).
 - `INDIRECT` supports both A1 and R1C1 text references.
+- `RAND`/`RANDARRAY` outputs remain within bounds and change via small perturbations on explicit recalculation events.
 
 ### 3.5 Recalc and Epoch Model
 - `committed_epoch`, `stabilized_epoch`, and per-value `value_epoch`.
@@ -68,6 +69,7 @@ This repo contains four crates with explicit boundaries:
   - `Volatile`,
   - `ExternallyInvalidated`.
 - Volatile refresh and externally-triggered refresh are separate pathways (`invalidate_volatile`, stream ticks, `invalidate_udf`).
+- Volatile formulas do not self-tick in the background; they update when recalculation/invalidation is explicitly triggered.
 
 ### 3.9 External UDFs
 - External UDF registration/unregistration is in scope.
@@ -100,6 +102,7 @@ This repo contains four crates with explicit boundaries:
 
 ### 3.13 TUI Scope
 - Grid navigation, editing, command mode, clipboard/paste-special, formatting, and help surfaces are in scope.
+- `F9` forces recalculation in any UI mode (equivalent to `:r` / `:recalc`).
 - Command surface includes structural operations (`insrow`/`delrow`/`inscol`/`delcol` aliases).
 - Status presentation distinguishes rejected-valid commands from malformed input/usage errors.
 - TUI tool-driving automation includes fixed-size frame capture with cursor/style metadata, keystroke-driven script capture, and CLI replay/viewer flow (`docs/TUI_TESTABILITY.md`).

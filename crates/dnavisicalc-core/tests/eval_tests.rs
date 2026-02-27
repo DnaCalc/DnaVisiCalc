@@ -447,6 +447,22 @@ fn rand_differs_across_recalculations() {
 }
 
 #[test]
+fn rand_changes_are_small_across_recalculations() {
+    let mut engine = Engine::new();
+    engine.set_formula_a1("A1", "=RAND()").expect("set A1");
+    let v1 = match engine.cell_state_a1("A1").expect("v1").value {
+        Value::Number(n) => n,
+        other => panic!("expected number, got {other:?}"),
+    };
+    engine.recalculate().expect("recalc");
+    let v2 = match engine.cell_state_a1("A1").expect("v2").value {
+        Value::Number(n) => n,
+        other => panic!("expected number, got {other:?}"),
+    };
+    assert!((v2 - v1).abs() <= 0.01, "RAND delta should be small: {v1} -> {v2}");
+}
+
+#[test]
 fn rand_with_arg_returns_error() {
     let mut engine = Engine::new();
     engine.set_formula_a1("A1", "=RAND(1)").expect("set A1");

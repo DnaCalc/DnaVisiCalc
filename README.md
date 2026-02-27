@@ -130,6 +130,7 @@ The `dnavisicalc-tui` crate provides a terminal UI using `ratatui` + `crossterm`
 - Grid navigation and cell editing (`Enter`/`e`/`F2`).
 - Multi-cell selection with `Shift+Arrows` or `Shift+H/J/K/L`.
 - System clipboard copy/paste (`Ctrl+C`, `Ctrl+V`) with Paste Special modes.
+- `F9` force recalc shortcut (same behavior as `:r` / `:recalc`) in any mode.
 - Command mode (`:w`, `:o`, `:mode`, `:recalc`, `:set`, `:q`).
 - Name commands (`:name <NAME> <value|formula>`, `:name clear <NAME>`).
 - Format commands (`:fmt decimals|bold|italic|fg|bg|clear ...`) and `Delete` to clear selected range contents.
@@ -196,6 +197,7 @@ Compatibility notes:
 ## Layers Story
 This repository keeps explicit boundaries:
 - `dnavisicalc-core`: pure calculation engine.
+- `dnavisicalc-engine`: backend boundary/loader used by Rust adapters (currently `rust-core` backend; configurable via `DNAVISICALC_COREENGINE`).
 - `dnavisicalc-file`: serialization adapter.
 - `dnavisicalc-tui`: interaction layer + `dnavisicalc` binary.
 
@@ -206,6 +208,7 @@ No reverse dependency from core to adapters or UI.
 ```text
 crates/
   dnavisicalc-core/  # formulas, dependency graph, evaluation, epochs
+  dnavisicalc-engine/ # engine backend boundary + config/loader
   dnavisicalc-file/  # DVISICALC file format parser/writer
   dnavisicalc-tui/   # ratatui app, key mapping, command layer, binary
 docs/

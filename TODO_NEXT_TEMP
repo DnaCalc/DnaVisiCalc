@@ -4,3 +4,13 @@ I'd like to formally separate the core engine behind the C API, even for the rus
 Already put in place a mechanism to configure which coreengine is loaded (we're going to have many).
 
 Also make sure the UI is great for tool interaction - i.e. we want to make loads of scripts etc. that drive the UI (through the UI). It should at least be simple to get the whole screen buffer in full color, with cursor pos, (at some determined size), and send keystrokes. If we need to cahnge the UI layer now to help with this, it's a good time to do so. Make some simple initial scripts taht work this way. We should be able to persist from the buffer to an image file, and make a little viewer (like "glow" but our own one in Rust) to view the buffer grabs. A stream of keystroke (overlay somehow) / buffer grabs should be viewable in our (cli-based) viewer, so we can follow a sequence like a little video (play, pause, forward, back 1 frame or 15, set speed).
+
+Status snapshot (2026-02-27):
+- Completed:
+  - Engine boundary split introduced (`dnavisicalc-engine`) and wired into file/TUI.
+  - Backend selection env var (`DNAVISICALC_COREENGINE`) and wrapper seam added.
+  - Capture tooling exists: full-color buffer capture + cursor metadata + script runner + timeline viewer.
+  - Capture viewer transport controls implemented (play/pause, +/-1, +/-15, speed).
+- Remaining follow-up to track separately:
+  - C API implementation crate (`dnavisicalc-cabi`) is still specification-only in this repo phase.
+  - Continue iterative TUI/FILE_FORMAT conformance reviews against updated docs.

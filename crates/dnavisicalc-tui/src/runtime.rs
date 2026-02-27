@@ -77,7 +77,6 @@ fn run_event_loop(
     trace: &mut Option<EventTrace>,
 ) -> Result<()> {
     let mut last_tick = Instant::now();
-    let mut volatile_accumulator: f64 = 0.0;
 
     loop {
         let term_size = terminal.size()?;
@@ -138,16 +137,6 @@ fn run_event_loop(
 
         if app.has_stream_cells() {
             app.tick_streams(elapsed);
-        }
-
-        if app.has_volatile_cells() {
-            volatile_accumulator += elapsed;
-            if volatile_accumulator >= 1.0 {
-                volatile_accumulator -= 1.0;
-                app.volatile_recalc();
-            }
-        } else {
-            volatile_accumulator = 0.0;
         }
     }
 
