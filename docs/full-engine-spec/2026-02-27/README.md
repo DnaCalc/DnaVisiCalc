@@ -18,9 +18,11 @@ Informative companion docs:
 - `SPEC_v0_INTEGRATION_APPENDIX.md`
 - `ENGINE_REQUIREMENTS_INTEGRATION_APPENDIX.md`
 - `ENGINE_API_RUST_APPENDIX.md`
+- `ENGINE_CONFORMANCE_TESTS.md`
 
 ## Canonical Source Mapping (at freeze)
 
 - `SPEC_v0.md` <- `docs/SPEC_v0.md`
 - `ENGINE_REQUIREMENTS.md` <- `docs/ENGINE_REQUIREMENTS.md`
 - `ENGINE_API.md` <- `docs/ENGINE_API.md`
+- `ENGINE_CONFORMANCE_TESTS.md` <- `docs/ENGINE_CONFORMANCE_TESTS.md`

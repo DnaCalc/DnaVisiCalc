@@ -51,17 +51,21 @@ Names must be valid identifiers and must not collide with built-in functions, bo
 
 ## 4. Recalculation Model (REQ-CALC)
 
-### REQ-CALC-001: Dependency Evaluation
-Recalculation follows deterministic dependency closure semantics.
+### REQ-CALC-001: Deterministic Recalc Outcomes
+For identical starting state and identical API-call sequence, recalculation results are deterministic (values, errors, epochs, and staleness visibility).
 
-### REQ-CALC-002: Incremental Recompute
-Engine supports dirty-closure incremental recompute for targeted mutations/invalidation.
+### REQ-CALC-002: Recalc Completeness
+After recalculation stabilizes, all affected formulas/names reflect current inputs and invalidation events under the active recalc mode.
 
-### REQ-CALC-003: Full-Rebuild Fallback
-Formula-structure and graph-shape changes may force full dependency rebuild/recalc.
+### REQ-CALC-003: Internal Strategy Is Non-Normative
+Dependency graph/tree construction, scheduling order, and incremental-vs-full recomputation strategy are implementation details and not part of the required external contract.
 
 ### REQ-CALC-004: Iterative Cycle Mode
 Engine exposes iterative cycle configuration (`enabled`, `max_iterations`, `convergence_tolerance`) and applies SCC-based iterative stabilization when enabled.
+When iteration is disabled, circular references use Excel-style non-iterative fallback semantics:
+- no dependency-status failure solely because a cycle exists,
+- circular reads use prior stabilized values when available, otherwise `0.0`.
+- circularity must still be surfaced via a non-fatal diagnostic notification channel.
 
 ### REQ-CALC-005: Value Types
 Evaluation produces typed values including number/text/bool/blank/error.
@@ -75,6 +79,38 @@ Cell state query includes computed value, `value_epoch`, and stale visibility (`
 - change only on explicit recalculation/invalidation events,
 - evolve via small deterministic perturbations between recalculations.
 
+### REQ-CALC-008: Normative v0 Function Set
+Required function set for v0 conformance (aligned with current Rust baseline):
+- aggregates: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`
+- conditional/error handling: `IF`, `IFERROR`, `IFNA`, `NA`, `ERROR`
+- logical predicates: `AND`, `OR`, `NOT`, `ISERROR`, `ISNA`, `ISBLANK`, `ISTEXT`, `ISNUMBER`, `ISLOGICAL`, `ERROR.TYPE`
+- core math/scientific: `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`
+- financial/lookup: `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`
+- text: `CONCAT`, `LEN`
+- dynamic arrays and lambda family: `SEQUENCE`, `RANDARRAY`, `LET`, `LAMBDA`, `MAP`
+- reference helpers: `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`
+- volatile/stream: `NOW`, `RAND`, `STREAM`
+
+### REQ-CALC-009: Staged Implementation Priority
+For staged non-Rust implementations, the following are critical-first:
+- `LET`, `LAMBDA`, `MAP`
+- `INDIRECT`, `OFFSET`
+- `SEQUENCE`, `RANDARRAY`
+- `STREAM`
+
+Trig/scientific and financial/lookup functions may be sequenced later in staged runs, but they remain part of REQ-CALC-008 target parity.
+
+### REQ-CALC-010: STREAM Function Contract
+`STREAM` is a project-defined function (not inferred from Excel semantics):
+- signature: `STREAM(period_secs [, LAMBDA(counter)])`,
+- `period_secs` must be finite and strictly positive,
+- stream state is per cell formula location,
+- base stream value is an integer-like counter starting at `0`,
+- counters advance only via explicit `tick_streams(elapsed_secs)` invalidation flow,
+- engine does not autonomously tick streams in background.
+
+If the optional lambda is provided, it is applied to the counter and participates in normal recalc/spill semantics.
+
 ## 5. Dynamic Arrays and Spill (REQ-SPILL)
 
 ### REQ-SPILL-001: Spill Semantics
@@ -85,6 +121,13 @@ Blocked spill placement surfaces explicit spill failure behavior instead of sile
 
 ### REQ-SPILL-003: Spill Queries
 Engine provides spill-anchor/range query surfaces for anchor/member lookup.
+
+### REQ-SPILL-004: Lambda/Map Dynamic Array Semantics
+`LAMBDA` and `MAP` are fully dynamic-array aware:
+- lambda parameters may bind scalar or array values,
+- `MAP` supports broadcast of input array shapes,
+- lambda returns may be scalar or array and must compose into deterministic spilled output tiling/broadcast,
+- resulting arrays participate in spill-reference semantics (`A1#`) like other array-producing formulas.
 
 ## 6. Invalidation and Volatility (REQ-INV)
 
@@ -126,6 +169,7 @@ Structural ops rewrite affected formula and name references deterministically.
 
 ### REQ-STR-003: Absolute/Mixed Ref Preservation
 Row/column anchoring flags are preserved through rewrites.
+Coordinate rewriting applies to all reference classes (`A1`, `$A1`, `A$1`, `$A$1`) under structural edits; `$` does not freeze coordinates against row/column insertion/deletion.
 
 ### REQ-STR-004: Invalidated Reference Behavior
 References targeting removed coordinates are surfaced explicitly as invalid references.
@@ -139,6 +183,40 @@ Rejected outcomes are deterministic atomic no-ops:
 - no partial mutation,
 - no `committed_epoch` increment,
 - explicit rejection reason via API diagnostics.
+
+### REQ-STR-007: Single-Reference Axis Rewrite Rules
+For row operations on a reference row coordinate `r`:
+- `insert_row(at)`:
+  - if `r >= at`, rewritten row is `r + 1`,
+  - else unchanged.
+- `delete_row(at)`:
+  - if `r == at`, reference is invalidated (`#REF!`),
+  - if `r > at`, rewritten row is `r - 1`,
+  - else unchanged.
+
+For column operations on a reference column coordinate `c`:
+- `insert_col(at)`:
+  - if `c >= at`, rewritten column is `c + 1`,
+  - else unchanged.
+- `delete_col(at)`:
+  - if `c == at`, reference is invalidated (`#REF!`),
+  - if `c > at`, rewritten column is `c - 1`,
+  - else unchanged.
+
+### REQ-STR-008: Range and Name-Formula Rewrite Rules
+- Range endpoints are rewritten independently using REQ-STR-007.
+- If any endpoint is invalidated, the containing formula/name reference path surfaces explicit invalid-reference behavior (`#REF!`), not silent coercion.
+- If rewritten endpoints invert order, normalization to canonical range order is allowed.
+- Name formulas use the same rewrite rules as cell formulas.
+
+### REQ-STR-009: Spill-Reference Rewrite Rules
+- Spill anchors referenced via `A1#` are rewritten with the same single-reference rules (REQ-STR-007).
+- If the anchor is invalidated, spill-reference evaluation surfaces invalid-reference behavior (`#REF!`).
+- If structural edits intersect active spill boundaries that cannot be deterministically rewritten under current policy, the mutation is rejected (`valid-but-rejected`), not partially applied.
+
+### REQ-STR-010: Reject Kind Boundaries
+- `STRUCTURAL_CONSTRAINT`: valid request blocked by structural state constraints (for example non-rewritable active spill-boundary intersections).
+- `POLICY`: valid request blocked by host/engine policy gates independent of coordinate validity (for example policy-disabled structural edits).
 
 ## 8. External UDFs (REQ-UDF)
 
@@ -172,6 +250,9 @@ Journal entries include typed entities (cell/name/chart/format/spill where appli
 
 ### REQ-DELTA-003: Disable Semantics
 Disabling change tracking discards pending undrained entries.
+
+### REQ-DELTA-004: Circular-Reference Diagnostics
+When non-iterative recalculation detects circularity, the engine emits at least one diagnostic entry tagged to the producing epoch. This entry is non-fatal (recalc status remains success) and is intended for host/UI feedback.
 
 ## 11. Formatting (REQ-FMT)
 
@@ -210,7 +291,24 @@ Mutation APIs distinguish:
 - valid-but-rejected outcomes (constraint/policy),
 - invalid/error outcomes.
 
-## 14. Non-goals for this Engine Contract
+## 14. API-Visible Invariant Set (REQ-INVSET)
+
+### REQ-INVSET-001: Invariant Registry
+The engine contract includes an API-visible invariant registry maintained in `docs/ENGINE_CONFORMANCE_TESTS.md`.
+
+### REQ-INVSET-002: Mandatory Initial Invariants
+Implementations claiming v0 compatibility must satisfy at least:
+- `INV-EPOCH-001`
+- `INV-EPOCH-002`
+- `INV-CELL-001`
+- `INV-DET-001`
+- `INV-STR-001`
+- `INV-CYCLE-001`
+
+### REQ-INVSET-003: Conformance Reportability
+Conformance outcomes are reportable at invariant/case granularity (`pass`/`fail`/`waived`) and are tied to a concrete engine build/version.
+
+## 15. Non-goals for this Engine Contract
 - Multi-sheet workbook semantics.
 - OOXML read/write compatibility.
 - Collaboration replication protocol.

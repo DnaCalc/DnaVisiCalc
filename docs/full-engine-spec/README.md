@@ -15,7 +15,7 @@ This directory stores immutable, dated core-engine spec packs.
 ## Current Baseline Pack
 
 - Path: `docs/full-engine-spec/2026-02-27`
-- Scope: core engine contract (`SPEC_v0`, `ENGINE_REQUIREMENTS`, `ENGINE_API`) plus informative appendices.
+- Scope: core engine contract (`SPEC_v0`, `ENGINE_REQUIREMENTS`, `ENGINE_API`) plus informative appendices including conformance scaffold (`ENGINE_CONFORMANCE_TESTS`).
 
 ## Note on Top-Level Mirror Files
 

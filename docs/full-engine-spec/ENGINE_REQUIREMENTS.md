@@ -62,6 +62,13 @@ Formula-structure and graph-shape changes may force full dependency rebuild/reca
 
 ### REQ-CALC-004: Iterative Cycle Mode
 Engine exposes iterative cycle configuration (`enabled`, `max_iterations`, `convergence_tolerance`) and applies SCC-based iterative stabilization when enabled.
+When iteration is disabled, circular references use Excel-style non-iterative fallback semantics:
+- no dependency-status failure solely because a cycle exists,
+- circular reads use prior stabilized values when available, otherwise `0.0`.
+- circularity must still be surfaced via a non-fatal diagnostic notification channel.
+When iteration is disabled, circular references use Excel-style non-iterative fallback semantics:
+- no dependency-status failure solely because a cycle exists,
+- circular reads use prior stabilized values when available, otherwise `0.0`.
 
 ### REQ-CALC-005: Value Types
 Evaluation produces typed values including number/text/bool/blank/error.
@@ -173,6 +180,9 @@ Journal entries include typed entities (cell/name/chart/format/spill where appli
 ### REQ-DELTA-003: Disable Semantics
 Disabling change tracking discards pending undrained entries.
 
+### REQ-DELTA-004: Circular-Reference Diagnostics
+When non-iterative recalculation detects circularity, the engine emits at least one diagnostic entry tagged to the producing epoch. This entry is non-fatal (recalc status remains success) and is intended for host/UI feedback.
+
 ## 11. Formatting (REQ-FMT)
 
 ### REQ-FMT-001: Metadata-only
@@ -210,7 +220,24 @@ Mutation APIs distinguish:
 - valid-but-rejected outcomes (constraint/policy),
 - invalid/error outcomes.
 
-## 14. Non-goals for this Engine Contract
+## 14. API-Visible Invariant Set (REQ-INVSET)
+
+### REQ-INVSET-001: Invariant Registry
+The engine contract includes an API-visible invariant registry maintained in `docs/ENGINE_CONFORMANCE_TESTS.md`.
+
+### REQ-INVSET-002: Mandatory Initial Invariants
+Implementations claiming v0 compatibility must satisfy at least:
+- `INV-EPOCH-001`
+- `INV-EPOCH-002`
+- `INV-CELL-001`
+- `INV-DET-001`
+- `INV-STR-001`
+- `INV-CYCLE-001`
+
+### REQ-INVSET-003: Conformance Reportability
+Conformance outcomes are reportable at invariant/case granularity (`pass`/`fail`/`waived`) and are tied to a concrete engine build/version.
+
+## 15. Non-goals for this Engine Contract
 - Multi-sheet workbook semantics.
 - OOXML read/write compatibility.
 - Collaboration replication protocol.

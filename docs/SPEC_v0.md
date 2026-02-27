@@ -41,21 +41,45 @@ The engine contract is implementation-independent and covers:
 ### 3.4 Formula Surface
 - Arithmetic, comparison, concatenation, and logical evaluation.
 - Dynamic arrays and spill semantics including spill references (`A1#`).
-- Functional surface includes aggregates, logical, math/trig, financial, text, error helpers, lambda family (`LET`/`LAMBDA`/`MAP`), and reference helpers (`INDIRECT`, `OFFSET`, `ROW`, `COLUMN`).
+- Explicit v0 function surface (aligned with current Rust baseline):
+  - aggregates: `SUM`, `MIN`, `MAX`, `AVERAGE`, `COUNT`
+  - conditional/error handling: `IF`, `IFERROR`, `IFNA`, `NA`, `ERROR`
+  - logical predicates: `AND`, `OR`, `NOT`, `ISERROR`, `ISNA`, `ISBLANK`, `ISTEXT`, `ISNUMBER`, `ISLOGICAL`, `ERROR.TYPE`
+  - core math/scientific: `ABS`, `INT`, `ROUND`, `SIGN`, `SQRT`, `EXP`, `LN`, `LOG10`, `SIN`, `COS`, `TAN`, `ATN`, `PI`
+  - financial/lookup: `NPV`, `PV`, `FV`, `PMT`, `LOOKUP`
+  - text: `CONCAT`, `LEN`
+  - dynamic arrays and lambda family: `SEQUENCE`, `RANDARRAY`, `LET`, `LAMBDA`, `MAP`
+  - reference helpers: `INDIRECT`, `OFFSET`, `ROW`, `COLUMN`
+  - volatile/stream: `NOW`, `RAND`, `STREAM`
+- Stage priority for non-Rust implementations:
+  - critical first: `LET`, `LAMBDA`, `MAP`, `INDIRECT`, `OFFSET`, `SEQUENCE`, `RANDARRAY`, `STREAM`
+  - lower priority in staged runs: trig/scientific and financial/lookup categories, but still part of the target v0 surface.
+- `STREAM` semantics are explicit (not Excel-derived):
+  - call shape: `STREAM(period_secs [, LAMBDA(counter)])`,
+  - `period_secs` must be a positive number,
+  - stream state is per formula cell; return value is that cell's stream counter (starting at `0`),
+  - stream counters advance only through host-driven `tick_streams(elapsed_secs)` invalidation,
+  - no autonomous/background ticking inside the engine,
+  - if lambda is provided, it is applied to the counter and may return scalar or array.
+- `LAMBDA`/`MAP` are fully dynamic-array aware:
+  - lambda parameters may receive scalar or array values,
+  - `MAP` must support array broadcasting across inputs,
+  - lambda return values may be arrays and must participate in deterministic spill tiling/broadcast output.
 - `INDIRECT` supports both A1 and R1C1 text references.
 - `RAND`/`RANDARRAY` outputs remain within bounds and change via small perturbations on explicit recalculation events.
 
 ### 3.5 Recalc and Epoch Model
 - `committed_epoch`, `stabilized_epoch`, and per-value `value_epoch`.
 - `Automatic` and `Manual` recalc modes.
-- Incremental dirty-closure recomputation for value-only mutations with deterministic fallback when structure changes.
+- Internal recalculation strategy is non-normative (dependency graph/tree shape, scheduling, incremental vs full recompute are implementation choices).
+- Normative requirement is externally observable behavior: deterministic stabilized outputs and correct epoch/staleness semantics for identical input + API-call sequences.
 
 ### 3.6 Structural Rewrite Path (Required)
 - Row/column structural mutations are in-scope:
   - `insert_row`, `delete_row`, `insert_col`, `delete_col`.
 - Formula/name references are rewritten deterministically.
 - Invalidated references are surfaced explicitly (for example `#REF!` behavior).
-- Mixed and absolute references must preserve anchoring flags through rewrites.
+- Mixed and absolute references must preserve anchoring flags through rewrites; coordinate rewriting under structural edits applies to all reference classes (`A1`, `$A1`, `A$1`, `$A$1`).
 - Structural mutation requests use a tri-state outcome model:
   - `Applied`: mutation accepted and committed.
   - `Rejected`: request is valid but cannot be executed due to structural/policy constraints.
@@ -68,6 +92,11 @@ The engine contract is implementation-independent and covers:
 ### 3.7 Iteration and Cycle Handling
 - SCC cycle detection remains deterministic.
 - Engine supports iterative cycle mode via iteration configuration (`enabled`, max iterations, convergence tolerance).
+- When iteration is disabled, circular references follow Excel-style non-iterative behavior:
+  - no hard recalculation failure solely due to circularity,
+  - circular paths read prior stabilized values when available, otherwise `0.0`.
+- Cycle detection is also an observable signal:
+  - each recalculation that detects circularity in non-iterative mode emits at least one non-fatal diagnostic notification (for host/UI feedback parity with Excel warning behavior).
 
 ### 3.8 Volatility and Invalidation Classes
 - Functions/UDFs are classified as:
@@ -93,6 +122,11 @@ The engine contract is implementation-independent and covers:
   - foreground/background palette colors.
 - Formatting does not change formula semantics.
 
+### 3.12 API-Visible Invariants and Conformance
+- API-visible invariants are part of the normative contract for compatibility claims.
+- Initial invariant and case registry is defined in `docs/ENGINE_CONFORMANCE_TESTS.md`.
+- Implementations claiming compatibility should report conformance outcomes against that registry.
+
 ## 4. Non-goals (Round 0)
 - Multi-sheet workbook semantics.
 - OOXML fidelity and full Excel object model compatibility.
@@ -103,4 +137,5 @@ The engine contract is implementation-independent and covers:
 ## 5. References
 - `docs/ENGINE_REQUIREMENTS.md`
 - `docs/ENGINE_API.md`
+- `docs/ENGINE_CONFORMANCE_TESTS.md`
 - `docs/SPEC_v0_INTEGRATION_APPENDIX.md`

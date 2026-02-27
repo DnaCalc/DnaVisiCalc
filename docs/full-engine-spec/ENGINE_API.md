@@ -40,6 +40,9 @@ typedef int32_t DvcStatus;
 Positive status codes indicate valid requests that were rejected (no mutation applied).
 Negative status codes indicate hard API/validation/execution errors.
 
+`DVC_ERR_DEPENDENCY` is reserved for unrecoverable dependency-graph failures.
+Circular references in v0 are not surfaced as `DVC_ERR_DEPENDENCY`; see §12.
+
 ### 1.2.1 Reject Kinds
 
 ```c
@@ -80,6 +83,8 @@ typedef int32_t DvcCellErrorKind;
 #define DVC_CELL_ERR_NULL           8
 #define DVC_CELL_ERR_NUM            9
 ```
+
+`DVC_CELL_ERR_CYCLE` remains reserved for profiles that choose explicit cycle-error surfacing. The v0 Excel-aligned mode does not require emitting it.
 
 ### 1.5 Recalc Mode
 
@@ -264,6 +269,15 @@ typedef int32_t DvcChangeType;
 #define DVC_CHANGE_CHART_OUTPUT   2
 #define DVC_CHANGE_SPILL_REGION   3
 #define DVC_CHANGE_CELL_FORMAT    4
+#define DVC_CHANGE_DIAGNOSTIC     5
+```
+
+### 1.19.1 Diagnostic Code
+
+```c
+typedef int32_t DvcDiagnosticCode;
+
+#define DVC_DIAG_CIRCULAR_REFERENCE_DETECTED  0
 ```
 
 ### 1.20 Iteration Config
@@ -420,7 +434,7 @@ DvcStatus dvc_cell_set_formula(DvcEngine *engine, DvcCellAddr addr,
 
 Set a cell to a formula. The formula string (UTF-8, `formula_len` bytes) is parsed immediately. On parse failure, the cell is not modified and `DVC_ERR_PARSE` is returned.
 
-**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`; `DVC_ERR_PARSE`; `DVC_ERR_DEPENDENCY` (if recalculation fails in Automatic mode).
+**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`; `DVC_ERR_PARSE`; `DVC_ERR_DEPENDENCY` (only for unrecoverable non-circular dependency failures in Automatic mode).
 
 ### dvc_cell_clear
 
@@ -552,7 +566,7 @@ DvcStatus dvc_name_set_formula(DvcEngine *engine,
                                const char *formula, uint32_t formula_len);
 ```
 
-**Returns:** `DVC_OK`; `DVC_ERR_INVALID_NAME`; `DVC_ERR_PARSE`; `DVC_ERR_DEPENDENCY`.
+**Returns:** `DVC_OK`; `DVC_ERR_INVALID_NAME`; `DVC_ERR_PARSE`; `DVC_ERR_DEPENDENCY` (only for unrecoverable non-circular dependency failures).
 
 ### dvc_name_clear
 
@@ -595,8 +609,9 @@ Perform a full recalculation. Evaluates all formulas in dependency order, resolv
 This function is always valid in both recalc modes:
 - In `DVC_RECALC_MANUAL`, it is the explicit trigger to stabilize pending work.
 - In `DVC_RECALC_AUTOMATIC`, it is an explicit force-recalc entrypoint and is still allowed.
+- In non-iterative cycle mode (`iteration_config.enabled == 0`), circularity is surfaced via non-fatal diagnostic entries (when change tracking is enabled), not as a hard recalc status failure.
 
-**Returns:** `DVC_OK`; `DVC_ERR_DEPENDENCY` (circular dependency or graph construction failure).
+**Returns:** `DVC_OK`; `DVC_ERR_DEPENDENCY` (unrecoverable non-circular dependency failure).
 
 ### dvc_has_volatile_cells
 
@@ -870,7 +885,13 @@ DvcStatus dvc_engine_set_iteration_config(DvcEngine *engine,
                                            const DvcIterationConfig *config);
 ```
 
-Set the iterative calculation configuration. When `enabled == 1`, circular dependencies are resolved by bounded iteration (up to `max_iterations` times, converging within `convergence_tolerance`). When `enabled == 0`, circular dependencies produce `#CYCLE!` errors.
+Set the iterative calculation configuration.
+
+When `enabled == 1`, circular dependencies are resolved by bounded iteration (up to `max_iterations` times, converging within `convergence_tolerance`).
+
+When `enabled == 0`, circular dependencies follow Excel-style non-iterative fallback semantics:
+- recalculation still returns `DVC_OK` (no hard dependency error solely due to circularity),
+- circular reads use prior stabilized values when available, otherwise `0.0`.
 
 Changing the iteration config does not trigger recalculation — the new config takes effect on the next `dvc_recalculate` call.
 
@@ -1129,6 +1150,7 @@ DvcStatus dvc_change_iterate(DvcEngine *engine, DvcChangeIterator **out);
 ```
 
 Drain all accumulated change entries and return them as an iterator. The engine's internal change buffer is cleared. The iterator yields entries in the order they were produced.
+Diagnostic entries include non-fatal notifications such as circular-reference detection in non-iterative mode.
 
 **Note:** Unlike other iterators, this function takes a mutable engine pointer because it drains (clears) the internal buffer.
 
@@ -1169,6 +1191,12 @@ DvcStatus dvc_change_get_format(const DvcChangeIterator *iter,
                                  DvcCellAddr *addr,
                                  DvcCellFormat *old_fmt,
                                  DvcCellFormat *new_fmt);
+
+/* For DVC_CHANGE_DIAGNOSTIC: */
+DvcStatus dvc_change_get_diagnostic(const DvcChangeIterator *iter,
+                                     DvcDiagnosticCode *code,
+                                     char *buf, uint32_t buf_len,
+                                     uint32_t *out_len);
 ```
 
 ```c
@@ -1295,4 +1323,13 @@ Update rules:
 ## 21. Companion Appendix
 
 For Rust-targeted implementation mapping and coverage cross-reference material, see [ENGINE_API_RUST_APPENDIX.md](ENGINE_API_RUST_APPENDIX.md).
+
+## 22. Conformance and Invariants
+
+This API defines behavior-level contracts that are intended to be verified via API-visible invariants and conformance cases.
+
+The initial invariant and case registry is maintained in:
+- `docs/ENGINE_CONFORMANCE_TESTS.md`
+
+Implementations claiming compatibility should publish conformance outcomes against those invariant/case IDs.
 

@@ -68,6 +68,11 @@ The engine contract is implementation-independent and covers:
 ### 3.7 Iteration and Cycle Handling
 - SCC cycle detection remains deterministic.
 - Engine supports iterative cycle mode via iteration configuration (`enabled`, max iterations, convergence tolerance).
+- When iteration is disabled, circular references follow Excel-style non-iterative behavior:
+  - no hard recalculation failure solely due to circularity,
+  - circular paths read prior stabilized values when available, otherwise `0.0`.
+- Cycle detection is also an observable signal:
+  - each recalculation that detects circularity in non-iterative mode emits at least one non-fatal diagnostic notification (for host/UI feedback parity with Excel warning behavior).
 
 ### 3.8 Volatility and Invalidation Classes
 - Functions/UDFs are classified as:
@@ -93,6 +98,11 @@ The engine contract is implementation-independent and covers:
   - foreground/background palette colors.
 - Formatting does not change formula semantics.
 
+### 3.12 API-Visible Invariants and Conformance
+- API-visible invariants are part of the normative contract for compatibility claims.
+- Initial invariant and case registry is defined in `docs/ENGINE_CONFORMANCE_TESTS.md`.
+- Implementations claiming compatibility should report conformance outcomes against that registry.
+
 ## 4. Non-goals (Round 0)
 - Multi-sheet workbook semantics.
 - OOXML fidelity and full Excel object model compatibility.
@@ -103,4 +113,5 @@ The engine contract is implementation-independent and covers:
 ## 5. References
 - `docs/ENGINE_REQUIREMENTS.md`
 - `docs/ENGINE_API.md`
+- `docs/ENGINE_CONFORMANCE_TESTS.md`
 - `docs/SPEC_v0_INTEGRATION_APPENDIX.md`
