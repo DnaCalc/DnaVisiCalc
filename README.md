@@ -219,12 +219,17 @@ docs/
   ENGINE_REQUIREMENTS.md
   ENGINE_REQUIREMENTS_INTEGRATION_APPENDIX.md
   FILE_FORMAT.md
+  OPERATIONS.md
   FOUNDATION_REQUIREMENTS_MAPPING.md
   SPEC_v0.md
   SPEC_v0_INTEGRATION_APPENDIX.md
   TUI_TESTABILITY.md
   full-engine-spec/
   testing/
+runs/
+  README.md
+  engine-impl/
+  templates/engine_impl/
 ```
 
 Foundation relationship (pathfinder scope):

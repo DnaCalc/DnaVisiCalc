@@ -16,6 +16,7 @@ This document maps key Foundation guidance to this implementation repo.
 - Implementation-first rhythm with rapid test/fix loops.
 - Evidence in this repo is code + tests + testing logs.
 - Regression discipline via added tests and fuzz/property suites.
+- Local implementation-run doctrine and artifact structure are defined in `docs/OPERATIONS.md`.
 
 ## INDEPENDENT_REVIEW response
 - Started from working code and expanded iteratively.

@@ -1,0 +1,13 @@
+{
+  "hash_algorithm": "sha256",
+  "artifacts": [
+    {
+      "path": "outputs/CODEBASE_REF.yaml",
+      "sha256": "<fill>"
+    },
+    {
+      "path": "validation/SUMMARY.yaml",
+      "sha256": "<fill>"
+    }
+  ]
+}
