@@ -16,6 +16,14 @@
     {
       "path": "runs/engine-impl/<run-id>/inputs/PROMPT_INPUT.md",
       "sha256": "<fill>"
+    },
+    {
+      "path": "runs/engine-impl/<run-id>/inputs/RUN_ADDITIONAL_REQUIREMENTS.md",
+      "sha256": "<fill>"
+    },
+    {
+      "path": "runs/engine-impl/<run-id>/inputs/CONTEXT_POLICY.yaml",
+      "sha256": "<fill>"
     }
   ]
 }

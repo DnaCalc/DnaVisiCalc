@@ -1,0 +1,18 @@
+mode: managed-context
+allowed_read_paths:
+  - docs/full-engine-spec/2026-02-27
+  - runs/engine-impl/<run-id>/inputs
+  - docs/OPERATIONS.md
+  - engines/<runtime>/<implementation-id>
+forbidden_read_paths:
+  - crates
+  - src
+  - tests
+  - engines (except engines/<runtime>/<implementation-id>)
+allowed_write_paths:
+  - engines/<runtime>/<implementation-id>
+  - runs/engine-impl/<run-id>
+api_boundary_exception_protocol:
+  - Before any exception read, record file path and reason in execution/SESSION_LOG.md.
+  - Tag corresponding TOOL_LOG.jsonl entry with policy=exception-approved.
+  - Increment api_boundary_exception_count in validation/SUMMARY.yaml.

@@ -5,6 +5,8 @@ runtime: dotnet
 implementation_id: coreengine-net-01
 spec_pack_version: 2026-02-27
 spec_pack_path: docs/full-engine-spec/2026-02-27
+context_mode: managed-context
+context_policy_path: runs/engine-impl/<run-id>/inputs/CONTEXT_POLICY.yaml
 source_repo_commit: <fill-at-start>
 target_codebase_path: engines/dotnet/coreengine-net-01
 started_at_utc: <fill>

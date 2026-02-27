@@ -14,7 +14,15 @@
       "sha256": "<fill>"
     },
     {
-      "path": "runs/engine-impl/<run-id>/inputs/PROMPT_INPUT.md",
+      "path": "runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27/inputs/PROMPT_INPUT.md",
+      "sha256": "<fill>"
+    },
+    {
+      "path": "runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27/inputs/RUN_ADDITIONAL_REQUIREMENTS.md",
+      "sha256": "<fill>"
+    },
+    {
+      "path": "runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27/inputs/CONTEXT_POLICY.yaml",
       "sha256": "<fill>"
     }
   ]

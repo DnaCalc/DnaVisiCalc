@@ -1,0 +1,18 @@
+mode: managed-context
+allowed_read_paths:
+  - docs/full-engine-spec/2026-02-27
+  - runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27/inputs
+  - docs/OPERATIONS.md
+  - engines/dotnet/coreengine-net-01
+forbidden_read_paths:
+  - crates
+  - src
+  - tests
+  - engines (except engines/dotnet/coreengine-net-01)
+allowed_write_paths:
+  - engines/dotnet/coreengine-net-01
+  - runs/engine-impl/20260227-194335Z_dotnet_coreengine-net-01_2026-02-27
+api_boundary_exception_protocol:
+  - Before any exception read, record file path and reason in execution/SESSION_LOG.md.
+  - Tag corresponding TOOL_LOG.jsonl entry with policy=exception-approved.
+  - Increment api_boundary_exception_count in validation/SUMMARY.yaml.

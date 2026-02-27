@@ -16,6 +16,7 @@ Run input files include:
 - `inputs/SPEC_PACK_REF.md`
 - `inputs/INPUT_HASHES.json`
 - `inputs/RUN_ADDITIONAL_REQUIREMENTS.md`
+- `inputs/CONTEXT_POLICY.yaml`
 
 Reference:
 - `docs/OPERATIONS.md`

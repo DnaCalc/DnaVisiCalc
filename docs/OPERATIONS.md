@@ -58,6 +58,7 @@ Every run bundle must contain:
 - `inputs/SPEC_PACK_REF.md`
 - `inputs/INPUT_HASHES.json`
 - `inputs/RUN_ADDITIONAL_REQUIREMENTS.md`
+- `inputs/CONTEXT_POLICY.yaml`
 - `execution/SESSION_LOG.md`
 - `execution/TOOL_LOG.jsonl`
 - `outputs/CODEBASE_REF.yaml`
@@ -84,6 +85,12 @@ Each run must capture output codebase state by one of these methods:
 - Capture exact instruction text in `inputs/PROMPT_INPUT.md`.
 - Record spec pack path and version (for example `docs/full-engine-spec/2026-02-27`) in `inputs/SPEC_PACK_REF.md`.
 - Hash all normative inputs and record in `inputs/INPUT_HASHES.json`.
+- Define managed-context policy in `inputs/CONTEXT_POLICY.yaml`:
+  - allowed read paths,
+  - forbidden read paths,
+  - allowed write paths,
+  - API-boundary exception protocol.
+- `execution/TOOL_LOG.jsonl` must include structured path-access evidence per command (read/write paths + policy outcome).
 
 ## 7. Validation Capture Rules
 
@@ -94,6 +101,10 @@ Validation logs must include:
 - unresolved failures and blockers.
 
 If tests cannot run, `validation/SUMMARY.yaml` must explicitly state why.
+`validation/SUMMARY.yaml` must also include:
+- `forbidden_access_count`,
+- `api_boundary_exception_count`,
+- `clean_room_attested`.
 
 ## 8. Immutability Rules
 
@@ -113,7 +124,7 @@ Before starting a new implementation run:
 1. Pin spec pack version (`docs/full-engine-spec/<date>`).
 2. Create implementation root under `engines/<runtime>/<implementation-id>/`.
 3. Create run bundle from template under `runs/engine-impl/<run-id>/`.
-4. Fill manifest and input files before code changes.
+4. Fill manifest and input files (including `inputs/CONTEXT_POLICY.yaml`) before code changes.
 
 ## 11. Templates
 

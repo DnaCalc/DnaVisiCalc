@@ -2,3 +2,6 @@ status: pass
 summary: <short summary>
 failures: []
 blocked_reason: ""
+forbidden_access_count: 0
+api_boundary_exception_count: 0
+clean_room_attested: false
