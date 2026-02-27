@@ -6,8 +6,9 @@ This document defines the current Round-0 pathfinder scope for this repository.
 It is the top-priority repo-local spec for behavior scope and intended direction. Engine details are refined in `docs/ENGINE_REQUIREMENTS.md`.
 
 ## 2. Repository Scope
-This repo contains three crates with explicit boundaries:
+This repo contains four crates with explicit boundaries:
 - `dnavisicalc-core`: deterministic spreadsheet engine (library-only, no file/network/UI dependency).
+- `dnavisicalc-engine`: backend boundary/loader for selecting the active core engine implementation.
 - `dnavisicalc-file`: deterministic serialization adapter.
 - `dnavisicalc-tui`: terminal interaction layer and automation/test harness seams.
 
@@ -48,6 +49,14 @@ This repo contains three crates with explicit boundaries:
 - Formula/name references are rewritten deterministically.
 - Invalidated references are surfaced explicitly (for example `#REF!` behavior).
 - Mixed and absolute references must preserve anchoring flags through rewrites.
+- Structural mutation requests use a tri-state outcome model:
+  - `Applied`: mutation accepted and committed.
+  - `Rejected`: request is valid but cannot be executed due to structural/policy constraints.
+  - `Invalid`: request is malformed or out of contract.
+- Rejected structural requests are atomic no-ops:
+  - no partial mutation,
+  - no `committed_epoch` increment,
+  - deterministic, user-visible rejection reason.
 
 ### 3.7 Iteration and Cycle Handling
 - SCC cycle detection remains deterministic.
@@ -92,6 +101,7 @@ This repo contains three crates with explicit boundaries:
 ### 3.13 TUI Scope
 - Grid navigation, editing, command mode, clipboard/paste-special, formatting, and help surfaces are in scope.
 - Command surface includes structural operations (`insrow`/`delrow`/`inscol`/`delcol` aliases).
+- Status presentation distinguishes rejected-valid commands from malformed input/usage errors.
 - TUI tool-driving automation includes fixed-size frame capture with cursor/style metadata, keystroke-driven script capture, and CLI replay/viewer flow (`docs/TUI_TESTABILITY.md`).
 
 ## 4. Acceptance Criteria

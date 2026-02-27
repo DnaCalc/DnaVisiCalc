@@ -862,10 +862,7 @@ impl Engine {
     /// accordingly. Cells in the last row are discarded if shifted out of bounds.
     pub fn insert_row(&mut self, at: u16) -> Result<(), EngineError> {
         if at == 0 || at > self.bounds.max_rows {
-            return Err(EngineError::Name(format!(
-                "row {at} is out of bounds (1..{})",
-                self.bounds.max_rows
-            )));
+            return Err(EngineError::OutOfBounds(CellRef { col: 1, row: at }));
         }
         self.apply_structural_op(StructuralOp::InsertRow { at })
     }
@@ -874,10 +871,7 @@ impl Engine {
     /// formula referencing a cell in the deleted row becomes `#REF!`.
     pub fn delete_row(&mut self, at: u16) -> Result<(), EngineError> {
         if at == 0 || at > self.bounds.max_rows {
-            return Err(EngineError::Name(format!(
-                "row {at} is out of bounds (1..{})",
-                self.bounds.max_rows
-            )));
+            return Err(EngineError::OutOfBounds(CellRef { col: 1, row: at }));
         }
         self.apply_structural_op(StructuralOp::DeleteRow { at })
     }
@@ -886,10 +880,7 @@ impl Engine {
     /// `at` and to the right are shifted right by one.
     pub fn insert_col(&mut self, at: u16) -> Result<(), EngineError> {
         if at == 0 || at > self.bounds.max_columns {
-            return Err(EngineError::Name(format!(
-                "column {at} is out of bounds (1..{})",
-                self.bounds.max_columns
-            )));
+            return Err(EngineError::OutOfBounds(CellRef { col: at, row: 1 }));
         }
         self.apply_structural_op(StructuralOp::InsertCol { at })
     }
@@ -898,10 +889,7 @@ impl Engine {
     /// left. Any formula referencing a cell in the deleted column becomes `#REF!`.
     pub fn delete_col(&mut self, at: u16) -> Result<(), EngineError> {
         if at == 0 || at > self.bounds.max_columns {
-            return Err(EngineError::Name(format!(
-                "column {at} is out of bounds (1..{})",
-                self.bounds.max_columns
-            )));
+            return Err(EngineError::OutOfBounds(CellRef { col: at, row: 1 }));
         }
         self.apply_structural_op(StructuralOp::DeleteCol { at })
     }

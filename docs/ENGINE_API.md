@@ -22,6 +22,8 @@ The engine handle. All state is contained within this handle. Multiple handles m
 typedef int32_t DvcStatus;
 
 #define DVC_OK                      0
+#define DVC_REJECT_STRUCTURAL_CONSTRAINT  1
+#define DVC_REJECT_POLICY                 2
 #define DVC_ERR_NULL_POINTER       -1
 #define DVC_ERR_OUT_OF_BOUNDS      -2
 #define DVC_ERR_INVALID_ADDRESS    -3
@@ -32,7 +34,21 @@ typedef int32_t DvcStatus;
 #define DVC_ERR_INVALID_ARGUMENT   -8
 ```
 
-`DVC_OK` (zero) indicates success. All error codes are negative. Positive values are reserved for future non-error status returns.
+`DVC_OK` indicates success and applied mutation/query completion.
+Positive status codes indicate valid requests that were rejected (no mutation applied).
+Negative status codes indicate hard API/validation/execution errors.
+
+### 1.2.1 Reject Kinds
+
+```c
+typedef int32_t DvcRejectKind;
+
+#define DVC_REJECT_KIND_NONE                   0
+#define DVC_REJECT_KIND_STRUCTURAL_CONSTRAINT  1
+#define DVC_REJECT_KIND_POLICY                 2
+```
+
+Reject kinds provide stable machine-readable reason classes for positive (`DVC_REJECT_*`) status returns.
 
 ### 1.3 Value Types
 
@@ -58,6 +74,9 @@ typedef int32_t DvcCellErrorKind;
 #define DVC_CELL_ERR_REF            4
 #define DVC_CELL_ERR_SPILL          5
 #define DVC_CELL_ERR_CYCLE          6
+#define DVC_CELL_ERR_NA             7
+#define DVC_CELL_ERR_NULL           8
+#define DVC_CELL_ERR_NUM            9
 ```
 
 Maps directly to the Rust `CellError` enum variants.
@@ -255,6 +274,32 @@ typedef struct {
     uint32_t max_iterations;         /* default: 100 */
     double   convergence_tolerance;  /* default: 0.001 */
 } DvcIterationConfig;
+```
+
+### 1.21 Structural Operation Kind
+
+```c
+typedef int32_t DvcStructuralOpKind;
+
+#define DVC_STRUCT_OP_NONE         0
+#define DVC_STRUCT_OP_INSERT_ROW   1
+#define DVC_STRUCT_OP_DELETE_ROW   2
+#define DVC_STRUCT_OP_INSERT_COL   3
+#define DVC_STRUCT_OP_DELETE_COL   4
+```
+
+### 1.22 Last-Reject Context
+
+```c
+typedef struct {
+    DvcRejectKind       reject_kind;
+    DvcStructuralOpKind op_kind;
+    uint16_t            op_index;       /* row/col index when op_kind != NONE */
+    int32_t             has_cell;       /* 0/1 */
+    DvcCellAddr         cell;           /* optional blocked focal cell */
+    int32_t             has_range;      /* 0/1 */
+    DvcCellRange        range;          /* optional blocked range */
+} DvcLastRejectContext;
 ```
 
 ## 2. Lifecycle Functions
@@ -830,6 +875,19 @@ Iterates over all cells with non-default formats in deterministic order.
 
 See [ENGINE_DESIGN_NOTES.md §1](ENGINE_DESIGN_NOTES.md#1-generalized-dependency-graph) for reference rewriting semantics.
 
+Outcome model for structural functions:
+- `DVC_OK`: operation applied.
+- `DVC_REJECT_*`: valid request but not executable under structural/policy constraints.
+- `DVC_ERR_*`: invalid arguments or execution failure.
+
+Rejected outcomes are atomic no-ops:
+- no partial mutation,
+- no `committed_epoch` increment,
+- details retrievable via `dvc_last_reject_kind` / `dvc_last_reject_context`.
+
+Current v0 structural reject policy:
+- If a structural edit intersects an active spilled range boundary that cannot be deterministically rewritten under current policy, the operation returns `DVC_REJECT_STRUCTURAL_CONSTRAINT`.
+
 ### dvc_insert_row
 
 ```c
@@ -838,7 +896,7 @@ DvcStatus dvc_insert_row(DvcEngine *engine, uint16_t at);
 
 Insert a row at position `at` (1-based). All cells at row `at` and below shift down by one. Formulas referencing affected cells are rewritten (relative references shift, absolute references are preserved). References that shift out of bounds become `#REF!`. Increments `committed_epoch` and forces full recalculation.
 
-**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS` if `at` is 0 or exceeds sheet bounds.
+**Returns:** `DVC_OK`; `DVC_REJECT_STRUCTURAL_CONSTRAINT`; `DVC_REJECT_POLICY`; `DVC_ERR_OUT_OF_BOUNDS` if `at` is 0 or exceeds sheet bounds.
 
 **Maps to:** `Engine::insert_row()`
 
@@ -850,7 +908,7 @@ DvcStatus dvc_delete_row(DvcEngine *engine, uint16_t at);
 
 Delete row `at`. Cells in that row are destroyed. Cells below shift up. References to deleted cells become `#REF!`.
 
-**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`.
+**Returns:** `DVC_OK`; `DVC_REJECT_STRUCTURAL_CONSTRAINT`; `DVC_REJECT_POLICY`; `DVC_ERR_OUT_OF_BOUNDS`.
 
 **Maps to:** `Engine::delete_row()`
 
@@ -862,7 +920,7 @@ DvcStatus dvc_insert_col(DvcEngine *engine, uint16_t at);
 
 Insert a column at position `at` (1-based). Same rewriting semantics as `dvc_insert_row` but along the column axis.
 
-**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`.
+**Returns:** `DVC_OK`; `DVC_REJECT_STRUCTURAL_CONSTRAINT`; `DVC_REJECT_POLICY`; `DVC_ERR_OUT_OF_BOUNDS`.
 
 **Maps to:** `Engine::insert_col()`
 
@@ -874,7 +932,7 @@ DvcStatus dvc_delete_col(DvcEngine *engine, uint16_t at);
 
 Delete column `at`. Same semantics as `dvc_delete_row` along the column axis.
 
-**Returns:** `DVC_OK`; `DVC_ERR_OUT_OF_BOUNDS`.
+**Returns:** `DVC_OK`; `DVC_REJECT_STRUCTURAL_CONSTRAINT`; `DVC_REJECT_POLICY`; `DVC_ERR_OUT_OF_BOUNDS`.
 
 **Maps to:** `Engine::delete_col()`
 
@@ -1251,7 +1309,36 @@ DvcStatus dvc_last_error_message(const DvcEngine *engine,
 
 Retrieve a human-readable error message for the most recent failed operation on this engine handle. The message is UTF-8 encoded. If no error has occurred, `*out_len` is 0.
 
-The error message is valid until the next mutating API call on the same handle.
+The error message is valid until the next API call on the same handle.
+
+### dvc_last_error_kind
+
+```c
+DvcStatus dvc_last_error_kind(const DvcEngine *engine, DvcStatus *out);
+```
+
+Retrieve the most recent negative status code for this handle.
+- `*out == DVC_OK` means no error is currently recorded.
+- `*out < 0` is one of the `DVC_ERR_*` codes.
+
+### dvc_last_reject_kind
+
+```c
+DvcStatus dvc_last_reject_kind(const DvcEngine *engine, DvcRejectKind *out);
+```
+
+Retrieve the most recent reject reason class for this handle.
+- `DVC_REJECT_KIND_NONE` means no reject is currently recorded.
+
+### dvc_last_reject_context
+
+```c
+DvcStatus dvc_last_reject_context(const DvcEngine *engine,
+                                  DvcLastRejectContext *out);
+```
+
+Retrieve structured context for the most recent reject on this handle (operation kind/index and optional cell/range payload).
+- If no reject is recorded, `out->reject_kind` is `DVC_REJECT_KIND_NONE`.
 
 ### dvc_cell_error_message
 
@@ -1321,13 +1408,17 @@ No global mutable state exists. No global initialization function is required.
 
 ## 20. Error Detail Contract
 
-Each `DvcEngine` handle maintains an internal `last_error` message buffer. This buffer is:
-- Set on every operation that returns a non-`DVC_OK` status
-- Cleared (set to empty) on every operation that returns `DVC_OK`
-- Not thread-local — it lives in the handle
-- Valid until the next API call on the same handle
+Each `DvcEngine` handle maintains internal last-status diagnostics:
+- `last_error_message` and `last_error_kind` for negative (`DVC_ERR_*`) outcomes.
+- `last_reject_kind` and `last_reject_context` for positive (`DVC_REJECT_*`) outcomes.
+- These diagnostics are handle-local (not thread-local) and valid until the next API call on the same handle.
 
-The `dvc_last_error_message` function retrieves this buffer. It provides human-readable detail beyond what the status code alone conveys (e.g., parse error position, the specific name that failed validation).
+Update rules:
+- On `DVC_OK`: clear error and reject diagnostics.
+- On `DVC_REJECT_*`: set reject diagnostics, clear error diagnostics.
+- On `DVC_ERR_*`: set error diagnostics, clear reject diagnostics.
+
+`dvc_last_error_message` provides human-readable detail; `dvc_last_error_kind`/`dvc_last_reject_kind`/`dvc_last_reject_context` provide machine-readable detail.
 
 ## 21. Rust Implementation Notes
 
@@ -1338,14 +1429,17 @@ The future `dnavisicalc-cabi` crate will wrap the engine:
 struct DvcEngine {
     inner: Engine,
     last_error: Option<String>,
+    last_error_kind: DvcStatus,
+    last_reject_kind: DvcRejectKind,
+    last_reject_context: DvcLastRejectContext,
 }
 ```
 
 Each `#[no_mangle] extern "C"` function will:
 1. Validate pointer arguments (NULL → `DVC_ERR_NULL_POINTER`)
 2. Call the corresponding `Engine` method
-3. On error: store the Display string in `last_error`, map to `DvcStatus`
-4. On success: clear `last_error`, return `DVC_OK`
+3. Map result to `DvcStatus` outcome (`DVC_OK`, `DVC_REJECT_*`, or `DVC_ERR_*`)
+4. Update diagnostics per §20 and return status
 
 `DvcStatus` mapping from Rust errors:
 
@@ -1356,6 +1450,8 @@ Each `#[no_mangle] extern "C"` function will:
 | `EngineError::Dependency(_)` | `DVC_ERR_DEPENDENCY` |
 | `EngineError::Name(_)` | `DVC_ERR_INVALID_NAME` |
 | `EngineError::OutOfBounds(_)` | `DVC_ERR_OUT_OF_BOUNDS` |
+
+`DVC_REJECT_*` statuses are produced by explicit policy/constraint checks (for example structural-constraint rejections), not by `EngineError` mapping.
 
 ## 22. API Coverage Cross-Reference
 
@@ -1433,6 +1529,7 @@ Each `#[no_mangle] extern "C"` function will:
 | `Engine::drain_changes()` | `dvc_change_iterate` + iterator functions |
 | `PaletteColor::as_name()` | `dvc_palette_color_name` |
 | `parse_cell_ref()` | `dvc_parse_cell_ref` |
+| Handle-local diagnostic state | `dvc_last_error_message`, `dvc_last_error_kind`, `dvc_last_reject_kind`, `dvc_last_reject_context` |
 
 ### Intentionally excluded from C API
 

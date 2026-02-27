@@ -68,6 +68,7 @@ This document defines how the TUI is driven, observed, and replayed in determini
 ## 5. Coverage Obligations
 - Mode transitions and edit/command/paste flows.
 - Command parsing including structural ops (`insrow`, `delrow`, `inscol`, `delcol` aliases).
+- Status behavior distinguishes valid-but-rejected commands from malformed command/usage errors.
 - Render invariants at fixed viewport sizes.
 - Capture/replay round-trip checks for scripted sessions.
 - Artifact integrity checks for frame JSON and image exports.

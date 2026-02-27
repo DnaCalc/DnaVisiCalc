@@ -123,6 +123,13 @@ References targeting removed coordinates are surfaced explicitly as invalid refe
 ### REQ-STR-005: Bounds Validation
 Out-of-range structural positions are rejected without partial mutation.
 
+### REQ-STR-006: Valid-But-Rejected Structural Requests
+Structurally constrained requests may be rejected as valid commands that cannot execute.
+Rejected outcomes are deterministic atomic no-ops:
+- no partial mutation,
+- no `committed_epoch` increment,
+- explicit rejection reason via API diagnostics.
+
 ## 8. External UDFs (REQ-UDF)
 
 ### REQ-UDF-001: Registration
@@ -197,6 +204,12 @@ Mutating/querying APIs return structured errors for invalid address/name/parse/d
 
 ### REQ-ERR-002: Explicit Eval Errors
 Evaluation failures surface as explicit value-level errors and remain deterministic.
+
+### REQ-ERR-003: Outcome Classification
+Mutation APIs distinguish:
+- applied success,
+- valid-but-rejected outcomes (constraint/policy),
+- invalid/error outcomes.
 
 ## 14. Non-goals for this Engine Contract
 - Multi-sheet workbook semantics.

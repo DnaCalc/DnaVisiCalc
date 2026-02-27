@@ -1,6 +1,6 @@
 use dnavisicalc_core::{
-    CellRef, DEFAULT_SHEET_BOUNDS, Engine, Expr, RefFlags, StructuralOp, Value, expr_to_formula,
-    rewrite_expr,
+    CellRef, DEFAULT_SHEET_BOUNDS, Engine, EngineError, Expr, RefFlags, StructuralOp, Value,
+    expr_to_formula, rewrite_expr,
 };
 
 // ---------------------------------------------------------------------------
@@ -410,15 +410,53 @@ fn delete_col_invalidates_formula_referencing_deleted_col() {
 #[test]
 fn insert_row_at_boundary_rejects_out_of_bounds() {
     let mut engine = Engine::new();
-    assert!(engine.insert_row(0).is_err());
-    assert!(engine.insert_row(255).is_err()); // max_rows is 254
+    assert!(matches!(
+        engine.insert_row(0).expect_err("insert_row(0)"),
+        EngineError::OutOfBounds(CellRef { col: 1, row: 0 })
+    ));
+    assert!(matches!(
+        engine.insert_row(255).expect_err("insert_row(255)"),
+        EngineError::OutOfBounds(CellRef { col: 1, row: 255 })
+    ));
 }
 
 #[test]
 fn delete_row_at_boundary_rejects_out_of_bounds() {
     let mut engine = Engine::new();
-    assert!(engine.delete_row(0).is_err());
-    assert!(engine.delete_row(255).is_err());
+    assert!(matches!(
+        engine.delete_row(0).expect_err("delete_row(0)"),
+        EngineError::OutOfBounds(CellRef { col: 1, row: 0 })
+    ));
+    assert!(matches!(
+        engine.delete_row(255).expect_err("delete_row(255)"),
+        EngineError::OutOfBounds(CellRef { col: 1, row: 255 })
+    ));
+}
+
+#[test]
+fn insert_col_at_boundary_rejects_out_of_bounds() {
+    let mut engine = Engine::new();
+    assert!(matches!(
+        engine.insert_col(0).expect_err("insert_col(0)"),
+        EngineError::OutOfBounds(CellRef { col: 0, row: 1 })
+    ));
+    assert!(matches!(
+        engine.insert_col(64).expect_err("insert_col(64)"),
+        EngineError::OutOfBounds(CellRef { col: 64, row: 1 })
+    ));
+}
+
+#[test]
+fn delete_col_at_boundary_rejects_out_of_bounds() {
+    let mut engine = Engine::new();
+    assert!(matches!(
+        engine.delete_col(0).expect_err("delete_col(0)"),
+        EngineError::OutOfBounds(CellRef { col: 0, row: 1 })
+    ));
+    assert!(matches!(
+        engine.delete_col(64).expect_err("delete_col(64)"),
+        EngineError::OutOfBounds(CellRef { col: 64, row: 1 })
+    ));
 }
 
 #[test]
