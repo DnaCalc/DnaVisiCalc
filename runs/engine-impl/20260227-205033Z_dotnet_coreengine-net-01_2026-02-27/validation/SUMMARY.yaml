@@ -1,0 +1,17 @@
+status: blocked
+summary: >-
+  Coreengine-net-01 advanced substantially (API export parity 103/103, expanded evaluator,
+  spill-ref support, mixed-absolute structural rewrites, richer change payloads, expanded tests,
+  and successful NativeAOT publish), but full frozen-spec formula surface and incremental
+  recompute contract are not yet complete.
+failures:
+  - id: formula-surface-incomplete
+    detail: LET/LAMBDA/MAP and key reference-helper scope (INDIRECT/OFFSET) remain unsupported.
+    evidence: tests/Dvc.Core.Tests/CoreEngineTests.cs::GapEvidence_LetLambdaIndirectAndOffsetRemainUnsupported
+  - id: incremental-recompute-not-implemented
+    detail: Recalc path remains full-sheet recomputation, not dirty-closure incremental per REQ-CALC-002.
+    evidence: src/Dvc.Core/DvcEngineCore.cs::Recalculate
+blocked_reason: Full-spec completion criteria not fully met in this run.
+forbidden_access_count: 1
+api_boundary_exception_count: 0
+clean_room_attested: true

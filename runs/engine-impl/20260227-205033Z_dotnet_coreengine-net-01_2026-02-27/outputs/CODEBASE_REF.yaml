@@ -1,0 +1,9 @@
+runtime: dotnet
+implementation_id: coreengine-net-01
+location:
+  type: in-tree
+  path: engines/dotnet/coreengine-net-01
+git:
+  commit: 4dab6a11f9291525905a646a2a34dd088d40e1fe
+  branch: main
+  dirty: true
