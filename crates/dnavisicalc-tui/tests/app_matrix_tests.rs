@@ -1,4 +1,4 @@
-use dnavisicalc_core::Value;
+use dnavisicalc_engine::Value;
 use dnavisicalc_tui::{Action, App, AppMode, CommandOutcome, MemoryWorkbookIo};
 
 fn run_command(app: &mut App, io: &mut MemoryWorkbookIo, command: &str) -> CommandOutcome {

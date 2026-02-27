@@ -302,10 +302,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "dnavisicalc-file"
+name = "dnavisicalc-engine"
 version = "0.3.0"
 dependencies = [
  "dnavisicalc-core",
+]
+
+[[package]]
+name = "dnavisicalc-file"
+version = "0.3.0"
+dependencies = [
+ "dnavisicalc-engine",
  "proptest",
  "tempfile",
  "thiserror",
@@ -319,7 +326,7 @@ dependencies = [
  "arboard",
  "assert_cmd",
  "crossterm 0.29.0",
- "dnavisicalc-core",
+ "dnavisicalc-engine",
  "dnavisicalc-file",
  "proptest",
  "ratatui",

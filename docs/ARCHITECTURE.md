@@ -14,6 +14,15 @@
   - controls/charts/change-journal engine entities,
   - formatting and deterministic bulk enumeration.
 
+### Engine Boundary (`dnavisicalc-engine`)
+- Purpose: backend boundary/loader layer used by Rust adapters.
+- Provides an `Engine` wrapper around the active core backend plus backend metadata (`coreengine()`).
+- Current backend set:
+  - `rust-core` (default).
+- Backend selection mechanism:
+  - `DNAVISICALC_COREENGINE` (`rust-core`, aliases: `rust`, `core`).
+- Keeps file/TUI crates decoupled from direct `dnavisicalc-core` construction, making C-API-backed engines pluggable behind one seam.
+
 ### File Adapter (`dnavisicalc-file`)
 - Purpose: deterministic serialization adapter for engine state.
 - Current persisted scope (`DVISICALC v2`):
@@ -38,8 +47,9 @@
 
 ## 2. Dependency Direction
 - `dnavisicalc-core` <- no reverse dependency.
-- `dnavisicalc-file` -> depends on `dnavisicalc-core`.
-- `dnavisicalc-tui` -> depends on `dnavisicalc-core` and `dnavisicalc-file`.
+- `dnavisicalc-engine` -> depends on `dnavisicalc-core`.
+- `dnavisicalc-file` -> depends on `dnavisicalc-engine`.
+- `dnavisicalc-tui` -> depends on `dnavisicalc-engine` and `dnavisicalc-file`.
 
 Core remains reusable for future C API boundary work and alternate host adapters.
 

@@ -1,6 +1,6 @@
 use tempfile::tempdir;
 
-use dnavisicalc_core::{Engine, Value};
+use dnavisicalc_engine::{Engine, Value};
 use dnavisicalc_tui::{FsWorkbookIo, WorkbookIo};
 
 #[test]

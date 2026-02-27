@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use dnavisicalc_core::{
+use dnavisicalc_engine::{
     CellFormat, CellInput, CellRange, CellRef, ChartDefinition, ControlDefinition, ControlKind,
     DynamicArrayStrategy, Engine, EngineError, IterationConfig, NameInput, PaletteColor,
     RecalcMode,
@@ -866,7 +866,7 @@ fn unescape_field(input: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dnavisicalc_core::{
+    use dnavisicalc_engine::{
         CellFormat, CellRange, CellRef, ChartDefinition, ControlDefinition, DynamicArrayStrategy,
         IterationConfig, NameInput, PaletteColor, Value,
     };

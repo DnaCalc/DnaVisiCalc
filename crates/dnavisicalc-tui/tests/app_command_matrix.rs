@@ -1,4 +1,4 @@
-use dnavisicalc_core::RecalcMode;
+use dnavisicalc_engine::RecalcMode;
 use dnavisicalc_tui::{Action, App, CommandOutcome, MemoryWorkbookIo};
 
 fn run_command(app: &mut App, io: &mut MemoryWorkbookIo, command: &str) -> CommandOutcome {
@@ -94,7 +94,7 @@ fn write_without_path_uses_last_saved_path() {
             .expect("load remembered file");
     assert_eq!(
         reloaded.cell_state_a1("A1").expect("query").value,
-        dnavisicalc_core::Value::Number(7.0)
+        dnavisicalc_engine::Value::Number(7.0)
     );
 }
 
@@ -107,7 +107,7 @@ fn set_command_accepts_text_payload() {
     assert!(app.status().contains("Set A1"));
     assert_eq!(
         app.engine().cell_state_a1("A1").expect("A1").value,
-        dnavisicalc_core::Value::Text("hello".to_string())
+        dnavisicalc_engine::Value::Text("hello".to_string())
     );
 }
 
@@ -124,7 +124,7 @@ fn name_command_sets_and_clears_names() {
     run_command(&mut app, &mut io, "set B1 =TOTAL");
     assert_eq!(
         app.engine().cell_state_a1("B1").expect("B1").value,
-        dnavisicalc_core::Value::Number(120.0)
+        dnavisicalc_engine::Value::Number(120.0)
     );
 
     run_command(&mut app, &mut io, "name clear rate");
@@ -143,8 +143,8 @@ fn fmt_command_applies_format_to_selection() {
 
     let format = app.engine().cell_format_a1("A1").expect("A1 format");
     assert_eq!(format.decimals, Some(2));
-    assert_eq!(format.fg, Some(dnavisicalc_core::PaletteColor::Sage));
-    assert_eq!(format.bg, Some(dnavisicalc_core::PaletteColor::Cloud));
+    assert_eq!(format.fg, Some(dnavisicalc_engine::PaletteColor::Sage));
+    assert_eq!(format.bg, Some(dnavisicalc_engine::PaletteColor::Cloud));
 }
 
 #[test]
@@ -157,25 +157,25 @@ fn structural_commands_apply_row_and_col_mutations() {
     run_command(&mut app, &mut io, "set B1 =A2");
     assert_eq!(
         app.engine().cell_state_a1("B1").expect("B1").value,
-        dnavisicalc_core::Value::Number(20.0)
+        dnavisicalc_engine::Value::Number(20.0)
     );
 
     run_command(&mut app, &mut io, "insrow 2");
     assert!(app.status().contains("Inserted row 2"));
     assert_eq!(
         app.engine().cell_state_a1("A3").expect("A3").value,
-        dnavisicalc_core::Value::Number(20.0)
+        dnavisicalc_engine::Value::Number(20.0)
     );
     assert_eq!(
         app.engine().cell_state_a1("B1").expect("B1").value,
-        dnavisicalc_core::Value::Number(20.0)
+        dnavisicalc_engine::Value::Number(20.0)
     );
 
     run_command(&mut app, &mut io, "inscol 1");
     assert!(app.status().contains("Inserted col 1"));
     assert_eq!(
         app.engine().cell_state_a1("B1").expect("B1").value,
-        dnavisicalc_core::Value::Number(10.0)
+        dnavisicalc_engine::Value::Number(10.0)
     );
 }
 

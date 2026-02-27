@@ -1,4 +1,4 @@
-use dnavisicalc_core::{CellInput, Engine, RecalcMode};
+use dnavisicalc_engine::{CellInput, Engine, RecalcMode};
 use dnavisicalc_file::{load_from_str, save_to_string};
 use proptest::prelude::*;
 
@@ -18,7 +18,7 @@ proptest! {
         engine.set_recalc_mode(RecalcMode::Manual);
 
         for (col, row, as_formula, value) in entries {
-            let addr = format!("{}{}", dnavisicalc_core::col_index_to_label(col), row);
+            let addr = format!("{}{}", dnavisicalc_engine::col_index_to_label(col), row);
             if as_formula {
                 let formula = format!("={}", value.round());
                 let _ = engine.set_cell_input_a1(&addr, CellInput::Formula(formula));

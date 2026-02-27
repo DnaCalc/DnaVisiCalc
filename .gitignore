@@ -5,3 +5,4 @@ visicalc_manual_1979_djvu.txt
 *.profdata
 coverage/
 artifacts/
+.tmp/

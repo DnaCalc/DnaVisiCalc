@@ -11,7 +11,7 @@ name = "dnavisicalc_file"
 path = "src/lib.rs"
 
 [dependencies]
-dnavisicalc-core.workspace = true
+dnavisicalc-engine.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

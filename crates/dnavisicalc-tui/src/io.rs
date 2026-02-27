@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use dnavisicalc_core::Engine;
+use dnavisicalc_engine::Engine;
 
 pub trait WorkbookIo {
     fn load(&mut self, path: &str) -> Result<Engine, String>;

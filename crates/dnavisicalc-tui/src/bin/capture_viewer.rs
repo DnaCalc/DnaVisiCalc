@@ -215,9 +215,18 @@ fn render_capture_frame(frame: &mut ratatui::Frame, area: Rect, snapshot: &Captu
     if inner.width == 0 || inner.height == 0 {
         return;
     }
+    let content_area = Rect {
+        x: inner.x.saturating_add(1),
+        y: inner.y.saturating_add(1),
+        width: inner.width.saturating_sub(2),
+        height: inner.height.saturating_sub(2),
+    };
+    if content_area.width == 0 || content_area.height == 0 {
+        return;
+    }
 
     let mut lines: Vec<Line> = Vec::new();
-    for row in snapshot.rows.iter().take(inner.height as usize) {
+    for row in snapshot.rows.iter().take(content_area.height as usize) {
         let mut spans: Vec<Span> = Vec::new();
         for span in &row.spans {
             spans.push(Span::styled(
@@ -228,13 +237,13 @@ fn render_capture_frame(frame: &mut ratatui::Frame, area: Rect, snapshot: &Captu
         lines.push(Line::from(spans));
     }
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), content_area);
 
     if let Some(cursor) = snapshot.cursor
-        && cursor.x < inner.width
-        && cursor.y < inner.height
+        && cursor.x < content_area.width
+        && cursor.y < content_area.height
     {
-        frame.set_cursor_position((inner.x + cursor.x, inner.y + cursor.y));
+        frame.set_cursor_position((content_area.x + cursor.x, content_area.y + cursor.y));
     }
 }
 
