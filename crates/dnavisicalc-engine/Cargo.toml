@@ -12,3 +12,4 @@ path = "src/lib.rs"
 
 [dependencies]
 dnavisicalc-core.workspace = true
+libloading = "0.8.6"
