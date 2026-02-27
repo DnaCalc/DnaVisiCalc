@@ -57,6 +57,7 @@ Every run bundle must contain:
 - `inputs/PROMPT_INPUT.md`
 - `inputs/SPEC_PACK_REF.md`
 - `inputs/INPUT_HASHES.json`
+- `inputs/RUN_ADDITIONAL_REQUIREMENTS.md`
 - `execution/SESSION_LOG.md`
 - `execution/TOOL_LOG.jsonl`
 - `outputs/CODEBASE_REF.yaml`
@@ -121,3 +122,4 @@ Use templates in:
 
 Optional scaffold helper:
 - `scripts/new_engine_run.ps1 -Runtime <rust|dotnet> -ImplementationId <id> -SpecPackVersion <date>`
+

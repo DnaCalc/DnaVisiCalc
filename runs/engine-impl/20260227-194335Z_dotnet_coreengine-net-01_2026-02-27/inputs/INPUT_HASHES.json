@@ -1,0 +1,21 @@
+{
+  "hash_algorithm": "sha256",
+  "inputs": [
+    {
+      "path": "docs/full-engine-spec/2026-02-27/SPEC_v0.md",
+      "sha256": "<fill>"
+    },
+    {
+      "path": "docs/full-engine-spec/2026-02-27/ENGINE_REQUIREMENTS.md",
+      "sha256": "<fill>"
+    },
+    {
+      "path": "docs/full-engine-spec/2026-02-27/ENGINE_API.md",
+      "sha256": "<fill>"
+    },
+    {
+      "path": "runs/engine-impl/<run-id>/inputs/PROMPT_INPUT.md",
+      "sha256": "<fill>"
+    }
+  ]
+}

@@ -11,11 +11,5 @@ Then fill:
 - `validation/*`
 - `handoff/*`
 
-Run input files include:
-- `inputs/PROMPT_INPUT.md`
-- `inputs/SPEC_PACK_REF.md`
-- `inputs/INPUT_HASHES.json`
-- `inputs/RUN_ADDITIONAL_REQUIREMENTS.md`
-
 Reference:
 - `docs/OPERATIONS.md`
