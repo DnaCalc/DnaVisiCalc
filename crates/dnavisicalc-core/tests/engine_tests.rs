@@ -38,7 +38,7 @@ fn automatic_mode_recalculates_on_edit() {
 }
 
 #[test]
-fn rejects_circular_dependencies() {
+fn non_iterative_cycles_follow_excel_style_behavior() {
     let mut engine = Engine::new();
     engine.set_recalc_mode(RecalcMode::Manual);
     engine
@@ -48,16 +48,16 @@ fn rejects_circular_dependencies() {
         .set_formula_a1("B1", "=A1+1")
         .expect("set B1 formula");
 
-    let err = engine.recalculate().expect_err("recalc should fail");
-    match err {
-        EngineError::Dependency(dep_err) => {
-            let msg = dep_err.to_string();
-            assert!(msg.contains("circular reference"));
-            assert!(msg.contains("A1"));
-            assert!(msg.contains("B1"));
-        }
-        _ => panic!("expected dependency error"),
-    }
+    engine.recalculate().expect("recalc should succeed");
+
+    assert_eq!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        engine.cell_state_a1("B1").expect("B1").value,
+        Value::Number(1.0)
+    );
 }
 
 #[test]

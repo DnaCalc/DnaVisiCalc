@@ -341,6 +341,8 @@ pub struct EvalContext<'a> {
     /// cell is in this set, the previous value is returned instead of a
     /// cycle error.
     iterating_prev: HashMap<CellRef, RuntimeValue>,
+    /// True once a circular-reference path is observed during this evaluation.
+    cycle_detected: bool,
     /// Registered user-defined functions.
     udfs: &'a HashMap<String, Box<dyn UdfHandler>>,
 }
@@ -354,15 +356,6 @@ pub(crate) struct StreamRegistration {
 enum EvalStackNode {
     Cell(CellRef),
     Name(String),
-}
-
-impl EvalStackNode {
-    fn label(&self) -> String {
-        match self {
-            Self::Cell(cell) => cell.to_string(),
-            Self::Name(name) => format!("${name}"),
-        }
-    }
 }
 
 impl<'a> EvalContext<'a> {
@@ -397,12 +390,19 @@ impl<'a> EvalContext<'a> {
             stream_counters,
             stream_registrations: HashMap::new(),
             iterating_prev: HashMap::new(),
+            cycle_detected: false,
             udfs,
         }
     }
 
     pub(crate) fn take_stream_registrations(&mut self) -> HashMap<CellRef, StreamRegistration> {
         std::mem::take(&mut self.stream_registrations)
+    }
+
+    pub(crate) fn take_cycle_detected(&mut self) -> bool {
+        let detected = self.cycle_detected;
+        self.cycle_detected = false;
+        detected
     }
 
     /// Prepares for iterative evaluation of a cyclic SCC. Seeds the cache with
@@ -413,6 +413,24 @@ impl<'a> EvalContext<'a> {
         for cell in cells {
             self.cache.insert(*cell, initial.clone());
             self.iterating_prev.insert(*cell, initial.clone());
+        }
+    }
+
+    /// Like `begin_iteration`, but uses caller-provided seed values for each
+    /// cyclic cell. Missing seeds default to `0.0`.
+    pub(crate) fn begin_iteration_seeded(
+        &mut self,
+        cells: &[CellRef],
+        seeds: &HashMap<CellRef, RuntimeValue>,
+    ) {
+        let default_value = RuntimeValue::scalar(Value::Number(0.0));
+        for cell in cells {
+            let seed = seeds
+                .get(cell)
+                .cloned()
+                .unwrap_or_else(|| default_value.clone());
+            self.cache.insert(*cell, seed.clone());
+            self.iterating_prev.insert(*cell, seed);
         }
     }
 
@@ -435,22 +453,18 @@ impl<'a> EvalContext<'a> {
         if let Some(value) = self.cache.get(&cell) {
             return value.clone();
         }
-        if let Some(index) = self
+        if self
             .stack
             .iter()
-            .position(|node| *node == EvalStackNode::Cell(cell))
+            .any(|node| *node == EvalStackNode::Cell(cell))
         {
+            self.cycle_detected = true;
             // During iterative SCC evaluation, return the previous iteration's
             // value instead of a cycle error.
             if let Some(prev) = self.iterating_prev.get(&cell) {
                 return prev.clone();
             }
-            let mut cycle: Vec<String> = self.stack[index..]
-                .iter()
-                .map(EvalStackNode::label)
-                .collect();
-            cycle.push(cell.to_string());
-            return RuntimeValue::scalar(Value::Error(CellError::Cycle(cycle)));
+            return RuntimeValue::scalar(Value::Number(0.0));
         }
 
         if let Some(expr) = self.formulas.get(&cell) {
@@ -483,17 +497,13 @@ impl<'a> EvalContext<'a> {
         if let Some(value) = self.name_cache.get(&upper) {
             return value.clone();
         }
-        if let Some(index) = self
+        if self
             .stack
             .iter()
-            .position(|node| *node == EvalStackNode::Name(upper.clone()))
+            .any(|node| *node == EvalStackNode::Name(upper.clone()))
         {
-            let mut cycle: Vec<String> = self.stack[index..]
-                .iter()
-                .map(EvalStackNode::label)
-                .collect();
-            cycle.push(format!("${upper}"));
-            return RuntimeValue::scalar(Value::Error(CellError::Cycle(cycle)));
+            self.cycle_detected = true;
+            return RuntimeValue::scalar(Value::Number(0.0));
         }
 
         if let Some(expr) = self.name_formulas.get(&upper) {

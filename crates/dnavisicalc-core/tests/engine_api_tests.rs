@@ -1,6 +1,7 @@
 use dnavisicalc_core::{
-    CellFormat, CellInput, CellRef, ChangeEntry, ChartDefinition, ControlDefinition, Engine,
-    EngineError, NameInput, PaletteColor, RecalcMode, UdfHandler, Value, Volatility,
+    CellFormat, CellInput, CellRef, ChangeEntry, ChartDefinition, ControlDefinition,
+    DiagnosticCode, Engine, EngineError, IterationConfig, NameInput, PaletteColor, RecalcMode,
+    UdfHandler, Value, Volatility,
 };
 use std::sync::{
     Arc,
@@ -324,5 +325,50 @@ fn change_tracking_collects_cell_chart_and_format_changes() {
             .iter()
             .any(|e| matches!(e, ChangeEntry::CellFormat { cell, .. } if *cell == CellRef::from_a1("A1").expect("A1"))),
         "expected cell format change for A1",
+    );
+}
+
+#[test]
+fn change_tracking_emits_cycle_diagnostic_for_non_iterative_recalc() {
+    let mut engine = Engine::new();
+    engine.enable_change_tracking();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine.set_formula_a1("A1", "=B1+1").expect("A1");
+    engine.set_formula_a1("B1", "=A1+1").expect("B1");
+    engine.recalculate().expect("recalc");
+
+    let entries = engine.drain_changes();
+    assert!(
+        entries.iter().any(|entry| matches!(
+            entry,
+            ChangeEntry::Diagnostic {
+                code: DiagnosticCode::CircularReferenceDetected,
+                ..
+            }
+        )),
+        "expected circular-reference diagnostic entry",
+    );
+}
+
+#[test]
+fn iterative_recalc_does_not_emit_non_iterative_cycle_diagnostic() {
+    let mut engine = Engine::new();
+    engine.enable_change_tracking();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine.set_iteration_config(IterationConfig {
+        enabled: true,
+        max_iterations: 10,
+        convergence_tolerance: 0.001,
+    });
+    engine.set_formula_a1("A1", "=B1+1").expect("A1");
+    engine.set_formula_a1("B1", "=A1+1").expect("B1");
+    engine.recalculate().expect("recalc");
+
+    let entries = engine.drain_changes();
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| matches!(entry, ChangeEntry::Diagnostic { .. })),
+        "did not expect non-iterative cycle diagnostic when iteration is enabled",
     );
 }

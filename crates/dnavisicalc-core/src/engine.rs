@@ -6,7 +6,7 @@ use crate::address::{
     is_cell_reference_token, parse_cell_ref,
 };
 use crate::ast::{Expr, StructuralOp, expr_to_formula, rewrite_expr};
-use crate::deps::{CalcTree, DependencyError, build_calc_tree, build_calc_tree_allow_cycles};
+use crate::deps::{CalcTree, DependencyError, build_calc_tree_allow_cycles};
 use crate::eval::{
     CellError, EvalContext, RuntimeValue, SUPPORTED_FUNCTIONS, UdfHandler, Value, Volatility,
 };
@@ -103,6 +103,11 @@ pub struct ChartOutput {
     pub series: Vec<ChartSeriesOutput>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticCode {
+    CircularReferenceDetected,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEntry {
     CellValue {
@@ -131,6 +136,11 @@ pub enum ChangeEntry {
         cell: CellRef,
         old: CellFormat,
         new: CellFormat,
+        epoch: u64,
+    },
+    Diagnostic {
+        code: DiagnosticCode,
+        message: String,
         epoch: u64,
     },
 }
@@ -1060,11 +1070,7 @@ impl Engine {
             }
         }
 
-        let tree = if self.iteration_config.enabled {
-            build_calc_tree_allow_cycles(&formulas)
-        } else {
-            build_calc_tree(&formulas)?
-        };
+        let tree = build_calc_tree_allow_cycles(&formulas);
 
         self.recalc_serial = self.recalc_serial.wrapping_add(1);
         let now_timestamp = excel_now_timestamp();
@@ -1126,16 +1132,39 @@ impl Engine {
                     eval_count += 1;
                 }
             } else {
-                let max_iter = self.iteration_config.max_iterations;
+                let max_iter = if self.iteration_config.enabled {
+                    self.iteration_config.max_iterations
+                } else {
+                    1
+                };
                 let tolerance = self.iteration_config.convergence_tolerance;
-
-                evaluator.begin_iteration(&scc.cells);
+                let seeded_prev = if self.iteration_config.enabled {
+                    evaluator.begin_iteration(&scc.cells);
+                    None
+                } else {
+                    let mut seeds: HashMap<CellRef, RuntimeValue> = HashMap::new();
+                    for cell in &scc.cells {
+                        let seed = self
+                            .values
+                            .get(cell)
+                            .map(|stored| RuntimeValue::scalar(stored.value.clone()))
+                            .unwrap_or_else(|| RuntimeValue::scalar(Value::Number(0.0)));
+                        seeds.insert(*cell, seed);
+                    }
+                    evaluator.begin_iteration_seeded(&scc.cells, &seeds);
+                    Some(seeds)
+                };
 
                 for cell in &scc.cells {
+                    let seed_value = seeded_prev
+                        .as_ref()
+                        .and_then(|seeds| seeds.get(cell))
+                        .map(RuntimeValue::to_scalar)
+                        .unwrap_or(Value::Number(0.0));
                     new_values.insert(
                         *cell,
                         StoredValue {
-                            value: Value::Number(0.0),
+                            value: seed_value,
                             value_epoch: self.committed_epoch,
                         },
                     );
@@ -1175,7 +1204,7 @@ impl Engine {
                         eval_count += 1;
                     }
 
-                    if converged {
+                    if self.iteration_config.enabled && converged {
                         break;
                     }
                 }
@@ -1196,6 +1225,8 @@ impl Engine {
                 },
             );
         }
+        let emit_cycle_diagnostic =
+            !self.iteration_config.enabled && evaluator.take_cycle_detected();
 
         let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();
         let mut spill_ranges: HashMap<CellRef, CellRange> = HashMap::new();
@@ -1230,6 +1261,13 @@ impl Engine {
         }
 
         let registrations = evaluator.take_stream_registrations();
+        if emit_cycle_diagnostic {
+            self.push_change(ChangeEntry::Diagnostic {
+                code: DiagnosticCode::CircularReferenceDetected,
+                message: "Circular reference detected; non-iterative fallback applied.".to_string(),
+                epoch: self.committed_epoch,
+            });
+        }
         let mut new_stream_cells: HashMap<CellRef, StreamState> = HashMap::new();
         for (cell, reg) in registrations {
             if let Some(existing) = self.stream_cells.get(&cell) {
@@ -1373,16 +1411,39 @@ impl Engine {
                 // For cyclic SCCs, if any member is dirty, re-evaluate the entire SCC.
                 let scc_has_dirty = scc.cells.iter().any(|c| dirty_closure.contains(c));
                 if scc_has_dirty {
-                    let max_iter = self.iteration_config.max_iterations;
+                    let max_iter = if self.iteration_config.enabled {
+                        self.iteration_config.max_iterations
+                    } else {
+                        1
+                    };
                     let tolerance = self.iteration_config.convergence_tolerance;
-
-                    evaluator.begin_iteration(&scc.cells);
+                    let seeded_prev = if self.iteration_config.enabled {
+                        evaluator.begin_iteration(&scc.cells);
+                        None
+                    } else {
+                        let mut seeds: HashMap<CellRef, RuntimeValue> = HashMap::new();
+                        for cell in &scc.cells {
+                            let seed = self
+                                .values
+                                .get(cell)
+                                .map(|stored| RuntimeValue::scalar(stored.value.clone()))
+                                .unwrap_or_else(|| RuntimeValue::scalar(Value::Number(0.0)));
+                            seeds.insert(*cell, seed);
+                        }
+                        evaluator.begin_iteration_seeded(&scc.cells, &seeds);
+                        Some(seeds)
+                    };
 
                     for cell in &scc.cells {
+                        let seed_value = seeded_prev
+                            .as_ref()
+                            .and_then(|seeds| seeds.get(cell))
+                            .map(RuntimeValue::to_scalar)
+                            .unwrap_or(Value::Number(0.0));
                         self.values.insert(
                             *cell,
                             StoredValue {
-                                value: Value::Number(0.0),
+                                value: seed_value,
                                 value_epoch: self.committed_epoch,
                             },
                         );
@@ -1423,7 +1484,7 @@ impl Engine {
                             eval_count += 1;
                         }
 
-                        if converged {
+                        if self.iteration_config.enabled && converged {
                             break;
                         }
                     }
@@ -1448,6 +1509,8 @@ impl Engine {
                 );
             }
         }
+        let emit_cycle_diagnostic =
+            !self.iteration_config.enabled && evaluator.take_cycle_detected();
 
         // Spill handling: if any spill anchor is in the dirty closure, we need
         // to redo spills. For simplicity, redo spills if anything was dirty.
@@ -1492,6 +1555,13 @@ impl Engine {
 
         // Handle stream registrations.
         let registrations = evaluator.take_stream_registrations();
+        if emit_cycle_diagnostic {
+            self.push_change(ChangeEntry::Diagnostic {
+                code: DiagnosticCode::CircularReferenceDetected,
+                message: "Circular reference detected; non-iterative fallback applied.".to_string(),
+                epoch: self.committed_epoch,
+            });
+        }
         if !dirty_closure.is_empty() {
             let old_stream_cells = self.stream_cells.clone();
             let mut merged = old_stream_cells.clone();

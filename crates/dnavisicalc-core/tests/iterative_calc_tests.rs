@@ -10,18 +10,17 @@ fn engine_with_iteration() -> Engine {
     engine
 }
 
-// --- Basic cycle rejection without iteration ---
+// --- Non-iterative cycle behavior (Excel-like fallback semantics) ---
 
 #[test]
-fn cycles_are_rejected_when_iteration_disabled() {
+fn cycles_are_accepted_when_iteration_disabled() {
     let mut engine = Engine::new();
     engine.set_formula_a1("A1", "=B1").expect("set");
-    // B1 references A1 — this creates a cycle at the next mutation
+    // B1 references A1 — this creates a cycle at the next mutation.
     let result = engine.set_formula_a1("B1", "=A1");
-    assert!(
-        result.is_err(),
-        "should reject cycle without iterative mode"
-    );
+    assert!(result.is_ok(), "cycle should be accepted");
+    assert_eq!(engine.cell_state_a1("A1").expect("A1").value, Value::Blank);
+    assert_eq!(engine.cell_state_a1("B1").expect("B1").value, Value::Blank);
 }
 
 // --- Simple self-referencing cell ---

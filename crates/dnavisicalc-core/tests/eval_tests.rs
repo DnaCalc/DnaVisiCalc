@@ -211,17 +211,16 @@ fn evaluates_named_values_and_formulas() {
 }
 
 #[test]
-fn reports_name_cycle_as_cell_error() {
+fn name_cycle_uses_excel_style_non_iterative_fallback() {
     let mut engine = Engine::new();
     engine.set_name_formula("A", "=B+1").expect("set name A");
     engine.set_name_formula("B", "=A+1").expect("set name B");
     engine.set_formula_a1("C1", "=A").expect("set C1");
 
-    let value = engine.cell_state_a1("C1").expect("query C1").value;
-    match value {
-        Value::Error(err) => assert!(err.to_string().contains("circular reference")),
-        other => panic!("expected cycle error, got {other:?}"),
-    }
+    assert_eq!(
+        engine.cell_state_a1("C1").expect("query C1").value,
+        Value::Number(2.0)
+    );
 }
 
 #[test]
@@ -459,7 +458,10 @@ fn rand_changes_are_small_across_recalculations() {
         Value::Number(n) => n,
         other => panic!("expected number, got {other:?}"),
     };
-    assert!((v2 - v1).abs() <= 0.01, "RAND delta should be small: {v1} -> {v2}");
+    assert!(
+        (v2 - v1).abs() <= 0.01,
+        "RAND delta should be small: {v1} -> {v2}"
+    );
 }
 
 #[test]

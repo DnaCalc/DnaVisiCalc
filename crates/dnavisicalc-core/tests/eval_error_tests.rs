@@ -80,7 +80,7 @@ fn map_rejects_incompatible_array_shapes_from_lambda_results() {
 }
 
 #[test]
-fn indirect_r1c1_relative_requires_cell_context() {
+fn indirect_r1c1_relative_name_reference_uses_non_iterative_cycle_fallback() {
     let mut engine = Engine::new();
     engine
         .set_name_formula("REL_REF", "=INDIRECT(\"RC\",FALSE)")
@@ -90,7 +90,7 @@ fn indirect_r1c1_relative_requires_cell_context() {
         .expect("set formula");
 
     let value = engine.cell_state_a1("A1").expect("query").value;
-    assert!(matches!(value, Value::Error(_)));
+    assert_eq!(value, Value::Number(0.0));
 }
 
 // --- IFERROR ---
