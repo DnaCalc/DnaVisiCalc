@@ -35,7 +35,70 @@ internal sealed class ExprParser
         return _pos == _text.Length;
     }
 
-    private bool TryParseExpr(out DvcEngineCore.ExprNode node) => TryParseAddSub(out node);
+    private bool TryParseExpr(out DvcEngineCore.ExprNode node) => TryParseCompare(out node);
+
+    private bool TryParseCompare(out DvcEngineCore.ExprNode node)
+    {
+        if (!TryParseConcat(out node))
+        {
+            return false;
+        }
+
+        while (true)
+        {
+            SkipWs();
+            var op = TryConsume("<>") ? "<>"
+                : TryConsume("<=") ? "<="
+                : TryConsume(">=") ? ">="
+                : TryConsume("=") ? "="
+                : TryConsume("<") ? "<"
+                : TryConsume(">") ? ">"
+                : string.Empty;
+            if (op.Length == 0)
+            {
+                return true;
+            }
+
+            if (!TryParseConcat(out var rhs))
+            {
+                return false;
+            }
+
+            node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.Binary)
+            {
+                Operator = op,
+                Arguments = [node, rhs],
+            };
+        }
+    }
+
+    private bool TryParseConcat(out DvcEngineCore.ExprNode node)
+    {
+        if (!TryParseAddSub(out node))
+        {
+            return false;
+        }
+
+        while (true)
+        {
+            SkipWs();
+            if (!TryConsume("&"))
+            {
+                return true;
+            }
+
+            if (!TryParseAddSub(out var rhs))
+            {
+                return false;
+            }
+
+            node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.Binary)
+            {
+                Operator = "&",
+                Arguments = [node, rhs],
+            };
+        }
+    }
 
     private bool TryParseAddSub(out DvcEngineCore.ExprNode node)
     {
@@ -181,10 +244,21 @@ internal sealed class ExprParser
                 }
             }
 
+            var upper = ident.ToUpperInvariant();
             node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.Function)
             {
-                Name = ident.ToUpperInvariant(),
+                Name = upper,
                 Arguments = args,
+            };
+            return true;
+        }
+
+        var literal = ident.ToUpperInvariant();
+        if (literal is "TRUE" or "FALSE")
+        {
+            node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.Bool)
+            {
+                Bool = literal == "TRUE" ? 1 : 0,
             };
             return true;
         }
@@ -192,7 +266,16 @@ internal sealed class ExprParser
         if (A1Ref.TryParseCellRef(ident, out var cell))
         {
             SkipWs();
-            if (TryConsume(":"))
+            if (TryConsume("#"))
+            {
+                node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.SpillRef)
+                {
+                    CellToken = cell,
+                };
+                return true;
+            }
+
+            if (TryConsume("...") || TryConsume(":"))
             {
                 if (!TryParseIdentifier(out var rhsId) || !A1Ref.TryParseCellRef(rhsId, out var rhsCell))
                 {
@@ -218,7 +301,7 @@ internal sealed class ExprParser
 
         node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.Name)
         {
-            Name = ident.ToUpperInvariant(),
+            Name = literal,
             NameResolver = _nameResolver,
         };
         return true;

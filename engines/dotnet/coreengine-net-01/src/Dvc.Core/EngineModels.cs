@@ -257,6 +257,8 @@ internal sealed class ChartState
     public ChartOutput? Output { get; set; }
 }
 
-public sealed record ChartOutput(string Name, List<string> Labels, List<double> SeriesValues);
+public sealed record ChartSeries(string Name, List<double> Values);
+
+public sealed record ChartOutput(List<string> Labels, List<ChartSeries> Series);
 
 internal sealed record UdfState(DvcVolatility Volatility, DvcEngineCore.UdfCallback Callback);

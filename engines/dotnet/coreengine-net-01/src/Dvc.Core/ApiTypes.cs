@@ -119,6 +119,12 @@ public enum DvcChangeType : int
     ChartOutput = 2,
     SpillRegion = 3,
     CellFormat = 4,
+    Diagnostic = 5,
+}
+
+public enum DvcDiagnosticCode : int
+{
+    CircularReferenceDetected = 0,
 }
 
 [StructLayout(LayoutKind.Sequential)]

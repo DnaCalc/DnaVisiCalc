@@ -6,6 +6,7 @@ public sealed partial class DvcEngineCore
 {
     private const ushort DefaultCols = 63;
     private const ushort DefaultRows = 254;
+    private const string CircularReferenceDiagnosticMessage = "Circular reference detected.";
 
     private readonly DvcSheetBounds _bounds;
     private readonly Dictionary<long, InputEntry> _cells = [];
@@ -31,6 +32,7 @@ public sealed partial class DvcEngineCore
     private DvcRejectKind _lastRejectKind = DvcRejectKind.None;
     private DvcLastRejectContext _lastRejectContext = default;
     private bool _changeTrackingEnabled;
+    private bool _cycleDetectedInCurrentRecalc;
 
     public DvcEngineCore()
     {
@@ -128,7 +130,6 @@ public sealed partial class DvcEngineCore
         }
 
         _cells[addr.Key] = InputEntry.FormulaValue(formula, ClassifyFormula(formula));
-        _cellComputed.Remove(addr.Key);
         RecordChange(ChangeItem.CreateCell(addr, _committedEpoch + 1));
         return CommitMutation(false);
     }
@@ -258,7 +259,6 @@ public sealed partial class DvcEngineCore
         }
 
         _names[norm] = InputEntry.FormulaValue(formula, ClassifyFormula(formula));
-        _nameComputed.Remove(norm);
         RecordChange(ChangeItem.CreateName(norm, _committedEpoch + 1));
         return CommitMutation(false);
     }
@@ -310,11 +310,12 @@ public sealed partial class DvcEngineCore
 
     public DvcStatus Recalculate()
     {
+        var previousSpills = _spillAnchors.ToDictionary(kv => kv.Key, kv => kv.Value.Range);
         _spillAnchors.Clear();
         _spillMembers.Clear();
         var nextCells = new Dictionary<long, CellEval>();
         var nextNames = new Dictionary<string, CellEval>(StringComparer.Ordinal);
-        var cycleFound = false;
+        var nonIterativeCycleDetected = false;
         var limit = _iterationConfig.Enabled == 1 ? Math.Max(1u, _iterationConfig.MaxIterations) : 1u;
         var prevCells = _cellComputed.ToDictionary(kv => kv.Key, kv => kv.Value);
         var prevNames = _nameComputed.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
@@ -323,15 +324,10 @@ public sealed partial class DvcEngineCore
         {
             nextCells.Clear();
             nextNames.Clear();
-            cycleFound = false;
+            _cycleDetectedInCurrentRecalc = false;
             foreach (var name in _names.Keys.OrderBy(x => x, StringComparer.Ordinal))
             {
                 var value = EvaluateName(name, [], []);
-                if (value.ErrorKind == DvcCellErrorKind.Cycle)
-                {
-                    cycleFound = true;
-                }
-
                 nextNames[name] = value with { Epoch = _committedEpoch };
             }
 
@@ -339,16 +335,12 @@ public sealed partial class DvcEngineCore
             {
                 var addr = KeyToAddr(cellKey);
                 var value = EvaluateCell(addr, [], []);
-                if (value.ErrorKind == DvcCellErrorKind.Cycle)
-                {
-                    cycleFound = true;
-                }
-
                 nextCells[cellKey] = value with { Epoch = _committedEpoch };
             }
 
             if (_iterationConfig.Enabled == 0)
             {
+                nonIterativeCycleDetected = _cycleDetectedInCurrentRecalc;
                 break;
             }
 
@@ -375,24 +367,33 @@ public sealed partial class DvcEngineCore
         }
 
         _stabilizedEpoch = _committedEpoch;
+        RecordSpillChanges(previousSpills);
         ComputeCharts();
-        if (cycleFound && _iterationConfig.Enabled == 0)
+        if (nonIterativeCycleDetected && _iterationConfig.Enabled == 0)
         {
-            return MarkError(DvcStatus.ErrDependency, "Dependency cycle detected.");
+            RecordChange(ChangeItem.CreateDiagnostic(
+                DvcDiagnosticCode.CircularReferenceDetected,
+                CircularReferenceDiagnosticMessage,
+                _committedEpoch));
         }
-
         return MarkOk();
     }
 
     public DvcStatus HasVolatileCells(out int has)
     {
-        has = _cells.Values.Any(x => x.Features.HasVolatile) || _names.Values.Any(x => x.Features.HasVolatile) ? 1 : 0;
+        has = _cells.Values.Any(input => InputHasVolatility(input, DvcVolatility.Volatile)) ||
+              _names.Values.Any(input => InputHasVolatility(input, DvcVolatility.Volatile))
+            ? 1
+            : 0;
         return MarkOk();
     }
 
     public DvcStatus HasExternallyInvalidatedCells(out int has)
     {
-        has = _cells.Values.Any(x => x.Features.HasExternal) || _names.Values.Any(x => x.Features.HasExternal) ? 1 : 0;
+        has = _cells.Values.Any(input => InputHasVolatility(input, DvcVolatility.ExternallyInvalidated)) ||
+              _names.Values.Any(input => InputHasVolatility(input, DvcVolatility.ExternallyInvalidated))
+            ? 1
+            : 0;
         return MarkOk();
     }
 
@@ -404,7 +405,13 @@ public sealed partial class DvcEngineCore
 
     public DvcStatus HasStreamCells(out int has)
     {
-        has = _streams.Count > 0 || _cells.Values.Any(x => x.Features.HasStream) ? 1 : 0;
+        has = _streams.Count > 0 ||
+              _cells.Values.Any(input => input.Kind == DvcInputType.Formula &&
+                                          DvcEngineCore.GetFunctionCalls(input.Formula).Any(fn => fn == "STREAM")) ||
+              _names.Values.Any(input => input.Kind == DvcInputType.Formula &&
+                                          DvcEngineCore.GetFunctionCalls(input.Formula).Any(fn => fn == "STREAM"))
+            ? 1
+            : 0;
         return MarkOk();
     }
 
@@ -491,6 +498,7 @@ public sealed partial class DvcEngineCore
             return MarkError(DvcStatus.ErrInvalidArgument, "Invalid format.");
         }
 
+        var oldFormat = _formats.TryGetValue(addr.Key, out var existing) ? existing : DvcCellFormat.Default;
         if (format.IsDefault)
         {
             _formats.Remove(addr.Key);
@@ -500,7 +508,8 @@ public sealed partial class DvcEngineCore
             _formats[addr.Key] = format;
         }
 
-        RecordChange(ChangeItem.CreateFormat(addr, _committedEpoch + 1));
+        var newFormat = format.IsDefault ? DvcCellFormat.Default : format;
+        RecordChange(ChangeItem.CreateFormat(addr, oldFormat, newFormat, _committedEpoch + 1));
         _committedEpoch++;
         return MarkOk();
     }
@@ -802,7 +811,13 @@ public sealed partial class DvcEngineCore
 
         if (visitingCells.Contains(addr.Key))
         {
-            return _iterationConfig.Enabled == 1 ? CellEval.NumberValue(0.0) : CellEval.ErrorValue(DvcCellErrorKind.Cycle, "Circular reference.");
+            if (_iterationConfig.Enabled == 0)
+            {
+                _cycleDetectedInCurrentRecalc = true;
+                return GetNonIterativeCycleFallback(addr);
+            }
+
+            return CellEval.NumberValue(0.0);
         }
 
         if (!_cells.TryGetValue(addr.Key, out var input))
@@ -836,7 +851,13 @@ public sealed partial class DvcEngineCore
     {
         if (visitingNames.Contains(name))
         {
-            return _iterationConfig.Enabled == 1 ? CellEval.NumberValue(0.0) : CellEval.ErrorValue(DvcCellErrorKind.Cycle, "Circular name.");
+            if (_iterationConfig.Enabled == 0)
+            {
+                _cycleDetectedInCurrentRecalc = true;
+                return GetNonIterativeCycleFallback(name);
+            }
+
+            return CellEval.NumberValue(0.0);
         }
 
         if (!_names.TryGetValue(name, out var input))
@@ -858,6 +879,26 @@ public sealed partial class DvcEngineCore
         var eval = EvaluateFormula(input.Formula, default, visitingCells, visitingNames);
         visitingNames.Remove(name);
         return eval.Scalar;
+    }
+
+    private CellEval GetNonIterativeCycleFallback(DvcCellAddr addr)
+    {
+        if (_cellComputed.TryGetValue(addr.Key, out var previous))
+        {
+            return previous;
+        }
+
+        return CellEval.NumberValue(0.0);
+    }
+
+    private CellEval GetNonIterativeCycleFallback(string name)
+    {
+        if (_nameComputed.TryGetValue(name, out var previous))
+        {
+            return previous;
+        }
+
+        return CellEval.NumberValue(0.0);
     }
 
     private bool TryApplySpill(DvcCellAddr anchor, CellEval[,] matrix, out CellEval top)
@@ -905,7 +946,6 @@ public sealed partial class DvcEngineCore
             }
         }
 
-        RecordChange(ChangeItem.CreateSpill(anchor, range, _committedEpoch));
         return true;
     }
 
@@ -1024,6 +1064,73 @@ public sealed partial class DvcEngineCore
     }
 
     private static bool IsPalette(DvcPaletteColor color) => color == DvcPaletteColor.None || (int)color is >= 0 and <= 15;
+
+    private bool InputHasVolatility(InputEntry input, DvcVolatility volatility)
+    {
+        if (input.Kind != DvcInputType.Formula)
+        {
+            return false;
+        }
+
+        foreach (var fn in DvcEngineCore.GetFunctionCalls(input.Formula))
+        {
+            if (volatility == DvcVolatility.Volatile && fn is "NOW" or "RAND" or "RANDARRAY")
+            {
+                return true;
+            }
+
+            if (volatility == DvcVolatility.ExternallyInvalidated && fn == "STREAM")
+            {
+                return true;
+            }
+
+            if (_udfs.TryGetValue(fn, out var udf) && udf.Volatility == volatility)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void RecordSpillChanges(Dictionary<long, DvcCellRange> previousSpills)
+    {
+        if (!_changeTrackingEnabled)
+        {
+            return;
+        }
+
+        var keys = new HashSet<long>(previousSpills.Keys);
+        foreach (var key in _spillAnchors.Keys)
+        {
+            keys.Add(key);
+        }
+
+        foreach (var key in keys.OrderBy(x => x))
+        {
+            var hadOld = previousSpills.TryGetValue(key, out var oldRange);
+            var hasNew = _spillAnchors.TryGetValue(key, out var newSpill);
+            var newRange = hasNew && newSpill is not null ? newSpill.Range : default;
+            if (hadOld && hasNew && RangesEqual(oldRange, newRange))
+            {
+                continue;
+            }
+
+            RecordChange(ChangeItem.CreateSpill(
+                KeyToAddr(key),
+                oldRange,
+                hadOld ? 1 : 0,
+                newRange,
+                hasNew ? 1 : 0,
+                _committedEpoch));
+        }
+    }
+
+    private static bool RangesEqual(DvcCellRange left, DvcCellRange right) =>
+        left.Start.Col == right.Start.Col &&
+        left.Start.Row == right.Start.Row &&
+        left.End.Col == right.End.Col &&
+        left.End.Row == right.End.Row;
 
     private DvcStatus MarkOk()
     {

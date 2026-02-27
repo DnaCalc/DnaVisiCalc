@@ -255,11 +255,17 @@ public sealed partial class DvcEngineCore
         {
             var range = kv.Value.Def.SourceRange;
             var labels = new List<string>();
-            var values = new List<double>();
             var rowStart = Math.Min(range.Start.Row, range.End.Row);
             var rowEnd = Math.Max(range.Start.Row, range.End.Row);
             var colStart = Math.Min(range.Start.Col, range.End.Col);
             var colEnd = Math.Max(range.Start.Col, range.End.Col);
+            var seriesCount = Math.Max(0, colEnd - colStart);
+            var series = new List<ChartSeries>(seriesCount);
+            for (var i = 0; i < seriesCount; i++)
+            {
+                series.Add(new ChartSeries($"SERIES{i + 1}", new List<double>()));
+            }
+
             for (var r = rowStart; r <= rowEnd; r++)
             {
                 var labelCell = new DvcCellAddr(colStart, r);
@@ -272,17 +278,22 @@ public sealed partial class DvcEngineCore
                     labels.Add(string.Empty);
                 }
 
-                for (var c = colStart + 1; c <= colEnd; c++)
+                for (var i = 0; i < seriesCount; i++)
                 {
+                    var c = colStart + 1 + i;
                     var valueCell = new DvcCellAddr((ushort)c, (ushort)r);
                     if (_cellComputed.TryGetValue(valueCell.Key, out var valueEval) && valueEval.TryAsNumber(out var number))
                     {
-                        values.Add(number);
+                        series[i].Values.Add(number);
+                    }
+                    else
+                    {
+                        series[i].Values.Add(double.NaN);
                     }
                 }
             }
 
-            kv.Value.Output = new ChartOutput("SERIES1", labels, values);
+            kv.Value.Output = new ChartOutput(labels, series);
             RecordChange(ChangeItem.CreateChart(kv.Key, _committedEpoch));
         }
     }
@@ -326,13 +337,34 @@ public readonly record struct ChangeItem(DvcChangeType Type, ulong Epoch)
 {
     public DvcCellAddr Cell { get; init; }
     public string Name { get; init; } = string.Empty;
-    public DvcCellRange Spill { get; init; }
+    public DvcDiagnosticCode DiagnosticCode { get; init; }
+    public string DiagnosticMessage { get; init; } = string.Empty;
+    public DvcCellRange OldSpill { get; init; }
+    public int HadOldSpill { get; init; }
+    public DvcCellRange NewSpill { get; init; }
+    public int HasNewSpill { get; init; }
+    public DvcCellFormat OldFormat { get; init; }
+    public DvcCellFormat NewFormat { get; init; }
 
     public static ChangeItem CreateCell(DvcCellAddr addr, ulong epoch) => new(DvcChangeType.CellValue, epoch) { Cell = addr };
     public static ChangeItem CreateName(string name, ulong epoch) => new(DvcChangeType.NameValue, epoch) { Name = name };
-    public static ChangeItem CreateFormat(DvcCellAddr addr, ulong epoch) => new(DvcChangeType.CellFormat, epoch) { Cell = addr };
-    public static ChangeItem CreateSpill(DvcCellAddr addr, DvcCellRange range, ulong epoch) => new(DvcChangeType.SpillRegion, epoch) { Cell = addr, Spill = range };
+    public static ChangeItem CreateFormat(DvcCellAddr addr, DvcCellFormat oldFormat, DvcCellFormat newFormat, ulong epoch) =>
+        new(DvcChangeType.CellFormat, epoch) { Cell = addr, OldFormat = oldFormat, NewFormat = newFormat };
+
+    public static ChangeItem CreateSpill(DvcCellAddr addr, DvcCellRange oldRange, int hadOld, DvcCellRange newRange, int hasNew, ulong epoch) =>
+        new(DvcChangeType.SpillRegion, epoch)
+        {
+            Cell = addr,
+            OldSpill = oldRange,
+            HadOldSpill = hadOld,
+            NewSpill = newRange,
+            HasNewSpill = hasNew,
+        };
+
     public static ChangeItem CreateChart(string name, ulong epoch) => new(DvcChangeType.ChartOutput, epoch) { Name = name };
+
+    public static ChangeItem CreateDiagnostic(DvcDiagnosticCode code, string message, ulong epoch) =>
+        new(DvcChangeType.Diagnostic, epoch) { DiagnosticCode = code, DiagnosticMessage = message };
 }
 
 public sealed class CellIterator(CellIterEntry[] entries)

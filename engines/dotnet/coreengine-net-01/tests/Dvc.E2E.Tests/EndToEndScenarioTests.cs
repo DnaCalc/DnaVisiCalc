@@ -69,4 +69,68 @@ public sealed unsafe class EndToEndScenarioTests
 
         Assert.Equal((int)DvcStatus.Ok, destroy(engine));
     }
+
+    [Fact]
+    public void SpillReferenceAndMixedAbsoluteRewrite_WorkAcrossExportBoundary()
+    {
+        delegate* unmanaged<IntPtr*, int> create = &Exports.EngineCreate;
+        delegate* unmanaged<IntPtr, byte*, uint, byte*, uint, int> setFormulaA1 = &Exports.CellSetFormulaA1;
+        delegate* unmanaged<IntPtr, byte*, uint, DvcCellState*, int> getStateA1 = &Exports.CellGetStateA1;
+        delegate* unmanaged<IntPtr, ushort, int> insertRow = &Exports.InsertRow;
+        delegate* unmanaged<IntPtr, byte*, uint, byte*, uint, uint*, int> getInputTextA1 = &Exports.CellGetInputTextA1;
+        delegate* unmanaged<IntPtr, int> destroy = &Exports.EngineDestroy;
+
+        IntPtr engine = IntPtr.Zero;
+        Assert.Equal((int)DvcStatus.Ok, create(&engine));
+
+        var a1 = Encoding.UTF8.GetBytes("A1");
+        var seq = Encoding.UTF8.GetBytes("=SEQUENCE(2,2,1,1)");
+        fixed (byte* a1Ptr = a1)
+        fixed (byte* seqPtr = seq)
+        {
+            Assert.Equal((int)DvcStatus.Ok, setFormulaA1(engine, a1Ptr, (uint)a1.Length, seqPtr, (uint)seq.Length));
+        }
+
+        var c1 = Encoding.UTF8.GetBytes("C1");
+        var sumSpill = Encoding.UTF8.GetBytes("=SUM(A1#)");
+        fixed (byte* c1Ptr = c1)
+        fixed (byte* sumPtr = sumSpill)
+        {
+            Assert.Equal((int)DvcStatus.Ok, setFormulaA1(engine, c1Ptr, (uint)c1.Length, sumPtr, (uint)sumSpill.Length));
+        }
+
+        DvcCellState sumState = default;
+        fixed (byte* c1Ptr = c1)
+        {
+            Assert.Equal((int)DvcStatus.Ok, getStateA1(engine, c1Ptr, (uint)c1.Length, &sumState));
+        }
+
+        Assert.Equal(DvcValueType.Number, sumState.Value.Type);
+        Assert.Equal(10, sumState.Value.Number);
+
+        var b2 = Encoding.UTF8.GetBytes("B2");
+        var mixed = Encoding.UTF8.GetBytes("=$A1+A$1+$A$1+A1");
+        fixed (byte* b2Ptr = b2)
+        fixed (byte* mixedPtr = mixed)
+        {
+            Assert.Equal((int)DvcStatus.Ok, setFormulaA1(engine, b2Ptr, (uint)b2.Length, mixedPtr, (uint)mixed.Length));
+        }
+
+        Assert.Equal((int)DvcStatus.Ok, insertRow(engine, 1));
+
+        var b3 = Encoding.UTF8.GetBytes("B3");
+        uint required = 0;
+        fixed (byte* b3Ptr = b3)
+        {
+            Assert.Equal((int)DvcStatus.Ok, getInputTextA1(engine, b3Ptr, (uint)b3.Length, null, 0, &required));
+            var buf = new byte[required];
+            fixed (byte* bufPtr = buf)
+            {
+                Assert.Equal((int)DvcStatus.Ok, getInputTextA1(engine, b3Ptr, (uint)b3.Length, bufPtr, required, &required));
+                Assert.Equal("=$A2+A$1+$A$1+A2", Encoding.UTF8.GetString(buf));
+            }
+        }
+
+        Assert.Equal((int)DvcStatus.Ok, destroy(engine));
+    }
 }

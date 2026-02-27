@@ -365,7 +365,7 @@ public static unsafe partial class Exports
             return NativeHelpers.NullPtr();
         }
 
-        *outCount = 1;
+        *outCount = (uint)handle.Output.Series.Count;
         return (int)DvcStatus.Ok;
     }
 
@@ -410,12 +410,12 @@ public static unsafe partial class Exports
             return NativeHelpers.NullPtr();
         }
 
-        if (seriesIndex != 0)
+        if (seriesIndex >= handle.Output.Series.Count)
         {
             return (int)DvcStatus.ErrOutOfBounds;
         }
 
-        return NativeHelpers.WriteUtf8(handle.Output.Name, buf, bufLen, outLen);
+        return NativeHelpers.WriteUtf8(handle.Output.Series[(int)seriesIndex].Name, buf, bufLen, outLen);
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_chart_output_series_values")]
@@ -431,12 +431,12 @@ public static unsafe partial class Exports
             return NativeHelpers.NullPtr();
         }
 
-        if (seriesIndex != 0)
+        if (seriesIndex >= handle.Output.Series.Count)
         {
             return (int)DvcStatus.ErrOutOfBounds;
         }
 
-        var values = handle.Output.SeriesValues;
+        var values = handle.Output.Series[(int)seriesIndex].Values;
         *outCount = (uint)values.Count;
         if (buf != null && bufLen > 0)
         {
@@ -655,10 +655,10 @@ public static unsafe partial class Exports
         }
 
         *anchor = handle.Current.Cell;
-        *oldRange = default;
-        *hadOld = 0;
-        *newRange = handle.Current.Spill;
-        *hasNew = handle.Current.Spill.Start.IsValid ? 1 : 0;
+        *oldRange = handle.Current.OldSpill;
+        *hadOld = handle.Current.HadOldSpill;
+        *newRange = handle.Current.NewSpill;
+        *hasNew = handle.Current.HasNewSpill;
         return (int)DvcStatus.Ok;
     }
 
@@ -676,9 +676,26 @@ public static unsafe partial class Exports
         }
 
         *addr = handle.Current.Cell;
-        *oldFmt = DvcCellFormat.Default;
-        *newFmt = DvcCellFormat.Default;
+        *oldFmt = handle.Current.OldFormat;
+        *newFmt = handle.Current.NewFormat;
         return (int)DvcStatus.Ok;
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "dvc_change_get_diagnostic")]
+    public static int ChangeGetDiagnostic(IntPtr iterPtr, DvcDiagnosticCode* code, byte* buf, uint bufLen, uint* outLen)
+    {
+        if (code == null)
+        {
+            return NativeHelpers.NullPtr();
+        }
+
+        if (!HandleStore.TryGet<ChangeIterHandle>(iterPtr, out var handle) || handle is null)
+        {
+            return NativeHelpers.NullPtr();
+        }
+
+        *code = handle.Current.DiagnosticCode;
+        return NativeHelpers.WriteUtf8(handle.Current.DiagnosticMessage, buf, bufLen, outLen);
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_change_iterator_destroy")]
