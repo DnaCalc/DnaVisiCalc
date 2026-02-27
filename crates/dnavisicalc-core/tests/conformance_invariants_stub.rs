@@ -2,7 +2,10 @@
 //!
 //! This file intentionally contains minimal stubs so invariant IDs from
 //! `docs/ENGINE_CONFORMANCE_TESTS.md` are tracked in source control and can be
-//! expanded into a cross-engine harness later.
+//! expanded further over time.
+//!
+//! Executable cross-engine conformance smoke coverage now lives in:
+//! `crates/dnavisicalc-engine/tests/conformance_smoke.rs`.
 
 #[test]
 fn conformance_stub_registry_exists() {

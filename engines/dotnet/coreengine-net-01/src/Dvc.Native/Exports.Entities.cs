@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using Dvc.Core;
 
 namespace Dvc.Native;
@@ -104,7 +105,12 @@ public static unsafe partial class Exports
             return NativeHelpers.NullPtr();
         }
 
-        if (!handle.Iterator.Next(out var entry))
+        NameIterEntry entry;
+        if (handle.HasPending)
+        {
+            entry = handle.Pending;
+        }
+        else if (!handle.Iterator.Next(out entry))
         {
             *done = 1;
             return (int)DvcStatus.Ok;
@@ -113,7 +119,24 @@ public static unsafe partial class Exports
         handle.Current = entry;
         *inputType = entry.InputType;
         *done = 0;
-        return NativeHelpers.WriteUtf8(entry.Name, nameBuf, nameBufLen, nameLen);
+        var status = NativeHelpers.WriteUtf8(entry.Name, nameBuf, nameBufLen, nameLen);
+        if (status != (int)DvcStatus.Ok)
+        {
+            return status;
+        }
+
+        var requiredLen = (uint)Encoding.UTF8.GetByteCount(entry.Name);
+        if (nameBuf != null && nameBufLen >= requiredLen)
+        {
+            handle.HasPending = false;
+        }
+        else
+        {
+            handle.Pending = entry;
+            handle.HasPending = true;
+        }
+
+        return (int)DvcStatus.Ok;
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_name_iterator_get_text")]
@@ -283,7 +306,12 @@ public static unsafe partial class Exports
             return NativeHelpers.NullPtr();
         }
 
-        if (!handle.Iterator.Next(out var entry))
+        ControlIterEntry entry;
+        if (handle.HasPending)
+        {
+            entry = handle.Pending;
+        }
+        else if (!handle.Iterator.Next(out entry))
         {
             *done = 1;
             return (int)DvcStatus.Ok;
@@ -292,7 +320,24 @@ public static unsafe partial class Exports
         *def = entry.Def;
         *value = entry.Value;
         *done = 0;
-        return NativeHelpers.WriteUtf8(entry.Name, nameBuf, nameBufLen, nameLen);
+        var status = NativeHelpers.WriteUtf8(entry.Name, nameBuf, nameBufLen, nameLen);
+        if (status != (int)DvcStatus.Ok)
+        {
+            return status;
+        }
+
+        var requiredLen = (uint)Encoding.UTF8.GetByteCount(entry.Name);
+        if (nameBuf != null && nameBufLen >= requiredLen)
+        {
+            handle.HasPending = false;
+        }
+        else
+        {
+            handle.Pending = entry;
+            handle.HasPending = true;
+        }
+
+        return (int)DvcStatus.Ok;
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_control_iterator_destroy")]
@@ -484,7 +529,12 @@ public static unsafe partial class Exports
             return NativeHelpers.NullPtr();
         }
 
-        if (!handle.Iterator.Next(out var entry))
+        ChartIterEntry entry;
+        if (handle.HasPending)
+        {
+            entry = handle.Pending;
+        }
+        else if (!handle.Iterator.Next(out entry))
         {
             *done = 1;
             return (int)DvcStatus.Ok;
@@ -492,7 +542,24 @@ public static unsafe partial class Exports
 
         *def = entry.Def;
         *done = 0;
-        return NativeHelpers.WriteUtf8(entry.Name, nameBuf, nameBufLen, nameLen);
+        var status = NativeHelpers.WriteUtf8(entry.Name, nameBuf, nameBufLen, nameLen);
+        if (status != (int)DvcStatus.Ok)
+        {
+            return status;
+        }
+
+        var requiredLen = (uint)Encoding.UTF8.GetByteCount(entry.Name);
+        if (nameBuf != null && nameBufLen >= requiredLen)
+        {
+            handle.HasPending = false;
+        }
+        else
+        {
+            handle.Pending = entry;
+            handle.HasPending = true;
+        }
+
+        return (int)DvcStatus.Ok;
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_chart_iterator_destroy")]

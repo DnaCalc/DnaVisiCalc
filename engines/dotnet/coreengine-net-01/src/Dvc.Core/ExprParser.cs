@@ -20,6 +20,11 @@ internal sealed class ExprParser
             _text = _text[1..];
         }
 
+        if (_text.StartsWith('@'))
+        {
+            _text = _text[1..];
+        }
+
         _cellResolver = cellResolver;
         _nameResolver = nameResolver;
     }

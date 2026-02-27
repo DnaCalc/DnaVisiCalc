@@ -180,4 +180,95 @@ public sealed unsafe class InteropExportTests
         Assert.Equal((int)DvcStatus.Ok, changeDestroy(iter));
         Assert.Equal((int)DvcStatus.Ok, destroy(engine));
     }
+
+    [Fact]
+    public void CellSetFormula_AcceptsAtPrefixAndEllipsisRange()
+    {
+        delegate* unmanaged<IntPtr*, int> create = &Exports.EngineCreate;
+        delegate* unmanaged<IntPtr, DvcCellAddr, double, int> setNumber = &Exports.CellSetNumber;
+        delegate* unmanaged<IntPtr, DvcCellAddr, byte*, uint, int> setFormula = &Exports.CellSetFormula;
+        delegate* unmanaged<IntPtr, DvcCellAddr, DvcCellState*, int> getState = &Exports.CellGetState;
+        delegate* unmanaged<IntPtr, int> destroy = &Exports.EngineDestroy;
+
+        IntPtr engine = IntPtr.Zero;
+        Assert.Equal((int)DvcStatus.Ok, create(&engine));
+        Assert.Equal((int)DvcStatus.Ok, setNumber(engine, new DvcCellAddr(1, 1), 12.5));
+
+        var formula = Encoding.UTF8.GetBytes("@SUM(A1...A1)");
+        fixed (byte* formulaPtr = formula)
+        {
+            Assert.Equal((int)DvcStatus.Ok, setFormula(engine, new DvcCellAddr(2, 1), formulaPtr, (uint)formula.Length));
+        }
+
+        DvcCellState state = default;
+        Assert.Equal((int)DvcStatus.Ok, getState(engine, new DvcCellAddr(2, 1), &state));
+        Assert.Equal(DvcValueType.Number, state.Value.Type);
+        Assert.Equal(12.5, state.Value.Number);
+
+        Assert.Equal((int)DvcStatus.Ok, destroy(engine));
+    }
+
+    [Fact]
+    public void ControlIterator_BufferQueryRoundtrip_PreservesSliderStep()
+    {
+        delegate* unmanaged<IntPtr*, int> create = &Exports.EngineCreate;
+        delegate* unmanaged<IntPtr, byte*, uint, DvcControlDef*, int> controlDefine = &Exports.ControlDefine;
+        delegate* unmanaged<IntPtr, byte*, uint, double, int> controlSetValue = &Exports.ControlSetValue;
+        delegate* unmanaged<IntPtr, IntPtr*, int> controlIterate = &Exports.ControlIterate;
+        delegate* unmanaged<IntPtr, byte*, uint, uint*, DvcControlDef*, double*, int*, int> controlNext = &Exports.ControlIteratorNext;
+        delegate* unmanaged<IntPtr, int> controlDestroy = &Exports.ControlIteratorDestroy;
+        delegate* unmanaged<IntPtr, int> destroy = &Exports.EngineDestroy;
+
+        IntPtr engine = IntPtr.Zero;
+        IntPtr iter = IntPtr.Zero;
+        Assert.Equal((int)DvcStatus.Ok, create(&engine));
+
+        var gain = Encoding.UTF8.GetBytes("GAIN");
+        var def = new DvcControlDef
+        {
+            Kind = DvcControlKind.Slider,
+            Min = 0.0,
+            Max = 100.0,
+            Step = 5.0,
+        };
+
+        fixed (byte* gainPtr = gain)
+        {
+            Assert.Equal((int)DvcStatus.Ok, controlDefine(engine, gainPtr, (uint)gain.Length, &def));
+            Assert.Equal((int)DvcStatus.Ok, controlSetValue(engine, gainPtr, (uint)gain.Length, 35.0));
+        }
+
+        Assert.Equal((int)DvcStatus.Ok, controlIterate(engine, &iter));
+
+        uint nameLen = 0;
+        DvcControlDef iterDef = default;
+        double iterValue = 0.0;
+        var done = 0;
+        Assert.Equal((int)DvcStatus.Ok, controlNext(iter, null, 0, &nameLen, &iterDef, &iterValue, &done));
+        Assert.Equal(0, done);
+        Assert.Equal((uint)gain.Length, nameLen);
+        Assert.Equal(DvcControlKind.Slider, iterDef.Kind);
+        Assert.Equal(5.0, iterDef.Step);
+        Assert.Equal(35.0, iterValue);
+
+        var buf = new byte[nameLen];
+        fixed (byte* bufPtr = buf)
+        {
+            Assert.Equal((int)DvcStatus.Ok, controlNext(iter, bufPtr, nameLen, &nameLen, &iterDef, &iterValue, &done));
+        }
+
+        Assert.Equal(0, done);
+        Assert.Equal("GAIN", Encoding.UTF8.GetString(buf));
+        Assert.Equal(DvcControlKind.Slider, iterDef.Kind);
+        Assert.Equal(0.0, iterDef.Min);
+        Assert.Equal(100.0, iterDef.Max);
+        Assert.Equal(5.0, iterDef.Step);
+        Assert.Equal(35.0, iterValue);
+
+        Assert.Equal((int)DvcStatus.Ok, controlNext(iter, null, 0, &nameLen, &iterDef, &iterValue, &done));
+        Assert.Equal(1, done);
+
+        Assert.Equal((int)DvcStatus.Ok, controlDestroy(iter));
+        Assert.Equal((int)DvcStatus.Ok, destroy(engine));
+    }
 }

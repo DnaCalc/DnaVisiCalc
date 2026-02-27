@@ -308,6 +308,15 @@ Implementations claiming v0 compatibility must satisfy at least:
 ### REQ-INVSET-003: Conformance Reportability
 Conformance outcomes are reportable at invariant/case granularity (`pass`/`fail`/`waived`) and are tied to a concrete engine build/version.
 
+### REQ-INVSET-004: Temporal Property Contract
+Temporal properties are part of the API-visible contract and use the forms defined in `docs/ENGINE_FORMAL_PROPERTIES.md`.
+Implementations claiming v0 compatibility must satisfy at least:
+- `TEMP-RECALC-001`
+- `TEMP-STREAM-001`
+- `TEMP-STREAM-002`
+- `TEMP-REJECT-001`
+- `TEMP-VOL-001`
+
 ## 15. Non-goals for this Engine Contract
 - Multi-sheet workbook semantics.
 - OOXML read/write compatibility.

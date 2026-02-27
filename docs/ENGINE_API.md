@@ -1348,6 +1348,7 @@ This API defines behavior-level contracts that are intended to be verified via A
 
 The initial invariant and case registry is maintained in:
 - `docs/ENGINE_CONFORMANCE_TESTS.md`
+- `docs/ENGINE_FORMAL_PROPERTIES.md`
 
 Implementations claiming compatibility should publish conformance outcomes against those invariant/case IDs.
 

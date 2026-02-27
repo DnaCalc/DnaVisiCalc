@@ -16,12 +16,14 @@
 
 ### Engine Boundary (`dnavisicalc-engine`)
 - Purpose: backend boundary/loader layer used by Rust adapters.
-- Provides an `Engine` wrapper around the active core backend plus backend metadata (`coreengine()`).
+- Provides an `Engine` wrapper that talks to the active core backend via the C API loaded from a DLL.
 - Current backend set:
-  - `rust-core` (default).
+  - `dotnet-core`,
+  - `rust-core` (when rust C API DLL is present).
 - Backend selection mechanism:
-  - `DNAVISICALC_COREENGINE` (`rust-core`, aliases: `rust`, `core`).
-- Keeps file/TUI crates decoupled from direct `dnavisicalc-core` construction, making C-API-backed engines pluggable behind one seam.
+  - `DNAVISICALC_COREENGINE`,
+  - `DNAVISICALC_COREENGINE_DLL` (explicit DLL path override).
+- Keeps file/TUI crates decoupled from direct engine construction, making C-API DLL backends pluggable behind one seam.
 
 ### File Adapter (`dnavisicalc-file`)
 - Purpose: deterministic serialization adapter for engine state.

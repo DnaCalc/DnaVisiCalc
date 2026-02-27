@@ -16,6 +16,41 @@ public sealed class CoreEngineTests
     }
 
     [Fact]
+    public void SetFormula_AcceptsAtPrefixAndEllipsisRange()
+    {
+        var engine = new DvcEngineCore();
+        Assert.Equal(DvcStatus.Ok, engine.SetCellNumber(new DvcCellAddr(1, 1), 12.5));
+        Assert.Equal(DvcStatus.Ok, engine.SetCellFormula(new DvcCellAddr(2, 1), "@SUM(A1...A1)"));
+        Assert.Equal(DvcStatus.Ok, engine.GetCellState(new DvcCellAddr(2, 1), out var state));
+        Assert.Equal(DvcValueType.Number, state.Value.Type);
+        Assert.Equal(12.5, state.Value.Number);
+    }
+
+    [Fact]
+    public void ControlDefine_PreservesExistingNameNumberAndStep()
+    {
+        var engine = new DvcEngineCore();
+        Assert.Equal(DvcStatus.Ok, engine.SetNameNumber("GAIN", 35.0));
+        Assert.Equal(DvcStatus.Ok, engine.ControlDefine("GAIN", new DvcControlDef
+        {
+            Kind = DvcControlKind.Slider,
+            Min = 0.0,
+            Max = 100.0,
+            Step = 5.0,
+        }));
+
+        Assert.Equal(DvcStatus.Ok, engine.ControlGetValue("GAIN", out var value, out var found));
+        Assert.Equal(1, found);
+        Assert.Equal(35.0, value);
+
+        Assert.Equal(DvcStatus.Ok, engine.CreateControlIterator(out var iter));
+        Assert.True(iter.Next(out var entry));
+        Assert.Equal(DvcControlKind.Slider, entry.Def.Kind);
+        Assert.Equal(5.0, entry.Def.Step);
+        Assert.Equal(35.0, entry.Value);
+    }
+
+    [Fact]
     public void ManualMode_ShowsStaleUntilRecalculate()
     {
         var engine = new DvcEngineCore();

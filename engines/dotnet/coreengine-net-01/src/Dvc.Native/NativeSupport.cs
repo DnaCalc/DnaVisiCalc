@@ -20,6 +20,8 @@ internal sealed class NameIterHandle(NameIterator iterator)
 {
     public NameIterator Iterator { get; } = iterator;
     public NameIterEntry Current { get; set; }
+    public NameIterEntry Pending { get; set; }
+    public bool HasPending { get; set; }
 }
 
 internal sealed class FormatIterHandle(FormatIterator iterator)
@@ -30,11 +32,15 @@ internal sealed class FormatIterHandle(FormatIterator iterator)
 internal sealed class ControlIterHandle(ControlIterator iterator)
 {
     public ControlIterator Iterator { get; } = iterator;
+    public ControlIterEntry Pending { get; set; }
+    public bool HasPending { get; set; }
 }
 
 internal sealed class ChartIterHandle(ChartIterator iterator)
 {
     public ChartIterator Iterator { get; } = iterator;
+    public ChartIterEntry Pending { get; set; }
+    public bool HasPending { get; set; }
 }
 
 internal sealed class ChangeIterHandle(ChangeIterator iterator)

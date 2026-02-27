@@ -41,8 +41,15 @@ public sealed partial class DvcEngineCore
             return MarkError(DvcStatus.ErrInvalidArgument, "Invalid control definition.");
         }
 
-        _controls[norm] = new ControlState(def);
         var initial = def.Kind == DvcControlKind.Slider ? def.Min : 0.0;
+        if (_names.TryGetValue(norm, out var existing) &&
+            existing.Kind == DvcInputType.Number &&
+            NormalizeControlValue(def, existing.Number, out var normalizedExisting))
+        {
+            initial = normalizedExisting;
+        }
+
+        _controls[norm] = new ControlState(def);
         _names[norm] = InputEntry.NumberValue(initial);
         _nameComputed[norm] = CellEval.NumberValue(initial, _committedEpoch + 1);
         RecordChange(ChangeItem.CreateName(norm, _committedEpoch + 1));

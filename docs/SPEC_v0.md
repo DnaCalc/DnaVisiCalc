@@ -125,6 +125,7 @@ The engine contract is implementation-independent and covers:
 ### 3.12 API-Visible Invariants and Conformance
 - API-visible invariants are part of the normative contract for compatibility claims.
 - Initial invariant and case registry is defined in `docs/ENGINE_CONFORMANCE_TESTS.md`.
+- Property forms and temporal semantics are defined in `docs/ENGINE_FORMAL_PROPERTIES.md`.
 - Implementations claiming compatibility should report conformance outcomes against that registry.
 
 ## 4. Non-goals (Round 0)
@@ -138,4 +139,5 @@ The engine contract is implementation-independent and covers:
 - `docs/ENGINE_REQUIREMENTS.md`
 - `docs/ENGINE_API.md`
 - `docs/ENGINE_CONFORMANCE_TESTS.md`
+- `docs/ENGINE_FORMAL_PROPERTIES.md`
 - `docs/SPEC_v0_INTEGRATION_APPENDIX.md`

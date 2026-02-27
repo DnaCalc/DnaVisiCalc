@@ -38,6 +38,7 @@ See `TESTING_ROUNDS.md`.
 - Core behavior contract: `../SPEC_v0.md` and `../ENGINE_REQUIREMENTS.md`.
 - File-format contract: `../FILE_FORMAT.md`.
 - TUI automation contract: `../TUI_TESTABILITY.md`.
+- Engine conformance/performance execution contract: `CONFORMANCE_PERFORMANCE_PLAN.md`.
 
 ## Next planned rounds (verification against implemented expanded scope)
 1. TUI capture contract tests:
@@ -50,6 +51,15 @@ See `TESTING_ROUNDS.md`.
    - play/pause/frame-step/speed and keystroke-overlay behavior.
 5. File format v2 compatibility tests:
    - expand corpus for `ITER`/`DYNARR`/`CONTROL`/`CHART` edge cases and v1-read compatibility.
+
+## Conformance-first extension
+- Fill out `CT-*` coverage from `docs/ENGINE_CONFORMANCE_TESTS.md` by requirement area:
+  - epochs/recalc/stale,
+  - structural rewrite and reject semantics,
+  - dynamic arrays and stream temporal behavior,
+  - controls/charts/change diagnostics.
+- Run each case against all configured engines through the C API boundary.
+- Record optional performance signatures from the same scenarios (non-gating initially).
 
 ## Platform harness extension (Windows Terminal)
 - Add and maintain an interactive E2E harness for terminal event anomalies:
