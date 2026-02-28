@@ -7,9 +7,12 @@ Define a repeatable, evidence-oriented run plan for:
 
 ## 2. Execution Matrix
 Each run is a matrix over:
-- engine backend (`DNAVISICALC_COREENGINE`, optional explicit DLL path),
+- engine backend (`DNAVISICALC_COREENGINE`, explicit DLL path via `DNAVISICALC_COREENGINE_DLL`),
 - conformance case ID (`CT-*`),
 - run tier (`quick`, `full`, `release`).
+
+Backend pinning rule:
+- conformance/perf runs must set both env vars explicitly to avoid stale candidate DLL resolution.
 
 ## 3. Run Tiers
 - `quick` (PR/local):
@@ -43,7 +46,7 @@ Conformance/perf runs should emit:
 - `runs/conformance/<run-id>/summary.md`
 - `runs/conformance/<run-id>/perf.json` (when perf captured)
 
-Each report includes backend identity (engine id, DLL path/hash if available) and per-case outcomes (`pass`/`fail`/`waived`).
+Each report includes backend identity (engine id, exact DLL path, DLL hash) and per-case outcomes (`pass`/`fail`/`waived`).
 
 ## 7. Current Recalc Perf Harness
 - Binary: `cargo run -p dnavisicalc-engine --bin engine_perf_compare -- ...`
@@ -55,3 +58,15 @@ Each report includes backend identity (engine id, DLL path/hash if available) an
   - `--full-data <true|false>`
 
 This harness is intended to stress engine recalc behavior under dense formula dependency regions, while keeping API-call overhead out of the timed recalc loop.
+
+## 8. Command Baseline (backend-pinned)
+
+Rust backend:
+- `DNAVISICALC_COREENGINE=rust-core`
+- `DNAVISICALC_COREENGINE_DLL=<abs-path-to-rust-dll>`
+- `cargo test -p dnavisicalc-engine --test conformance_smoke`
+
+.NET backend:
+- `DNAVISICALC_COREENGINE=dotnet-core`
+- `DNAVISICALC_COREENGINE_DLL=<abs-path-to-dotnet-dll>`
+- `cargo test -p dnavisicalc-engine --test conformance_smoke`

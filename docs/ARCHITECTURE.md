@@ -20,9 +20,13 @@
 - Current backend set:
   - `dotnet-core`,
   - `rust-core` (when rust C API DLL is present).
+- Backend implementation roots:
+  - reference Rust C API backend crate in workspace: `crates/dnavisicalc-coreengine-rust`,
+  - spec-derived engine implementation trees: `engines/<runtime>/<implementation-id>/`.
 - Backend selection mechanism:
   - `DNAVISICALC_COREENGINE`,
   - `DNAVISICALC_COREENGINE_DLL` (explicit DLL path override).
+- Conformance/performance execution should pin both backend id and explicit DLL path to avoid stale-binary candidate resolution.
 - Keeps file/TUI crates decoupled from direct engine construction, making C-API DLL backends pluggable behind one seam.
 
 ### File Adapter (`dnavisicalc-file`)

@@ -197,7 +197,7 @@ Compatibility notes:
 ## Layers Story
 This repository keeps explicit boundaries:
 - `dnavisicalc-core`: pure calculation engine.
-- `dnavisicalc-engine`: backend boundary/loader used by Rust adapters (currently `rust-core` backend; configurable via `DNAVISICALC_COREENGINE`).
+- `dnavisicalc-engine`: backend boundary/loader used by Rust adapters (`rust-core` and `dotnet-core` backends; configurable via `DNAVISICALC_COREENGINE`, pin DLL via `DNAVISICALC_COREENGINE_DLL`).
 - `dnavisicalc-file`: serialization adapter.
 - `dnavisicalc-tui`: interaction layer + `dnavisicalc` binary.
 
@@ -209,8 +209,12 @@ No reverse dependency from core to adapters or UI.
 crates/
   dnavisicalc-core/  # formulas, dependency graph, evaluation, epochs
   dnavisicalc-engine/ # engine backend boundary + config/loader
+  dnavisicalc-coreengine-rust/ # in-workspace Rust C API backend DLL
   dnavisicalc-file/  # DVISICALC file format parser/writer
   dnavisicalc-tui/   # ratatui app, key mapping, command layer, binary
+engines/
+  rust/              # spec-derived Rust engine implementations (run outputs)
+  dotnet/            # spec-derived .NET engine implementations
 docs/
   ARCHITECTURE.md
   DYNAMIC_ARRAYS_DESIGN.md

@@ -31,6 +31,10 @@ Examples:
 - `engines/rust/coreengine-rs-01/`
 - `engines/dotnet/coreengine-net-01/`
 
+Repository reference backend note:
+- `crates/dnavisicalc-coreengine-rust/` is the in-workspace Rust reference backend used by current app crates.
+- Additional spec-derived Rust implementations still live under `engines/rust/<implementation-id>/`.
+
 ### 3.2 Run bundles
 
 Each run gets an immutable bundle directory:
@@ -48,6 +52,13 @@ Large/transient artifacts must use repo-local temp:
 - `.tmp/runs/<run-id>/`
 
 Never default to OS user temp when repo-local `.tmp/` is sufficient.
+
+### 3.4 Backend artifact roots
+
+Built engine DLL artifacts used for validation should be staged under:
+- `artifacts/coreengines/<runtime>/<implementation-id>/`
+
+Conformance/performance runs should reference this staged path explicitly rather than relying on loader candidate discovery.
 
 ## 4. Required Files Per Run
 
@@ -106,11 +117,25 @@ If tests cannot run, `validation/SUMMARY.yaml` must explicitly state why.
 - `api_boundary_exception_count`,
 - `clean_room_attested`.
 
+Cross-engine validation records must include:
+- `backend_id` (`rust-core`, `dotnet-core`, ...),
+- exact `dll_path`,
+- DLL content hash (for example SHA-256),
+- environment variable values used for backend selection.
+
 ## 8. Immutability Rules
 
 - A run bundle is immutable after close (`status: completed` or `status: blocked`).
 - Corrections are appended as a new run, not by rewriting old run artifacts.
 - Spec pack version is pinned per run and must not drift mid-run.
+
+Spec-derived implementation edit policy:
+- Treat `engines/<runtime>/<implementation-id>/` code as spec-derived artifacts.
+- Modify these implementations only through a documented run cycle:
+  - spec pack version + input prompt capture,
+  - validation evidence,
+  - handoff artifacts.
+- Direct ad-hoc edits to spec-derived implementation trees are out of doctrine.
 
 ## 9. Multi-Implementation Naming Rules
 
@@ -133,4 +158,15 @@ Use templates in:
 
 Optional scaffold helper:
 - `scripts/new_engine_run.ps1 -Runtime <rust|dotnet> -ImplementationId <id> -SpecPackVersion <date>`
+
+## 12. Backend Selection Doctrine (runtime/testing)
+
+For conformance/perf/test runs, always pin both:
+- `DNAVISICALC_COREENGINE=<backend-id>`
+- `DNAVISICALC_COREENGINE_DLL=<absolute-path-to-target-dll>`
+
+Rationale:
+- avoids stale candidate DLL pickup,
+- makes backend identity reproducible in run artifacts,
+- ensures cross-engine comparisons are against known binaries.
 
