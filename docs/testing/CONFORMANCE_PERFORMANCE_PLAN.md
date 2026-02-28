@@ -27,7 +27,7 @@ Backend pinning rule:
 
 ## 4. Initial Case Sources
 - `crates/dnavisicalc-engine/tests/conformance_smoke.rs`
-- `crates/dnavisicalc-core/tests/conformance_invariants_stub.rs` (placeholder backlog seam)
+- `crates/dnavisicalc-core/tests/conformance_invariants_stub.rs` (core registry marker only)
 - `.NET` interop/core tests under `engines/dotnet/coreengine-net-01/tests/*` for C API parity.
 
 ## 5. Performance Signature Scope (Non-Gating Initially)

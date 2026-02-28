@@ -145,6 +145,40 @@ const DVC_CONTROL_SLIDER: i32 = 0;
 const DVC_CONTROL_CHECKBOX: i32 = 1;
 const DVC_CONTROL_BUTTON: i32 = 2;
 
+const DVC_REJECT_STRUCTURAL_CONSTRAINT: i32 = 1;
+const DVC_REJECT_POLICY: i32 = 2;
+const DVC_REJECT_KIND_NONE: i32 = 0;
+const DVC_REJECT_KIND_STRUCTURAL_CONSTRAINT: i32 = 1;
+const DVC_REJECT_KIND_POLICY: i32 = 2;
+
+const DVC_STRUCT_OP_NONE: i32 = 0;
+const DVC_STRUCT_OP_INSERT_ROW: i32 = 1;
+const DVC_STRUCT_OP_DELETE_ROW: i32 = 2;
+const DVC_STRUCT_OP_INSERT_COL: i32 = 3;
+const DVC_STRUCT_OP_DELETE_COL: i32 = 4;
+
+const DVC_CHANGE_CELL_VALUE: i32 = 0;
+const DVC_CHANGE_NAME_VALUE: i32 = 1;
+const DVC_CHANGE_CHART_OUTPUT: i32 = 2;
+const DVC_CHANGE_SPILL_REGION: i32 = 3;
+const DVC_CHANGE_CELL_FORMAT: i32 = 4;
+const DVC_CHANGE_DIAGNOSTIC: i32 = 5;
+
+const DVC_DIAG_CIRCULAR_REFERENCE_DETECTED: i32 = 0;
+
+pub const STATUS_REJECT_STRUCTURAL_CONSTRAINT: i32 = DVC_REJECT_STRUCTURAL_CONSTRAINT;
+pub const STATUS_REJECT_POLICY: i32 = DVC_REJECT_POLICY;
+pub const REJECT_KIND_NONE: i32 = DVC_REJECT_KIND_NONE;
+pub const REJECT_KIND_STRUCTURAL_CONSTRAINT: i32 = DVC_REJECT_KIND_STRUCTURAL_CONSTRAINT;
+pub const REJECT_KIND_POLICY: i32 = DVC_REJECT_KIND_POLICY;
+pub const STRUCT_OP_NONE: i32 = DVC_STRUCT_OP_NONE;
+pub const STRUCT_OP_INSERT_ROW: i32 = DVC_STRUCT_OP_INSERT_ROW;
+pub const STRUCT_OP_DELETE_ROW: i32 = DVC_STRUCT_OP_DELETE_ROW;
+pub const STRUCT_OP_INSERT_COL: i32 = DVC_STRUCT_OP_INSERT_COL;
+pub const STRUCT_OP_DELETE_COL: i32 = DVC_STRUCT_OP_DELETE_COL;
+pub const CHANGE_TYPE_DIAGNOSTIC: i32 = DVC_CHANGE_DIAGNOSTIC;
+pub const DIAG_CIRCULAR_REFERENCE_DETECTED: i32 = DVC_DIAG_CIRCULAR_REFERENCE_DETECTED;
+
 #[derive(Debug, Clone)]
 pub enum EngineError {
     Address(AddressError),
@@ -190,6 +224,52 @@ impl From<AddressError> for EngineError {
     fn from(value: AddressError) -> Self {
         Self::Address(value)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastRejectContext {
+    pub reject_kind: i32,
+    pub op_kind: i32,
+    pub op_index: u16,
+    pub cell: Option<CellRef>,
+    pub range: Option<CellRange>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EngineChangeEvent {
+    CellValue {
+        cell: CellRef,
+        epoch: u64,
+    },
+    NameValue {
+        name: String,
+        epoch: u64,
+    },
+    ChartOutput {
+        name: String,
+        epoch: u64,
+    },
+    SpillRegion {
+        anchor: CellRef,
+        old_range: Option<CellRange>,
+        new_range: Option<CellRange>,
+        epoch: u64,
+    },
+    CellFormat {
+        cell: CellRef,
+        old: CellFormat,
+        new: CellFormat,
+        epoch: u64,
+    },
+    Diagnostic {
+        code: i32,
+        message: String,
+        epoch: u64,
+    },
+    Unknown {
+        change_type: i32,
+        epoch: u64,
+    },
 }
 
 type DvcEngineHandle = *mut c_void;
@@ -268,6 +348,18 @@ struct DvcChartDefRaw {
     source_range: DvcCellRange,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct DvcLastRejectContextRaw {
+    reject_kind: i32,
+    op_kind: i32,
+    op_index: u16,
+    has_cell: i32,
+    cell: DvcCellAddr,
+    has_range: i32,
+    range: DvcCellRange,
+}
+
 type FnApiVersion = unsafe extern "C" fn() -> u32;
 type FnEngineCreate = unsafe extern "C" fn(*mut DvcEngineHandle) -> i32;
 type FnEngineCreateWithBounds = unsafe extern "C" fn(DvcSheetBounds, *mut DvcEngineHandle) -> i32;
@@ -285,12 +377,15 @@ type FnEngineGetIterationConfig =
     unsafe extern "C" fn(DvcEngineHandle, *mut DvcIterationConfigRaw) -> i32;
 type FnEngineSetIterationConfig =
     unsafe extern "C" fn(DvcEngineHandle, *const DvcIterationConfigRaw) -> i32;
+type FnLastErrorKind = unsafe extern "C" fn(DvcEngineHandle, *mut i32) -> i32;
 type FnLastErrorMessage = unsafe extern "C" fn(DvcEngineHandle, *mut u8, u32, *mut u32) -> i32;
+type FnLastRejectKind = unsafe extern "C" fn(DvcEngineHandle, *mut i32) -> i32;
+type FnLastRejectContext =
+    unsafe extern "C" fn(DvcEngineHandle, *mut DvcLastRejectContextRaw) -> i32;
 
 type FnCellSetNumber = unsafe extern "C" fn(DvcEngineHandle, DvcCellAddr, f64) -> i32;
 type FnCellSetText = unsafe extern "C" fn(DvcEngineHandle, DvcCellAddr, *const u8, u32) -> i32;
-type FnCellSetFormula =
-    unsafe extern "C" fn(DvcEngineHandle, DvcCellAddr, *const u8, u32) -> i32;
+type FnCellSetFormula = unsafe extern "C" fn(DvcEngineHandle, DvcCellAddr, *const u8, u32) -> i32;
 type FnCellClear = unsafe extern "C" fn(DvcEngineHandle, DvcCellAddr) -> i32;
 type FnCellGetState = unsafe extern "C" fn(DvcEngineHandle, DvcCellAddr, *mut DvcCellState) -> i32;
 type FnCellGetText =
@@ -302,8 +397,7 @@ type FnCellErrorMessage =
     unsafe extern "C" fn(DvcEngineHandle, DvcCellAddr, *mut u8, u32, *mut u32) -> i32;
 
 type FnNameSetNumber = unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, f64) -> i32;
-type FnNameSetText =
-    unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *const u8, u32) -> i32;
+type FnNameSetText = unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *const u8, u32) -> i32;
 type FnNameSetFormula =
     unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *const u8, u32) -> i32;
 type FnNameClear = unsafe extern "C" fn(DvcEngineHandle, *const u8, u32) -> i32;
@@ -326,7 +420,8 @@ type FnDeleteRow = unsafe extern "C" fn(DvcEngineHandle, u16) -> i32;
 type FnInsertCol = unsafe extern "C" fn(DvcEngineHandle, u16) -> i32;
 type FnDeleteCol = unsafe extern "C" fn(DvcEngineHandle, u16) -> i32;
 
-type FnParseCellRef = unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *mut DvcCellAddr) -> i32;
+type FnParseCellRef =
+    unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *mut DvcCellAddr) -> i32;
 
 type FnCellIterate = unsafe extern "C" fn(DvcEngineHandle, *mut DvcIteratorHandle) -> i32;
 type FnCellIteratorNext =
@@ -335,14 +430,8 @@ type FnCellIteratorGetText = unsafe extern "C" fn(DvcIteratorHandle, *mut u8, u3
 type FnCellIteratorDestroy = unsafe extern "C" fn(DvcIteratorHandle) -> i32;
 
 type FnNameIterate = unsafe extern "C" fn(DvcEngineHandle, *mut DvcIteratorHandle) -> i32;
-type FnNameIteratorNext = unsafe extern "C" fn(
-    DvcIteratorHandle,
-    *mut u8,
-    u32,
-    *mut u32,
-    *mut i32,
-    *mut i32,
-) -> i32;
+type FnNameIteratorNext =
+    unsafe extern "C" fn(DvcIteratorHandle, *mut u8, u32, *mut u32, *mut i32, *mut i32) -> i32;
 type FnNameIteratorGetText = unsafe extern "C" fn(DvcIteratorHandle, *mut u8, u32, *mut u32) -> i32;
 type FnNameIteratorDestroy = unsafe extern "C" fn(DvcIteratorHandle) -> i32;
 
@@ -361,13 +450,8 @@ type FnControlRemove = unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *mu
 type FnControlSetValue = unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, f64) -> i32;
 type FnControlGetValue =
     unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *mut f64, *mut i32) -> i32;
-type FnControlGetDef = unsafe extern "C" fn(
-    DvcEngineHandle,
-    *const u8,
-    u32,
-    *mut DvcControlDefRaw,
-    *mut i32,
-) -> i32;
+type FnControlGetDef =
+    unsafe extern "C" fn(DvcEngineHandle, *const u8, u32, *mut DvcControlDefRaw, *mut i32) -> i32;
 type FnControlIterate = unsafe extern "C" fn(DvcEngineHandle, *mut DvcIteratorHandle) -> i32;
 type FnControlIteratorNext = unsafe extern "C" fn(
     DvcIteratorHandle,
@@ -394,6 +478,33 @@ type FnChartIteratorNext = unsafe extern "C" fn(
 ) -> i32;
 type FnChartIteratorDestroy = unsafe extern "C" fn(DvcIteratorHandle) -> i32;
 
+type FnChangeTrackingEnable = unsafe extern "C" fn(DvcEngineHandle) -> i32;
+type FnChangeTrackingDisable = unsafe extern "C" fn(DvcEngineHandle) -> i32;
+type FnChangeTrackingIsEnabled = unsafe extern "C" fn(DvcEngineHandle, *mut i32) -> i32;
+type FnChangeIterate = unsafe extern "C" fn(DvcEngineHandle, *mut DvcIteratorHandle) -> i32;
+type FnChangeIteratorNext =
+    unsafe extern "C" fn(DvcIteratorHandle, *mut i32, *mut u64, *mut i32) -> i32;
+type FnChangeGetCell = unsafe extern "C" fn(DvcIteratorHandle, *mut DvcCellAddr) -> i32;
+type FnChangeGetName = unsafe extern "C" fn(DvcIteratorHandle, *mut u8, u32, *mut u32) -> i32;
+type FnChangeGetChartName = unsafe extern "C" fn(DvcIteratorHandle, *mut u8, u32, *mut u32) -> i32;
+type FnChangeGetSpill = unsafe extern "C" fn(
+    DvcIteratorHandle,
+    *mut DvcCellAddr,
+    *mut DvcCellRange,
+    *mut i32,
+    *mut DvcCellRange,
+    *mut i32,
+) -> i32;
+type FnChangeGetFormat = unsafe extern "C" fn(
+    DvcIteratorHandle,
+    *mut DvcCellAddr,
+    *mut DvcCellFormatRaw,
+    *mut DvcCellFormatRaw,
+) -> i32;
+type FnChangeGetDiagnostic =
+    unsafe extern "C" fn(DvcIteratorHandle, *mut i32, *mut u8, u32, *mut u32) -> i32;
+type FnChangeIteratorDestroy = unsafe extern "C" fn(DvcIteratorHandle) -> i32;
+
 #[derive(Clone, Copy)]
 struct ApiFns {
     api_version: FnApiVersion,
@@ -411,7 +522,10 @@ struct ApiFns {
     tick_streams: FnTickStreams,
     engine_get_iteration_config: FnEngineGetIterationConfig,
     engine_set_iteration_config: FnEngineSetIterationConfig,
+    last_error_kind: FnLastErrorKind,
     last_error_message: FnLastErrorMessage,
+    last_reject_kind: FnLastRejectKind,
+    last_reject_context: FnLastRejectContext,
 
     cell_set_number: FnCellSetNumber,
     cell_set_text: FnCellSetText,
@@ -471,6 +585,19 @@ struct ApiFns {
     chart_iterate: FnChartIterate,
     chart_iterator_next: FnChartIteratorNext,
     chart_iterator_destroy: FnChartIteratorDestroy,
+
+    change_tracking_enable: FnChangeTrackingEnable,
+    change_tracking_disable: FnChangeTrackingDisable,
+    change_tracking_is_enabled: FnChangeTrackingIsEnabled,
+    change_iterate: FnChangeIterate,
+    change_iterator_next: FnChangeIteratorNext,
+    change_get_cell: FnChangeGetCell,
+    change_get_name: FnChangeGetName,
+    change_get_chart_name: FnChangeGetChartName,
+    change_get_spill: FnChangeGetSpill,
+    change_get_format: FnChangeGetFormat,
+    change_get_diagnostic: FnChangeGetDiagnostic,
+    change_iterator_destroy: FnChangeIteratorDestroy,
 }
 
 struct LoadedApi {
@@ -502,7 +629,10 @@ fn load_fns(lib: &Library) -> Result<ApiFns, EngineError> {
         tick_streams: load_symbol(lib, b"dvc_tick_streams\0")?,
         engine_get_iteration_config: load_symbol(lib, b"dvc_engine_get_iteration_config\0")?,
         engine_set_iteration_config: load_symbol(lib, b"dvc_engine_set_iteration_config\0")?,
+        last_error_kind: load_symbol(lib, b"dvc_last_error_kind\0")?,
         last_error_message: load_symbol(lib, b"dvc_last_error_message\0")?,
+        last_reject_kind: load_symbol(lib, b"dvc_last_reject_kind\0")?,
+        last_reject_context: load_symbol(lib, b"dvc_last_reject_context\0")?,
 
         cell_set_number: load_symbol(lib, b"dvc_cell_set_number\0")?,
         cell_set_text: load_symbol(lib, b"dvc_cell_set_text\0")?,
@@ -562,6 +692,19 @@ fn load_fns(lib: &Library) -> Result<ApiFns, EngineError> {
         chart_iterate: load_symbol(lib, b"dvc_chart_iterate\0")?,
         chart_iterator_next: load_symbol(lib, b"dvc_chart_iterator_next\0")?,
         chart_iterator_destroy: load_symbol(lib, b"dvc_chart_iterator_destroy\0")?,
+
+        change_tracking_enable: load_symbol(lib, b"dvc_change_tracking_enable\0")?,
+        change_tracking_disable: load_symbol(lib, b"dvc_change_tracking_disable\0")?,
+        change_tracking_is_enabled: load_symbol(lib, b"dvc_change_tracking_is_enabled\0")?,
+        change_iterate: load_symbol(lib, b"dvc_change_iterate\0")?,
+        change_iterator_next: load_symbol(lib, b"dvc_change_iterator_next\0")?,
+        change_get_cell: load_symbol(lib, b"dvc_change_get_cell\0")?,
+        change_get_name: load_symbol(lib, b"dvc_change_get_name\0")?,
+        change_get_chart_name: load_symbol(lib, b"dvc_change_get_chart_name\0")?,
+        change_get_spill: load_symbol(lib, b"dvc_change_get_spill\0")?,
+        change_get_format: load_symbol(lib, b"dvc_change_get_format\0")?,
+        change_get_diagnostic: load_symbol(lib, b"dvc_change_get_diagnostic\0")?,
+        change_iterator_destroy: load_symbol(lib, b"dvc_change_iterator_destroy\0")?,
     })
 }
 
@@ -915,14 +1058,212 @@ impl Engine {
 
     pub fn tick_streams(&mut self, elapsed_secs: f64) -> bool {
         let mut advanced = 0i32;
-        let status = unsafe { (self.api.fns.tick_streams)(self.handle, elapsed_secs, &mut advanced) };
+        let status =
+            unsafe { (self.api.fns.tick_streams)(self.handle, elapsed_secs, &mut advanced) };
         status == DVC_OK && advanced != 0
+    }
+
+    pub fn last_error_kind(&self) -> i32 {
+        let mut kind = DVC_OK;
+        let status = unsafe { (self.api.fns.last_error_kind)(self.handle, &mut kind) };
+        if status != DVC_OK {
+            return DVC_OK;
+        }
+        kind
+    }
+
+    pub fn last_reject_kind(&self) -> i32 {
+        let mut kind = DVC_REJECT_KIND_NONE;
+        let status = unsafe { (self.api.fns.last_reject_kind)(self.handle, &mut kind) };
+        if status != DVC_OK {
+            return DVC_REJECT_KIND_NONE;
+        }
+        kind
+    }
+
+    pub fn last_reject_context(&self) -> LastRejectContext {
+        let mut raw = DvcLastRejectContextRaw::default();
+        let status = unsafe { (self.api.fns.last_reject_context)(self.handle, &mut raw) };
+        if status != DVC_OK {
+            return LastRejectContext {
+                reject_kind: DVC_REJECT_KIND_NONE,
+                op_kind: DVC_STRUCT_OP_NONE,
+                op_index: 0,
+                cell: None,
+                range: None,
+            };
+        }
+        reject_context_from_raw(raw)
+    }
+
+    pub fn change_tracking_enable(&mut self) -> Result<(), EngineError> {
+        let status = unsafe { (self.api.fns.change_tracking_enable)(self.handle) };
+        self.status_result(status, "dvc_change_tracking_enable")
+    }
+
+    pub fn change_tracking_disable(&mut self) -> Result<(), EngineError> {
+        let status = unsafe { (self.api.fns.change_tracking_disable)(self.handle) };
+        self.status_result(status, "dvc_change_tracking_disable")
+    }
+
+    pub fn change_tracking_is_enabled(&self) -> bool {
+        let mut enabled = 0i32;
+        let status =
+            unsafe { (self.api.fns.change_tracking_is_enabled)(self.handle, &mut enabled) };
+        status == DVC_OK && enabled != 0
+    }
+
+    pub fn drain_change_events(&mut self) -> Result<Vec<EngineChangeEvent>, EngineError> {
+        let mut out: Vec<EngineChangeEvent> = Vec::new();
+        let mut iter: DvcIteratorHandle = std::ptr::null_mut();
+        let status = unsafe { (self.api.fns.change_iterate)(self.handle, &mut iter) };
+        self.status_result(status, "dvc_change_iterate")?;
+        if iter.is_null() {
+            return Ok(out);
+        }
+        let guard = IterGuard::new(iter, self.api.fns.change_iterator_destroy);
+
+        loop {
+            let mut change_type = DVC_CHANGE_CELL_VALUE;
+            let mut epoch = 0u64;
+            let mut done = 0i32;
+            let status = unsafe {
+                (self.api.fns.change_iterator_next)(
+                    guard.ptr,
+                    &mut change_type,
+                    &mut epoch,
+                    &mut done,
+                )
+            };
+            if status != DVC_OK {
+                return Err(EngineError::Api {
+                    status,
+                    op: "dvc_change_iterator_next".to_string(),
+                    message: self.read_last_error_message(),
+                });
+            }
+            if done != 0 {
+                break;
+            }
+            let event = match change_type {
+                DVC_CHANGE_CELL_VALUE => {
+                    let mut addr = DvcCellAddr::default();
+                    let status = unsafe { (self.api.fns.change_get_cell)(guard.ptr, &mut addr) };
+                    if status != DVC_OK {
+                        return Err(EngineError::Api {
+                            status,
+                            op: "dvc_change_get_cell".to_string(),
+                            message: self.read_last_error_message(),
+                        });
+                    }
+                    EngineChangeEvent::CellValue {
+                        cell: addr_to_cell(addr),
+                        epoch,
+                    }
+                }
+                DVC_CHANGE_NAME_VALUE => {
+                    let name = self.read_iter_text(
+                        "dvc_change_get_name",
+                        |buf, buf_len, out_len| unsafe {
+                            (self.api.fns.change_get_name)(guard.ptr, buf, buf_len, out_len)
+                        },
+                    )?;
+                    EngineChangeEvent::NameValue { name, epoch }
+                }
+                DVC_CHANGE_CHART_OUTPUT => {
+                    let name = self.read_iter_text(
+                        "dvc_change_get_chart_name",
+                        |buf, buf_len, out_len| unsafe {
+                            (self.api.fns.change_get_chart_name)(guard.ptr, buf, buf_len, out_len)
+                        },
+                    )?;
+                    EngineChangeEvent::ChartOutput { name, epoch }
+                }
+                DVC_CHANGE_SPILL_REGION => {
+                    let mut anchor = DvcCellAddr::default();
+                    let mut old_range = DvcCellRange::default();
+                    let mut had_old = 0i32;
+                    let mut new_range = DvcCellRange::default();
+                    let mut has_new = 0i32;
+                    let status = unsafe {
+                        (self.api.fns.change_get_spill)(
+                            guard.ptr,
+                            &mut anchor,
+                            &mut old_range,
+                            &mut had_old,
+                            &mut new_range,
+                            &mut has_new,
+                        )
+                    };
+                    if status != DVC_OK {
+                        return Err(EngineError::Api {
+                            status,
+                            op: "dvc_change_get_spill".to_string(),
+                            message: self.read_last_error_message(),
+                        });
+                    }
+                    EngineChangeEvent::SpillRegion {
+                        anchor: addr_to_cell(anchor),
+                        old_range: (had_old != 0).then(|| range_from_raw(old_range)),
+                        new_range: (has_new != 0).then(|| range_from_raw(new_range)),
+                        epoch,
+                    }
+                }
+                DVC_CHANGE_CELL_FORMAT => {
+                    let mut addr = DvcCellAddr::default();
+                    let mut old_fmt = DvcCellFormatRaw::default();
+                    let mut new_fmt = DvcCellFormatRaw::default();
+                    let status = unsafe {
+                        (self.api.fns.change_get_format)(
+                            guard.ptr,
+                            &mut addr,
+                            &mut old_fmt,
+                            &mut new_fmt,
+                        )
+                    };
+                    if status != DVC_OK {
+                        return Err(EngineError::Api {
+                            status,
+                            op: "dvc_change_get_format".to_string(),
+                            message: self.read_last_error_message(),
+                        });
+                    }
+                    EngineChangeEvent::CellFormat {
+                        cell: addr_to_cell(addr),
+                        old: format_from_raw(old_fmt),
+                        new: format_from_raw(new_fmt),
+                        epoch,
+                    }
+                }
+                DVC_CHANGE_DIAGNOSTIC => {
+                    let mut code = DVC_DIAG_CIRCULAR_REFERENCE_DETECTED;
+                    let message = self.read_iter_text(
+                        "dvc_change_get_diagnostic",
+                        |buf, buf_len, out_len| unsafe {
+                            (self.api.fns.change_get_diagnostic)(
+                                guard.ptr, &mut code, buf, buf_len, out_len,
+                            )
+                        },
+                    )?;
+                    EngineChangeEvent::Diagnostic {
+                        code,
+                        message,
+                        epoch,
+                    }
+                }
+                _ => EngineChangeEvent::Unknown { change_type, epoch },
+            };
+            out.push(event);
+        }
+
+        Ok(out)
     }
 }
 
 impl Engine {
     pub fn set_number(&mut self, cell: CellRef, number: f64) -> Result<(), EngineError> {
-        let status = unsafe { (self.api.fns.cell_set_number)(self.handle, cell_to_addr(cell), number) };
+        let status =
+            unsafe { (self.api.fns.cell_set_number)(self.handle, cell_to_addr(cell), number) };
         self.status_result(status, "dvc_cell_set_number")
     }
 
@@ -930,8 +1271,9 @@ impl Engine {
         let text = text.into();
         let bytes = text.as_bytes();
         let len = u32_len(bytes.len())?;
-        let status =
-            unsafe { (self.api.fns.cell_set_text)(self.handle, cell_to_addr(cell), bytes.as_ptr(), len) };
+        let status = unsafe {
+            (self.api.fns.cell_set_text)(self.handle, cell_to_addr(cell), bytes.as_ptr(), len)
+        };
         self.status_result(status, "dvc_cell_set_text")
     }
 
@@ -953,7 +1295,11 @@ impl Engine {
         self.set_number(self.parse_cell_ref(cell_ref)?, number)
     }
 
-    pub fn set_text_a1(&mut self, cell_ref: &str, text: impl Into<String>) -> Result<(), EngineError> {
+    pub fn set_text_a1(
+        &mut self,
+        cell_ref: &str,
+        text: impl Into<String>,
+    ) -> Result<(), EngineError> {
         self.set_text(self.parse_cell_ref(cell_ref)?, text)
     }
 
@@ -1002,7 +1348,8 @@ impl Engine {
     pub fn cell_input(&self, cell: CellRef) -> Result<Option<CellInput>, EngineError> {
         let addr = cell_to_addr(cell);
         let mut input_type = DVC_INPUT_EMPTY;
-        let status = unsafe { (self.api.fns.cell_get_input_type)(self.handle, addr, &mut input_type) };
+        let status =
+            unsafe { (self.api.fns.cell_get_input_type)(self.handle, addr, &mut input_type) };
         self.status_result(status, "dvc_cell_get_input_type")?;
         match input_type {
             DVC_INPUT_EMPTY => Ok(None),
@@ -1039,11 +1386,17 @@ impl Engine {
     pub fn set_name_number(&mut self, name: &str, value: f64) -> Result<(), EngineError> {
         let name_b = name.as_bytes();
         let name_len = u32_len(name_b.len())?;
-        let status = unsafe { (self.api.fns.name_set_number)(self.handle, name_b.as_ptr(), name_len, value) };
+        let status = unsafe {
+            (self.api.fns.name_set_number)(self.handle, name_b.as_ptr(), name_len, value)
+        };
         self.status_result(status, "dvc_name_set_number")
     }
 
-    pub fn set_name_text(&mut self, name: &str, text: impl Into<String>) -> Result<(), EngineError> {
+    pub fn set_name_text(
+        &mut self,
+        name: &str,
+        text: impl Into<String>,
+    ) -> Result<(), EngineError> {
         let text = text.into();
         let name_b = name.as_bytes();
         let text_b = text.as_bytes();
@@ -1089,8 +1442,14 @@ impl Engine {
         let name_b = name.as_bytes();
         let name_len = u32_len(name_b.len())?;
         let mut input_type = DVC_INPUT_EMPTY;
-        let status =
-            unsafe { (self.api.fns.name_get_input_type)(self.handle, name_b.as_ptr(), name_len, &mut input_type) };
+        let status = unsafe {
+            (self.api.fns.name_get_input_type)(
+                self.handle,
+                name_b.as_ptr(),
+                name_len,
+                &mut input_type,
+            )
+        };
         self.status_result(status, "dvc_name_get_input_type")?;
         match input_type {
             DVC_INPUT_EMPTY => Ok(None),
@@ -1102,8 +1461,12 @@ impl Engine {
                     .map_err(|_| EngineError::InvalidNumber(text.clone()))?;
                 Ok(Some(NameInput::Number(number)))
             }
-            DVC_INPUT_TEXT => Ok(Some(NameInput::Text(self.read_name_input_text(name_b, name_len)?))),
-            DVC_INPUT_FORMULA => Ok(Some(NameInput::Formula(self.read_name_input_text(name_b, name_len)?))),
+            DVC_INPUT_TEXT => Ok(Some(NameInput::Text(
+                self.read_name_input_text(name_b, name_len)?,
+            ))),
+            DVC_INPUT_FORMULA => Ok(Some(NameInput::Formula(
+                self.read_name_input_text(name_b, name_len)?,
+            ))),
             _ => Err(EngineError::Api {
                 status: -8,
                 op: "dvc_name_get_input_type".to_string(),
@@ -1124,7 +1487,8 @@ impl Engine {
 impl Engine {
     pub fn cell_format(&self, cell: CellRef) -> Result<CellFormat, EngineError> {
         let mut raw = DvcCellFormatRaw::default();
-        let status = unsafe { (self.api.fns.cell_get_format)(self.handle, cell_to_addr(cell), &mut raw) };
+        let status =
+            unsafe { (self.api.fns.cell_get_format)(self.handle, cell_to_addr(cell), &mut raw) };
         self.status_result(status, "dvc_cell_get_format")?;
         Ok(format_from_raw(raw))
     }
@@ -1133,13 +1497,22 @@ impl Engine {
         self.cell_format(self.parse_cell_ref(cell_ref)?)
     }
 
-    pub fn set_cell_format(&mut self, cell: CellRef, format: CellFormat) -> Result<(), EngineError> {
+    pub fn set_cell_format(
+        &mut self,
+        cell: CellRef,
+        format: CellFormat,
+    ) -> Result<(), EngineError> {
         let raw = format_to_raw(&format);
-        let status = unsafe { (self.api.fns.cell_set_format)(self.handle, cell_to_addr(cell), &raw) };
+        let status =
+            unsafe { (self.api.fns.cell_set_format)(self.handle, cell_to_addr(cell), &raw) };
         self.status_result(status, "dvc_cell_set_format")
     }
 
-    pub fn set_cell_format_a1(&mut self, cell_ref: &str, format: CellFormat) -> Result<(), EngineError> {
+    pub fn set_cell_format_a1(
+        &mut self,
+        cell_ref: &str,
+        format: CellFormat,
+    ) -> Result<(), EngineError> {
         self.set_cell_format(self.parse_cell_ref(cell_ref)?, format)
     }
 
@@ -1147,7 +1520,12 @@ impl Engine {
         let mut anchor = DvcCellAddr::default();
         let mut found = 0i32;
         let status = unsafe {
-            (self.api.fns.cell_spill_anchor)(self.handle, cell_to_addr(cell), &mut anchor, &mut found)
+            (self.api.fns.cell_spill_anchor)(
+                self.handle,
+                cell_to_addr(cell),
+                &mut anchor,
+                &mut found,
+            )
         };
         self.status_result(status, "dvc_cell_spill_anchor")?;
         Ok((found != 0).then(|| addr_to_cell(anchor)))
@@ -1182,9 +1560,12 @@ impl Engine {
             if status != DVC_OK || done != 0 {
                 break;
             }
-            let text = self.read_iter_text("dvc_cell_iterator_get_text", |buf, buf_len, out_len| unsafe {
-                (self.api.fns.cell_iterator_get_text)(guard.ptr, buf, buf_len, out_len)
-            });
+            let text = self.read_iter_text(
+                "dvc_cell_iterator_get_text",
+                |buf, buf_len, out_len| unsafe {
+                    (self.api.fns.cell_iterator_get_text)(guard.ptr, buf, buf_len, out_len)
+                },
+            );
             let Ok(text) = text else { continue };
             let input = match input_type {
                 DVC_INPUT_NUMBER => match text.trim().parse::<f64>() {
@@ -1212,23 +1593,27 @@ impl Engine {
         loop {
             let mut input_type = DVC_INPUT_EMPTY;
             let mut done = 0i32;
-            let name = self.read_iter_text("dvc_name_iterator_next", |buf, buf_len, out_len| unsafe {
-                (self.api.fns.name_iterator_next)(
-                    guard.ptr,
-                    buf,
-                    buf_len,
-                    out_len,
-                    &mut input_type,
-                    &mut done,
-                )
-            });
+            let name =
+                self.read_iter_text("dvc_name_iterator_next", |buf, buf_len, out_len| unsafe {
+                    (self.api.fns.name_iterator_next)(
+                        guard.ptr,
+                        buf,
+                        buf_len,
+                        out_len,
+                        &mut input_type,
+                        &mut done,
+                    )
+                });
             let Ok(name) = name else { break };
             if done != 0 {
                 break;
             }
-            let text = self.read_iter_text("dvc_name_iterator_get_text", |buf, buf_len, out_len| unsafe {
-                (self.api.fns.name_iterator_get_text)(guard.ptr, buf, buf_len, out_len)
-            });
+            let text = self.read_iter_text(
+                "dvc_name_iterator_get_text",
+                |buf, buf_len, out_len| unsafe {
+                    (self.api.fns.name_iterator_get_text)(guard.ptr, buf, buf_len, out_len)
+                },
+            );
             let Ok(text) = text else { continue };
             let input = match input_type {
                 DVC_INPUT_NUMBER => match text.trim().parse::<f64>() {
@@ -1289,11 +1674,16 @@ impl Engine {
 }
 
 impl Engine {
-    pub fn define_control(&mut self, name: &str, def: ControlDefinition) -> Result<(), EngineError> {
+    pub fn define_control(
+        &mut self,
+        name: &str,
+        def: ControlDefinition,
+    ) -> Result<(), EngineError> {
         let raw = control_def_to_raw(def);
         let name_b = name.as_bytes();
         let name_len = u32_len(name_b.len())?;
-        let status = unsafe { (self.api.fns.control_define)(self.handle, name_b.as_ptr(), name_len, &raw) };
+        let status =
+            unsafe { (self.api.fns.control_define)(self.handle, name_b.as_ptr(), name_len, &raw) };
         self.status_result(status, "dvc_control_define")
     }
 
@@ -1303,16 +1693,18 @@ impl Engine {
             return false;
         };
         let mut found = 0i32;
-        let status =
-            unsafe { (self.api.fns.control_remove)(self.handle, name_b.as_ptr(), name_len, &mut found) };
+        let status = unsafe {
+            (self.api.fns.control_remove)(self.handle, name_b.as_ptr(), name_len, &mut found)
+        };
         status == DVC_OK && found != 0
     }
 
     pub fn set_control_value(&mut self, name: &str, value: f64) -> Result<(), EngineError> {
         let name_b = name.as_bytes();
         let name_len = u32_len(name_b.len())?;
-        let status =
-            unsafe { (self.api.fns.control_set_value)(self.handle, name_b.as_ptr(), name_len, value) };
+        let status = unsafe {
+            (self.api.fns.control_set_value)(self.handle, name_b.as_ptr(), name_len, value)
+        };
         self.status_result(status, "dvc_control_set_value")
     }
 
@@ -1324,7 +1716,13 @@ impl Engine {
         let mut value = 0.0;
         let mut found = 0i32;
         let status = unsafe {
-            (self.api.fns.control_get_value)(self.handle, name_b.as_ptr(), name_len, &mut value, &mut found)
+            (self.api.fns.control_get_value)(
+                self.handle,
+                name_b.as_ptr(),
+                name_len,
+                &mut value,
+                &mut found,
+            )
         };
         (status == DVC_OK && found != 0).then_some(value)
     }
@@ -1337,7 +1735,13 @@ impl Engine {
         let mut raw = DvcControlDefRaw::default();
         let mut found = 0i32;
         let status = unsafe {
-            (self.api.fns.control_get_def)(self.handle, name_b.as_ptr(), name_len, &mut raw, &mut found)
+            (self.api.fns.control_get_def)(
+                self.handle,
+                name_b.as_ptr(),
+                name_len,
+                &mut raw,
+                &mut found,
+            )
         };
         (status == DVC_OK && found != 0).then_some(control_def_from_raw(raw))
     }
@@ -1354,18 +1758,14 @@ impl Engine {
             let mut def = DvcControlDefRaw::default();
             let mut value = 0.0;
             let mut done = 0i32;
-            let name =
-                self.read_iter_text("dvc_control_iterator_next", |buf, buf_len, out_len| unsafe {
+            let name = self.read_iter_text(
+                "dvc_control_iterator_next",
+                |buf, buf_len, out_len| unsafe {
                     (self.api.fns.control_iterator_next)(
-                        guard.ptr,
-                        buf,
-                        buf_len,
-                        out_len,
-                        &mut def,
-                        &mut value,
-                        &mut done,
+                        guard.ptr, buf, buf_len, out_len, &mut def, &mut value, &mut done,
                     )
-                });
+                },
+            );
             let Ok(name) = name else { break };
             if done != 0 {
                 break;
@@ -1381,7 +1781,8 @@ impl Engine {
         };
         let name_b = name.as_bytes();
         let name_len = u32_len(name_b.len())?;
-        let status = unsafe { (self.api.fns.chart_define)(self.handle, name_b.as_ptr(), name_len, &raw) };
+        let status =
+            unsafe { (self.api.fns.chart_define)(self.handle, name_b.as_ptr(), name_len, &raw) };
         self.status_result(status, "dvc_chart_define")
     }
 
@@ -1391,8 +1792,9 @@ impl Engine {
             return false;
         };
         let mut found = 0i32;
-        let status =
-            unsafe { (self.api.fns.chart_remove)(self.handle, name_b.as_ptr(), name_len, &mut found) };
+        let status = unsafe {
+            (self.api.fns.chart_remove)(self.handle, name_b.as_ptr(), name_len, &mut found)
+        };
         status == DVC_OK && found != 0
     }
 
@@ -1407,16 +1809,12 @@ impl Engine {
         loop {
             let mut raw = DvcChartDefRaw::default();
             let mut done = 0i32;
-            let name = self.read_iter_text("dvc_chart_iterator_next", |buf, buf_len, out_len| unsafe {
-                (self.api.fns.chart_iterator_next)(
-                    guard.ptr,
-                    buf,
-                    buf_len,
-                    out_len,
-                    &mut raw,
-                    &mut done,
-                )
-            });
+            let name =
+                self.read_iter_text("dvc_chart_iterator_next", |buf, buf_len, out_len| unsafe {
+                    (self.api.fns.chart_iterator_next)(
+                        guard.ptr, buf, buf_len, out_len, &mut raw, &mut done,
+                    )
+                });
             let Ok(name) = name else { break };
             if done != 0 {
                 break;
@@ -1435,7 +1833,8 @@ impl Engine {
         let bytes = a1.as_bytes();
         let len = u32_len(bytes.len())?;
         let mut addr = DvcCellAddr::default();
-        let status = unsafe { (self.api.fns.parse_cell_ref)(self.handle, bytes.as_ptr(), len, &mut addr) };
+        let status =
+            unsafe { (self.api.fns.parse_cell_ref)(self.handle, bytes.as_ptr(), len, &mut addr) };
         if status != DVC_OK {
             return Err(EngineError::InvalidCellRef(a1.to_string()));
         }
@@ -1509,10 +1908,15 @@ impl Engine {
         if status == DVC_OK {
             return Ok(());
         }
+        let message = if status < 0 {
+            self.read_last_error_message()
+        } else {
+            String::new()
+        };
         Err(EngineError::Api {
             status,
             op: op.to_string(),
-            message: self.read_last_error_message(),
+            message,
         })
     }
 
@@ -1530,7 +1934,10 @@ struct IterGuard {
 }
 
 impl IterGuard {
-    fn new(ptr: DvcIteratorHandle, destroy: unsafe extern "C" fn(DvcIteratorHandle) -> i32) -> Self {
+    fn new(
+        ptr: DvcIteratorHandle,
+        destroy: unsafe extern "C" fn(DvcIteratorHandle) -> i32,
+    ) -> Self {
         Self { ptr, destroy }
     }
 }
@@ -1570,6 +1977,16 @@ fn range_to_raw(range: CellRange) -> DvcCellRange {
 
 fn range_from_raw(range: DvcCellRange) -> CellRange {
     CellRange::new(addr_to_cell(range.start), addr_to_cell(range.end))
+}
+
+fn reject_context_from_raw(raw: DvcLastRejectContextRaw) -> LastRejectContext {
+    LastRejectContext {
+        reject_kind: raw.reject_kind,
+        op_kind: raw.op_kind,
+        op_index: raw.op_index,
+        cell: (raw.has_cell != 0).then(|| addr_to_cell(raw.cell)),
+        range: (raw.has_range != 0).then(|| range_from_raw(raw.range)),
+    }
 }
 
 fn sheet_bounds_to_raw(bounds: SheetBounds) -> DvcSheetBounds {

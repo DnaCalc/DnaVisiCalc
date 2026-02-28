@@ -1,5 +1,8 @@
 use dnavisicalc_engine::{
-    CellRange, CellRef, CellState, ChartDefinition, ControlDefinition, Engine, RecalcMode, Value,
+    CellRange, CellRef, CellState, ChartDefinition, ControlDefinition,
+    DIAG_CIRCULAR_REFERENCE_DETECTED, Engine, EngineChangeEvent, IterationConfig, REJECT_KIND_NONE,
+    REJECT_KIND_STRUCTURAL_CONSTRAINT, RecalcMode, STATUS_REJECT_POLICY,
+    STATUS_REJECT_STRUCTURAL_CONSTRAINT, STRUCT_OP_INSERT_ROW, Value,
 };
 
 fn assert_epoch_ordering(engine: &Engine) {
@@ -86,6 +89,13 @@ fn run_det_script() -> (
     (states, inputs)
 }
 
+fn state_number(state: &CellState) -> f64 {
+    match state.value {
+        Value::Number(value) => value,
+        ref other => panic!("expected numeric value, got {other:?}"),
+    }
+}
+
 #[test]
 fn ct_det_001_replay_determinism_smoke() {
     let (left_states, left_inputs) = run_det_script();
@@ -129,6 +139,225 @@ fn ct_temporal_001_manual_recalc_eventually_stabilizes() {
         after.value_epoch >= before.value_epoch,
         "TEMP-RECALC-001 violated: value_epoch regressed"
     );
+}
+
+#[test]
+fn ct_str_001_rejected_structural_op_is_atomic_noop() {
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(3,1)")
+        .expect("set spill formula");
+    engine.recalculate().expect("initial recalc");
+
+    let before_epoch = engine.committed_epoch();
+    let before_a1 = engine.cell_input_a1("A1").expect("A1 before");
+    let before_spill = engine
+        .spill_range_for_cell(CellRef::from_a1("A1").expect("A1"))
+        .expect("spill range before");
+
+    let result = engine.insert_row(2);
+    let status = match result {
+        Ok(()) => panic!("insert_row(2) should be rejected for active spill boundary"),
+        Err(dnavisicalc_engine::EngineError::Api { status, .. }) => status,
+        Err(other) => panic!("unexpected insert_row error: {other}"),
+    };
+    let reject_ctx = engine.last_reject_context();
+
+    assert!(
+        status == STATUS_REJECT_STRUCTURAL_CONSTRAINT || status == STATUS_REJECT_POLICY,
+        "expected reject status, got {status}"
+    );
+    assert_eq!(
+        engine.committed_epoch(),
+        before_epoch,
+        "INV-STR-001 violated: rejected structural op changed committed_epoch"
+    );
+    assert_eq!(
+        engine.cell_input_a1("A1").expect("A1 after"),
+        before_a1,
+        "INV-STR-001 violated: rejected structural op changed inputs"
+    );
+    assert_eq!(
+        engine
+            .spill_range_for_cell(CellRef::from_a1("A1").expect("A1"))
+            .expect("spill range after"),
+        before_spill,
+        "INV-STR-001 violated: rejected structural op changed spill range"
+    );
+
+    assert_eq!(
+        reject_ctx.reject_kind, REJECT_KIND_STRUCTURAL_CONSTRAINT,
+        "INV-STR-001 violated: reject context kind mismatch"
+    );
+    assert_eq!(
+        reject_ctx.op_kind, STRUCT_OP_INSERT_ROW,
+        "INV-STR-001 violated: reject op kind mismatch"
+    );
+    assert_eq!(
+        reject_ctx.op_index, 2,
+        "INV-STR-001 violated: reject op index mismatch"
+    );
+}
+
+#[test]
+fn ct_cycle_001_non_iterative_cycle_is_nonfatal_and_diagnostic() {
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine.set_iteration_config(IterationConfig {
+        enabled: false,
+        max_iterations: 64,
+        convergence_tolerance: 0.000_001,
+    });
+    engine
+        .change_tracking_enable()
+        .expect("enable change tracking");
+
+    engine.set_formula_a1("A1", "=B1+1").expect("set A1");
+    engine.set_formula_a1("B1", "=A1+1").expect("set B1");
+    engine.recalculate().expect("non-iterative recalc");
+
+    let a1 = engine.cell_state_a1("A1").expect("A1");
+    let b1 = engine.cell_state_a1("B1").expect("B1");
+    assert!(
+        matches!(a1.value, Value::Number(_)),
+        "INV-CYCLE-001 violated: A1 should be non-fatal numeric fallback"
+    );
+    assert!(
+        matches!(b1.value, Value::Number(_)),
+        "INV-CYCLE-001 violated: B1 should be non-fatal numeric fallback"
+    );
+
+    let changes = engine.drain_change_events().expect("drain changes");
+    let diag_count = changes
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry,
+                EngineChangeEvent::Diagnostic { code, .. }
+                    if *code == DIAG_CIRCULAR_REFERENCE_DETECTED
+            )
+        })
+        .count();
+    assert!(
+        diag_count > 0,
+        "INV-CYCLE-001 violated: expected at least one cycle diagnostic entry"
+    );
+}
+
+#[test]
+fn ct_temp_stream_001_without_ticks_stream_does_not_advance() {
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine
+        .set_formula_a1("A1", "=STREAM(1)")
+        .expect("set stream");
+    engine.recalculate().expect("initial recalc");
+
+    let initial = state_number(&engine.cell_state_a1("A1").expect("A1 initial"));
+    for _ in 0..4 {
+        engine.recalculate().expect("recalc without tick");
+        let current = state_number(&engine.cell_state_a1("A1").expect("A1 current"));
+        assert_eq!(
+            current, initial,
+            "TEMP-STREAM-001 violated: stream advanced without tick_streams"
+        );
+    }
+}
+
+#[test]
+fn ct_temp_stream_002_tick_advances_stream_after_recalc() {
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine
+        .set_formula_a1("A1", "=STREAM(1)")
+        .expect("set stream");
+    engine.recalculate().expect("initial recalc");
+
+    let before_tick = state_number(&engine.cell_state_a1("A1").expect("A1 before tick"));
+    assert!(
+        engine.tick_streams(1.2),
+        "tick_streams should advance stream"
+    );
+    let before_recalc = state_number(&engine.cell_state_a1("A1").expect("A1 before recalc"));
+    assert_eq!(
+        before_recalc, before_tick,
+        "TEMP-STREAM-002 violated: manual mode should not apply tick until recalc"
+    );
+
+    engine.recalculate().expect("recalc after tick");
+    let after_recalc = state_number(&engine.cell_state_a1("A1").expect("A1 after recalc"));
+    assert!(
+        after_recalc > before_tick,
+        "TEMP-STREAM-002 violated: stream value did not advance after tick + recalc"
+    );
+}
+
+#[test]
+fn ct_temp_reject_001_rejected_structural_call_has_no_observable_mutation() {
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine
+        .change_tracking_enable()
+        .expect("enable change tracking");
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(3,1)")
+        .expect("set spill formula");
+    engine.recalculate().expect("initial recalc");
+    let _ = engine
+        .drain_change_events()
+        .expect("drain baseline changes");
+
+    let before_epoch = engine.committed_epoch();
+    let before_b1 = engine.cell_state_a1("B1").expect("B1 before");
+    let reject = engine.insert_row(2);
+    assert!(reject.is_err(), "expected rejected structural op");
+
+    let after_epoch = engine.committed_epoch();
+    let after_b1 = engine.cell_state_a1("B1").expect("B1 after");
+    let changes = engine.drain_change_events().expect("drain changes");
+
+    assert_eq!(
+        before_epoch, after_epoch,
+        "TEMP-REJECT-001 violated: rejected call changed epoch"
+    );
+    assert_eq!(
+        before_b1, after_b1,
+        "TEMP-REJECT-001 violated: rejected call changed unrelated cell state"
+    );
+    assert!(
+        changes.is_empty(),
+        "TEMP-REJECT-001 violated: rejected call emitted change entries"
+    );
+}
+
+#[test]
+fn ct_temp_vol_001_volatile_formula_does_not_self_tick() {
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+    engine.set_formula_a1("A1", "=RAND()").expect("set RAND");
+    engine.recalculate().expect("initial recalc");
+
+    let baseline = state_number(&engine.cell_state_a1("A1").expect("A1 baseline"));
+    for _ in 0..8 {
+        let state = engine.cell_state_a1("A1").expect("A1 reread");
+        let current = state_number(&state);
+        assert_eq!(
+            current, baseline,
+            "TEMP-VOL-001 violated: volatile cell changed without explicit trigger"
+        );
+        assert_eq!(
+            engine.last_reject_kind(),
+            REJECT_KIND_NONE,
+            "unexpected reject kind while idle"
+        );
+        assert_eq!(
+            engine.last_error_kind(),
+            0,
+            "unexpected non-ok error kind while idle"
+        );
+    }
+    engine.recalculate().expect("explicit recalc trigger");
 }
 
 #[test]

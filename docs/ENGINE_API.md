@@ -1253,6 +1253,7 @@ DvcStatus dvc_last_reject_kind(const DvcEngine *engine, DvcRejectKind *out);
 
 Retrieve the most recent reject reason class for this handle.
 - `DVC_REJECT_KIND_NONE` means no reject is currently recorded.
+- Host guidance: reject kind is also present in `dvc_last_reject_context` (`out->reject_kind`), so hosts that need atomic reject detail retrieval should prefer `dvc_last_reject_context`.
 
 ### dvc_last_reject_context
 
@@ -1263,6 +1264,7 @@ DvcStatus dvc_last_reject_context(const DvcEngine *engine,
 
 Retrieve structured context for the most recent reject on this handle (operation kind/index and optional cell/range payload).
 - If no reject is recorded, `out->reject_kind` is `DVC_REJECT_KIND_NONE`.
+- Host guidance: this is the preferred single-call machine-readable reject surface because it includes both reject kind and operation context.
 
 ### dvc_cell_error_message
 
@@ -1329,12 +1331,17 @@ No global mutable state exists. No global initialization function is required.
 Each `DvcEngine` handle maintains internal last-status diagnostics:
 - `last_error_message` and `last_error_kind` for negative (`DVC_ERR_*`) outcomes.
 - `last_reject_kind` and `last_reject_context` for positive (`DVC_REJECT_*`) outcomes.
-- These diagnostics are handle-local (not thread-local) and valid until the next API call on the same handle.
+- These diagnostics are handle-local (not thread-local) and are ephemeral.
 
 Update rules:
-- On `DVC_OK`: clear error and reject diagnostics.
+- On `DVC_OK`: implementations may clear/overwrite previously recorded diagnostics.
 - On `DVC_REJECT_*`: set reject diagnostics, clear error diagnostics.
 - On `DVC_ERR_*`: set error diagnostics, clear reject diagnostics.
+
+Compatibility guidance:
+- Hosts should query needed `last_*` diagnostics immediately after the triggering call.
+- Hosts must not assume that calling one `dvc_last_*` accessor preserves another `dvc_last_*` slot for subsequent reads.
+- For reject outcomes, prefer `dvc_last_reject_context` as the primary machine-readable payload (`reject_kind`, operation kind/index, and optional cell/range context).
 
 `dvc_last_error_message` provides human-readable detail; `dvc_last_error_kind`/`dvc_last_reject_kind`/`dvc_last_reject_context` provide machine-readable detail.
 

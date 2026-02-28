@@ -291,6 +291,11 @@ Mutation APIs distinguish:
 - valid-but-rejected outcomes (constraint/policy),
 - invalid/error outcomes.
 
+### REQ-ERR-004: Last-Status Diagnostics Retrieval
+Engine exposes handle-local last-status diagnostics for error and reject outcomes.
+Because these diagnostics are ephemeral across subsequent API calls, hosts must retrieve required details immediately after the triggering call.
+For reject outcomes, a single-call structured reject context surface (including reject kind and operation context) is required.
+
 ## 14. API-Visible Invariant Set (REQ-INVSET)
 
 ### REQ-INVSET-001: Invariant Registry

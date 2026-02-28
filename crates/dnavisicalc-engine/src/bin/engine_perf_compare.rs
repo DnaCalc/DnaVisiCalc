@@ -86,9 +86,7 @@ fn main() {
     let _ = writeln!(
         lines,
         "Engine recalc benchmark (63x254 bounds), iterations={iterations}, full_data={}, formula_region={}x{}",
-        workload.fill_full_grid_with_data,
-        workload.formula_cols,
-        workload.formula_rows
+        workload.fill_full_grid_with_data, workload.formula_cols, workload.formula_rows
     );
     let _ = writeln!(
         lines,

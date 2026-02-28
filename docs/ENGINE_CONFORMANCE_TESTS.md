@@ -94,5 +94,5 @@ Temporal property semantics are defined in `docs/ENGINE_FORMAL_PROPERTIES.md`.
 ## 7. Initial Implemented Coverage
 - Current executable conformance smoke tests:
   - `crates/dnavisicalc-engine/tests/conformance_smoke.rs`
-- Legacy placeholder scaffolding retained for expansion tracking:
-  - `crates/dnavisicalc-core/tests/conformance_invariants_stub.rs`
+- Core-side registry marker only:
+  - `crates/dnavisicalc-core/tests/conformance_invariants_stub.rs` (no ignored `CT-*` backlog tests)
