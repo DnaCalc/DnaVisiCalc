@@ -302,6 +302,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dnavisicalc-coreengine-rust"
+version = "0.3.0"
+dependencies = [
+ "dnavisicalc-core",
+]
+
+[[package]]
 name = "dnavisicalc-engine"
 version = "0.3.0"
 dependencies = [

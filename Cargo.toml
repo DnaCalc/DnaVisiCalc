@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/dnavisicalc-core",
+    "crates/dnavisicalc-coreengine-rust",
     "crates/dnavisicalc-engine",
     "crates/dnavisicalc-file",
     "crates/dnavisicalc-tui",

@@ -630,6 +630,14 @@ fn default_candidates(coreengine: CoreEngineId) -> Vec<PathBuf> {
         CoreEngineId::RustCore => {
             add_name(&mut candidates, "dnavisicalc_coreengine_rust.dll");
             add_name(&mut candidates, "dnavisicalc_coreengine.dll");
+            add_relative(
+                &mut candidates,
+                "target/debug/dnavisicalc_coreengine_rust.dll",
+            );
+            add_relative(
+                &mut candidates,
+                "target/release/dnavisicalc_coreengine_rust.dll",
+            );
         }
     }
 
