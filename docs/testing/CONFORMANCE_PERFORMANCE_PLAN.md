@@ -44,3 +44,14 @@ Conformance/perf runs should emit:
 - `runs/conformance/<run-id>/perf.json` (when perf captured)
 
 Each report includes backend identity (engine id, DLL path/hash if available) and per-case outcomes (`pass`/`fail`/`waived`).
+
+## 7. Current Recalc Perf Harness
+- Binary: `cargo run -p dnavisicalc-engine --bin engine_perf_compare -- ...`
+- Output artifact example: `.tmp/perf/engine_recalc_compare_latest.txt`
+- Key knobs:
+  - `--iterations <n>`
+  - `--formula-cols <n>`
+  - `--formula-rows <n>`
+  - `--full-data <true|false>`
+
+This harness is intended to stress engine recalc behavior under dense formula dependency regions, while keeping API-call overhead out of the timed recalc loop.
