@@ -2,11 +2,15 @@ use std::ffi::c_void;
 use std::ptr;
 
 use dnavisicalc_core::{
-    AddressError, CellError, CellFormat, CellInput, CellRange, CellRef, CellState, Engine,
-    EngineError, IterationConfig, NameInput, PaletteColor, RecalcMode, SheetBounds, Value,
+    AddressError, CellError, CellFormat, CellInput, CellRange, CellRef, CellState, ChangeEntry,
+    ChartDefinition, ChartOutput, ControlDefinition, ControlKind, DiagnosticCode, Engine,
+    EngineError, IterationConfig, NameInput, PaletteColor, RecalcMode, SheetBounds, UdfHandler,
+    Value, Volatility,
 };
 
 const DVC_OK: i32 = 0;
+const DVC_REJECT_STRUCTURAL_CONSTRAINT: i32 = 1;
+const DVC_REJECT_POLICY: i32 = 2;
 
 const DVC_ERR_NULL_POINTER: i32 = -1;
 const DVC_ERR_OUT_OF_BOUNDS: i32 = -2;
@@ -15,7 +19,6 @@ const DVC_ERR_PARSE: i32 = -4;
 const DVC_ERR_DEPENDENCY: i32 = -5;
 const DVC_ERR_INVALID_NAME: i32 = -6;
 const DVC_ERR_INVALID_ARGUMENT: i32 = -8;
-const DVC_ERR_UNSUPPORTED: i32 = DVC_ERR_INVALID_ARGUMENT;
 
 const DVC_VALUE_NUMBER: i32 = 0;
 const DVC_VALUE_TEXT: i32 = 1;
@@ -42,14 +45,49 @@ const DVC_INPUT_NUMBER: i32 = 1;
 const DVC_INPUT_TEXT: i32 = 2;
 const DVC_INPUT_FORMULA: i32 = 3;
 
+const DVC_SPILL_NONE: i32 = 0;
+const DVC_SPILL_ANCHOR: i32 = 1;
+const DVC_SPILL_MEMBER: i32 = 2;
+
 const DVC_PALETTE_NONE: i32 = -1;
 
 const DVC_CONTROL_SLIDER: i32 = 0;
+const DVC_CONTROL_CHECKBOX: i32 = 1;
+const DVC_CONTROL_BUTTON: i32 = 2;
+
+const DVC_VOLATILITY_STANDARD: i32 = 0;
+const DVC_VOLATILITY_VOLATILE: i32 = 1;
+const DVC_VOLATILITY_EXTERNALLY_INVALIDATED: i32 = 2;
+
+const DVC_CHANGE_CELL_VALUE: i32 = 0;
+const DVC_CHANGE_NAME_VALUE: i32 = 1;
+const DVC_CHANGE_CHART_OUTPUT: i32 = 2;
+const DVC_CHANGE_SPILL_REGION: i32 = 3;
+const DVC_CHANGE_CELL_FORMAT: i32 = 4;
+const DVC_CHANGE_DIAGNOSTIC: i32 = 5;
+
+const DVC_DIAG_CIRCULAR_REFERENCE_DETECTED: i32 = 0;
+
+const DVC_STRUCT_OP_INSERT_ROW: i32 = 1;
+const DVC_STRUCT_OP_DELETE_ROW: i32 = 2;
+const DVC_STRUCT_OP_INSERT_COL: i32 = 3;
+const DVC_STRUCT_OP_DELETE_COL: i32 = 4;
+
+const DVC_REJECT_KIND_NONE: i32 = 0;
+const DVC_REJECT_KIND_STRUCTURAL_CONSTRAINT: i32 = 1;
+const DVC_REJECT_KIND_POLICY: i32 = 2;
 
 const DVC_API_VERSION_PACKED: u32 = (0u32 << 16) | (1u32 << 8);
 
 type DvcEngineHandle = *mut c_void;
 type DvcIteratorHandle = *mut c_void;
+type DvcChartOutputHandle = *mut c_void;
+type DvcUdfCallback = unsafe extern "C" fn(
+    user_data: *mut c_void,
+    args: *const DvcCellValue,
+    arg_count: u32,
+    out: *mut DvcCellValue,
+) -> i32;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -124,18 +162,127 @@ pub struct DvcChartDefRaw {
     source_range: DvcCellRange,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DvcLastRejectContextRaw {
+    reject_kind: i32,
+    op_kind: i32,
+    op_index: u16,
+    has_cell: i32,
+    cell: DvcCellAddr,
+    has_range: i32,
+    range: DvcCellRange,
+}
+
+struct CApiUdf {
+    callback: DvcUdfCallback,
+    user_data: *mut c_void,
+    volatility: Volatility,
+}
+
+impl std::fmt::Debug for CApiUdf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CApiUdf(<callback>)")
+    }
+}
+
+impl UdfHandler for CApiUdf {
+    fn call(&self, args: &[Value]) -> Value {
+        let mut raw_args = Vec::with_capacity(args.len());
+        for value in args {
+            raw_args.push(udf_value_to_raw(value));
+        }
+        let mut out = DvcCellValue::default();
+        let arg_ptr = if raw_args.is_empty() {
+            std::ptr::null()
+        } else {
+            raw_args.as_ptr()
+        };
+        // SAFETY: The callback/user_data pair is provided by the embedding host.
+        let status = unsafe {
+            (self.callback)(
+                self.user_data,
+                arg_ptr,
+                raw_args.len() as u32,
+                std::ptr::addr_of_mut!(out),
+            )
+        };
+        if status != DVC_OK {
+            return Value::Error(CellError::Value(format!(
+                "udf callback failed with status {status}"
+            )));
+        }
+        udf_value_from_raw(out)
+    }
+
+    fn volatility(&self) -> Volatility {
+        self.volatility
+    }
+}
+
+struct ChartOutputHandle {
+    output: ChartOutput,
+}
+
 struct EngineHandle {
     engine: Engine,
     last_error: String,
+    last_error_kind: i32,
+    last_reject_kind: i32,
+    last_reject_context: DvcLastRejectContextRaw,
+    chart_output_handles: Vec<*mut ChartOutputHandle>,
 }
 
 impl EngineHandle {
-    fn clear_error(&mut self) {
+    fn mark_ok(&mut self) {
         self.last_error.clear();
+        self.last_error_kind = DVC_OK;
+        self.last_reject_kind = DVC_REJECT_KIND_NONE;
+        self.last_reject_context = DvcLastRejectContextRaw::default();
+    }
+
+    fn mark_error(&mut self, status: i32, message: impl Into<String>) {
+        self.last_error = message.into();
+        self.last_error_kind = status;
+        self.last_reject_kind = DVC_REJECT_KIND_NONE;
+        self.last_reject_context = DvcLastRejectContextRaw::default();
+    }
+
+    fn mark_reject(&mut self, reject_status: i32, reject_context: DvcLastRejectContextRaw) {
+        let reject_kind = match reject_status {
+            DVC_REJECT_STRUCTURAL_CONSTRAINT => DVC_REJECT_KIND_STRUCTURAL_CONSTRAINT,
+            DVC_REJECT_POLICY => DVC_REJECT_KIND_POLICY,
+            _ => DVC_REJECT_KIND_NONE,
+        };
+        self.last_error.clear();
+        self.last_error_kind = DVC_OK;
+        self.last_reject_kind = reject_kind;
+        self.last_reject_context = reject_context;
+    }
+
+    fn clear_error(&mut self) {
+        self.mark_ok();
     }
 
     fn set_error(&mut self, message: impl Into<String>) {
-        self.last_error = message.into();
+        self.mark_error(DVC_ERR_INVALID_ARGUMENT, message);
+    }
+
+    fn register_chart_output_handle(&mut self, output: ChartOutput) -> DvcChartOutputHandle {
+        let ptr = Box::into_raw(Box::new(ChartOutputHandle { output }));
+        self.chart_output_handles.push(ptr);
+        ptr.cast::<c_void>()
+    }
+}
+
+impl Drop for EngineHandle {
+    fn drop(&mut self) {
+        for ptr in self.chart_output_handles.drain(..) {
+            // SAFETY: pointers were created via Box::into_raw in register_chart_output_handle.
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+        }
     }
 }
 
@@ -176,10 +323,42 @@ struct FormatIteratorState {
     index: usize,
 }
 
+#[derive(Clone)]
+struct ControlIteratorEntry {
+    name: String,
+    def: DvcControlDefRaw,
+    value: f64,
+}
+
+struct ControlIteratorState {
+    entries: Vec<ControlIteratorEntry>,
+    index: usize,
+}
+
+#[derive(Clone)]
+struct ChartIteratorEntry {
+    name: String,
+    def: DvcChartDefRaw,
+}
+
+struct ChartIteratorState {
+    entries: Vec<ChartIteratorEntry>,
+    index: usize,
+}
+
+struct ChangeIteratorState {
+    entries: Vec<ChangeEntry>,
+    index: usize,
+    current: Option<ChangeEntry>,
+}
+
 enum IteratorHandle {
     Cell(CellIteratorState),
     Name(NameIteratorState),
     Format(FormatIteratorState),
+    Control(ControlIteratorState),
+    Chart(ChartIteratorState),
+    Change(ChangeIteratorState),
 }
 
 unsafe fn engine_handle_mut<'a>(engine: DvcEngineHandle) -> Result<&'a mut EngineHandle, i32> {
@@ -231,7 +410,7 @@ fn engine_result<T>(handle: &mut EngineHandle, result: Result<T, EngineError>) -
         }
         Err(err) => {
             let status = status_for_engine_error(&err);
-            handle.set_error(err.to_string());
+            handle.mark_error(status, err.to_string());
             Err(status)
         }
     }
@@ -245,7 +424,7 @@ macro_rules! engine_call {
 }
 
 fn fail(handle: &mut EngineHandle, status: i32, message: impl Into<String>) -> i32 {
-    handle.set_error(message);
+    handle.mark_error(status, message);
     status
 }
 
@@ -306,7 +485,7 @@ fn read_text_arg(
     match read_utf8(value, len) {
         Ok(text) => Ok(text),
         Err(status) => {
-            handle.set_error(format!("{label} must be valid UTF-8"));
+            handle.mark_error(status, format!("{label} must be valid UTF-8"));
             Err(status)
         }
     }
@@ -317,7 +496,7 @@ fn cell_from_addr(handle: &mut EngineHandle, addr: DvcCellAddr) -> Result<CellRe
         Ok(cell) => Ok(cell),
         Err(err) => {
             let status = status_for_address_error(&err);
-            handle.set_error(err.to_string());
+            handle.mark_error(status, err.to_string());
             Err(status)
         }
     }
@@ -420,6 +599,86 @@ fn format_from_raw(raw: DvcCellFormatRaw) -> CellFormat {
         italic: raw.italic != 0,
         fg: palette_from_raw(raw.fg),
         bg: palette_from_raw(raw.bg),
+    }
+}
+
+fn control_def_to_raw(def: ControlDefinition) -> DvcControlDefRaw {
+    DvcControlDefRaw {
+        kind: match def.kind {
+            ControlKind::Slider => DVC_CONTROL_SLIDER,
+            ControlKind::Checkbox => DVC_CONTROL_CHECKBOX,
+            ControlKind::Button => DVC_CONTROL_BUTTON,
+        },
+        min: def.min,
+        max: def.max,
+        step: def.step,
+    }
+}
+
+fn control_def_from_raw(raw: DvcControlDefRaw) -> ControlDefinition {
+    let kind = match raw.kind {
+        DVC_CONTROL_CHECKBOX => ControlKind::Checkbox,
+        DVC_CONTROL_BUTTON => ControlKind::Button,
+        _ => ControlKind::Slider,
+    };
+    ControlDefinition {
+        kind,
+        min: raw.min,
+        max: raw.max,
+        step: raw.step,
+    }
+}
+
+fn chart_def_to_raw(def: ChartDefinition) -> DvcChartDefRaw {
+    DvcChartDefRaw {
+        source_range: range_to_raw(def.source_range),
+    }
+}
+
+fn chart_def_from_raw(
+    handle: &mut EngineHandle,
+    raw: DvcChartDefRaw,
+) -> Result<ChartDefinition, i32> {
+    let start = cell_from_addr(handle, raw.source_range.start)?;
+    let end = cell_from_addr(handle, raw.source_range.end)?;
+    Ok(ChartDefinition {
+        source_range: CellRange::new(start, end),
+    })
+}
+
+fn volatility_from_raw(raw: i32) -> Result<Volatility, i32> {
+    match raw {
+        DVC_VOLATILITY_STANDARD => Ok(Volatility::Standard),
+        DVC_VOLATILITY_VOLATILE => Ok(Volatility::Volatile),
+        DVC_VOLATILITY_EXTERNALLY_INVALIDATED => Ok(Volatility::ExternallyInvalidated),
+        _ => Err(DVC_ERR_INVALID_ARGUMENT),
+    }
+}
+
+fn udf_value_to_raw(value: &Value) -> DvcCellValue {
+    value_to_raw(value)
+}
+
+fn udf_value_from_raw(raw: DvcCellValue) -> Value {
+    match raw.value_type {
+        DVC_VALUE_NUMBER => Value::Number(raw.number),
+        DVC_VALUE_TEXT => Value::Text(String::new()),
+        DVC_VALUE_BOOL => Value::Bool(raw.bool_val != 0),
+        DVC_VALUE_BLANK => Value::Blank,
+        DVC_VALUE_ERROR => Value::Error(match raw.error_kind {
+            DVC_ERROR_DIV_ZERO => CellError::DivisionByZero,
+            DVC_ERROR_VALUE => CellError::Value("udf value error".to_string()),
+            DVC_ERROR_NAME => CellError::Name("udf name error".to_string()),
+            DVC_ERROR_UNKNOWN_NAME => CellError::UnknownName("udf unknown name".to_string()),
+            DVC_ERROR_REF => CellError::Ref("udf ref error".to_string()),
+            DVC_ERROR_SPILL => CellError::Spill("udf spill error".to_string()),
+            DVC_ERROR_CYCLE => CellError::Cycle(vec!["udf cycle".to_string()]),
+            DVC_ERROR_NA => CellError::Na,
+            DVC_ERROR_NULL => CellError::Null,
+            DVC_ERROR_NUM => CellError::Num("udf num error".to_string()),
+            _ => CellError::Value("udf error".to_string()),
+        }),
+        _ => Value::Blank,
     }
 }
 
@@ -541,16 +800,110 @@ fn should_advance_string_entry(buf: *mut u8, buf_len: u32, text: &str) -> bool {
     buf_len >= required
 }
 
-unsafe fn unsupported_with_engine(engine: DvcEngineHandle, symbol: &str) -> i32 {
-    let handle = match unsafe { engine_handle_mut(engine) } {
-        Ok(handle) => handle,
-        Err(status) => return status,
-    };
-    fail(
-        handle,
-        DVC_ERR_UNSUPPORTED,
-        format!("{symbol} is not implemented in dnavisicalc_coreengine_rust"),
-    )
+fn parse_a1_cell(
+    handle: &mut EngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    label: &str,
+) -> Result<CellRef, i32> {
+    let text = read_text_arg(handle, cell_ref, cell_ref_len, label)?;
+    match CellRef::from_a1_with_bounds(&text, handle.engine.bounds()) {
+        Ok(cell) => Ok(cell),
+        Err(err) => {
+            let status = status_for_address_error(&err);
+            handle.mark_error(status, err.to_string());
+            Err(status)
+        }
+    }
+}
+
+fn intersects_spill_range(range: CellRange, op_kind: i32, at: u16) -> bool {
+    match op_kind {
+        DVC_STRUCT_OP_INSERT_ROW | DVC_STRUCT_OP_DELETE_ROW => {
+            at >= range.start.row && at <= range.end.row
+        }
+        DVC_STRUCT_OP_INSERT_COL | DVC_STRUCT_OP_DELETE_COL => {
+            at >= range.start.col && at <= range.end.col
+        }
+        _ => false,
+    }
+}
+
+fn find_structural_reject_context(
+    handle: &EngineHandle,
+    op_kind: i32,
+    at: u16,
+) -> Option<DvcLastRejectContextRaw> {
+    for (cell, _) in handle.engine.all_cell_inputs() {
+        let Ok(range_opt) = handle.engine.spill_range_for_cell(cell) else {
+            continue;
+        };
+        let Some(range) = range_opt else {
+            continue;
+        };
+        if intersects_spill_range(range, op_kind, at) {
+            return Some(DvcLastRejectContextRaw {
+                reject_kind: DVC_REJECT_KIND_STRUCTURAL_CONSTRAINT,
+                op_kind,
+                op_index: at,
+                has_cell: 1,
+                cell: cell_to_addr(cell),
+                has_range: 1,
+                range: range_to_raw(range),
+            });
+        }
+    }
+    None
+}
+
+fn maybe_reject_structural(handle: &mut EngineHandle, op_kind: i32, at: u16) -> Option<i32> {
+    let context = find_structural_reject_context(handle, op_kind, at)?;
+    handle.mark_reject(DVC_REJECT_STRUCTURAL_CONSTRAINT, context);
+    Some(DVC_REJECT_STRUCTURAL_CONSTRAINT)
+}
+
+fn palette_color_name(raw: i32) -> Option<&'static str> {
+    match raw {
+        0 => Some("MIST"),
+        1 => Some("SAGE"),
+        2 => Some("FERN"),
+        3 => Some("MOSS"),
+        4 => Some("OLIVE"),
+        5 => Some("SEAFOAM"),
+        6 => Some("LAGOON"),
+        7 => Some("TEAL"),
+        8 => Some("SKY"),
+        9 => Some("CLOUD"),
+        10 => Some("SAND"),
+        11 => Some("CLAY"),
+        12 => Some("PEACH"),
+        13 => Some("ROSE"),
+        14 => Some("LAVENDER"),
+        15 => Some("SLATE"),
+        _ => None,
+    }
+}
+
+fn change_entry_type_and_epoch(entry: &ChangeEntry) -> (i32, u64) {
+    match entry {
+        ChangeEntry::CellValue { epoch, .. } => (DVC_CHANGE_CELL_VALUE, *epoch),
+        ChangeEntry::NameValue { epoch, .. } => (DVC_CHANGE_NAME_VALUE, *epoch),
+        ChangeEntry::ChartOutput { epoch, .. } => (DVC_CHANGE_CHART_OUTPUT, *epoch),
+        ChangeEntry::SpillRegion { epoch, .. } => (DVC_CHANGE_SPILL_REGION, *epoch),
+        ChangeEntry::CellFormat { epoch, .. } => (DVC_CHANGE_CELL_FORMAT, *epoch),
+        ChangeEntry::Diagnostic { epoch, .. } => (DVC_CHANGE_DIAGNOSTIC, *epoch),
+    }
+}
+
+unsafe fn chart_output_handle<'a>(
+    output: DvcChartOutputHandle,
+) -> Result<&'a ChartOutputHandle, i32> {
+    if output.is_null() {
+        return Err(DVC_ERR_NULL_POINTER);
+    }
+    let ptr = output.cast::<ChartOutputHandle>();
+    // SAFETY: The pointer is created from Box::into_raw in dvc_chart_get_output.
+    unsafe { ptr.as_ref().ok_or(DVC_ERR_NULL_POINTER) }
 }
 
 #[unsafe(no_mangle)]
@@ -566,6 +919,10 @@ pub unsafe extern "C" fn dvc_engine_create(out: *mut DvcEngineHandle) -> i32 {
     let boxed = Box::new(EngineHandle {
         engine: Engine::new(),
         last_error: String::new(),
+        last_error_kind: DVC_OK,
+        last_reject_kind: DVC_REJECT_KIND_NONE,
+        last_reject_context: DvcLastRejectContextRaw::default(),
+        chart_output_handles: Vec::new(),
     });
     // SAFETY: `out` is validated non-null and points to writable memory from caller.
     unsafe {
@@ -591,6 +948,10 @@ pub unsafe extern "C" fn dvc_engine_create_with_bounds(
             max_rows: bounds.max_rows,
         }),
         last_error: String::new(),
+        last_error_kind: DVC_OK,
+        last_reject_kind: DVC_REJECT_KIND_NONE,
+        last_reject_context: DvcLastRejectContextRaw::default(),
+        chart_output_handles: Vec::new(),
     });
     // SAFETY: `out` is validated non-null and points to writable memory from caller.
     unsafe {
@@ -761,6 +1122,119 @@ pub unsafe extern "C" fn dvc_recalculate(engine: DvcEngineHandle) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_engine_is_stable(
+    engine: DvcEngineHandle,
+    out_stable: *mut i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_stable.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_engine_is_stable: out_stable is null",
+        );
+    }
+    // SAFETY: `out_stable` is validated non-null above.
+    unsafe {
+        *out_stable = if handle.engine.stabilized_epoch() == handle.engine.committed_epoch() {
+            1
+        } else {
+            0
+        };
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_has_volatile_cells(engine: DvcEngineHandle, out: *mut i32) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_has_volatile_cells: out is null",
+        );
+    }
+    // SAFETY: `out` is validated non-null above.
+    unsafe {
+        *out = if handle.engine.has_volatile_cells() {
+            1
+        } else {
+            0
+        };
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_has_externally_invalidated_cells(
+    engine: DvcEngineHandle,
+    out: *mut i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_has_externally_invalidated_cells: out is null",
+        );
+    }
+    // SAFETY: `out` is validated non-null above.
+    unsafe {
+        *out = if handle.engine.has_externally_invalidated_cells() {
+            1
+        } else {
+            0
+        };
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_invalidate_volatile(engine: DvcEngineHandle) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.invalidate_volatile()) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_invalidate_udf(
+    engine: DvcEngineHandle,
+    name: *const u8,
+    name_len: u32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let name = match read_text_arg(handle, name, name_len, "dvc_invalidate_udf name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.invalidate_udf(&name)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_has_stream_cells(engine: DvcEngineHandle, out: *mut i32) -> i32 {
     let handle = match unsafe { engine_handle_mut(engine) } {
         Ok(handle) => handle,
@@ -878,6 +1352,69 @@ pub unsafe extern "C" fn dvc_last_error_message(
         Err(status) => return status,
     };
     write_utf8(&handle.last_error, buf, buf_len, out_len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_last_error_kind(engine: DvcEngineHandle, out_status: *mut i32) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_status.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_last_error_kind: out_status is null",
+        );
+    }
+    // SAFETY: `out_status` is validated non-null above.
+    unsafe {
+        *out_status = handle.last_error_kind;
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_last_reject_kind(engine: DvcEngineHandle, out_kind: *mut i32) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_kind.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_last_reject_kind: out_kind is null",
+        );
+    }
+    // SAFETY: `out_kind` is validated non-null above.
+    unsafe {
+        *out_kind = handle.last_reject_kind;
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_last_reject_context(
+    engine: DvcEngineHandle,
+    out_ctx: *mut DvcLastRejectContextRaw,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_ctx.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_last_reject_context: out_ctx is null",
+        );
+    }
+    // SAFETY: `out_ctx` is validated non-null above.
+    unsafe {
+        *out_ctx = handle.last_reject_context;
+    }
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
@@ -1126,6 +1663,234 @@ pub unsafe extern "C" fn dvc_cell_error_message(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_set_number_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    value: f64,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_set_number_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.set_number(cell, value)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_set_text_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    text: *const u8,
+    text_len: u32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_set_text_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let value = match read_text_arg(handle, text, text_len, "dvc_cell_set_text_a1 text") {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.set_text(cell, value)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_set_formula_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    formula: *const u8,
+    formula_len: u32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_set_formula_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let value = match read_text_arg(
+        handle,
+        formula,
+        formula_len,
+        "dvc_cell_set_formula_a1 formula",
+    ) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.set_formula(cell, &value)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_clear_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_clear_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.clear_cell(cell)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_get_state_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    out_state: *mut DvcCellState,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_state.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_cell_get_state_a1: out_state is null",
+        );
+    }
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_get_state_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let state = match engine_call!(handle, handle.engine.cell_state(cell)) {
+        Ok(state) => state,
+        Err(status) => return status,
+    };
+    // SAFETY: `out_state` is validated non-null above.
+    unsafe {
+        *out_state = cell_state_to_raw(&state);
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_get_text_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_get_text_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let state = match engine_call!(handle, handle.engine.cell_state(cell)) {
+        Ok(state) => state,
+        Err(status) => return status,
+    };
+    let status = write_utf8(&value_to_text(&state.value), buf, buf_len, out_len);
+    if status == DVC_OK {
+        handle.clear_error();
+    } else {
+        handle.set_error("dvc_cell_get_text_a1: invalid output buffer");
+    }
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_get_input_type_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    out_type: *mut i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_type.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_cell_get_input_type_a1: out_type is null",
+        );
+    }
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_get_input_type_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let input = match engine_call!(handle, handle.engine.cell_input(cell)) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    let (input_type, _) = input_type_and_text(input);
+    // SAFETY: `out_type` is validated non-null above.
+    unsafe {
+        *out_type = input_type;
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_get_input_text_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_get_input_text_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let input = match engine_call!(handle, handle.engine.cell_input(cell)) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    let (_, text) = input_type_and_text(input);
+    let status = write_utf8(&text, buf, buf_len, out_len);
+    if status == DVC_OK {
+        handle.clear_error();
+    } else {
+        handle.set_error("dvc_cell_get_input_text_a1: invalid output buffer");
+    }
+    status
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_name_set_number(
     engine: DvcEngineHandle,
     name: *const u8,
@@ -1352,6 +2117,108 @@ pub unsafe extern "C" fn dvc_cell_set_format(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_get_format_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    out_format: *mut DvcCellFormatRaw,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_format.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_cell_get_format_a1: out_format is null",
+        );
+    }
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_get_format_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let format = match engine_call!(handle, handle.engine.cell_format(cell)) {
+        Ok(format) => format,
+        Err(status) => return status,
+    };
+    // SAFETY: `out_format` is validated non-null.
+    unsafe {
+        *out_format = format_to_raw(format);
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_set_format_a1(
+    engine: DvcEngineHandle,
+    cell_ref: *const u8,
+    cell_ref_len: u32,
+    format: *const DvcCellFormatRaw,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if format.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_cell_set_format_a1: format is null",
+        );
+    }
+    let cell = match parse_a1_cell(handle, cell_ref, cell_ref_len, "dvc_cell_set_format_a1") {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    // SAFETY: `format` is validated non-null.
+    let converted = unsafe { format_from_raw(*format) };
+    match engine_call!(handle, handle.engine.set_cell_format(cell, converted)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_cell_spill_role(
+    engine: DvcEngineHandle,
+    addr: DvcCellAddr,
+    out_role: *mut i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_role.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_cell_spill_role: out_role is null",
+        );
+    }
+    let cell = match cell_from_addr(handle, addr) {
+        Ok(cell) => cell,
+        Err(status) => return status,
+    };
+    let anchor = match engine_call!(handle, handle.engine.spill_anchor_for_cell(cell)) {
+        Ok(anchor) => anchor,
+        Err(status) => return status,
+    };
+    let role = match anchor {
+        None => DVC_SPILL_NONE,
+        Some(anchor_cell) if anchor_cell == cell => DVC_SPILL_ANCHOR,
+        Some(_) => DVC_SPILL_MEMBER,
+    };
+    // SAFETY: `out_role` is validated non-null above.
+    unsafe {
+        *out_role = role;
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_cell_spill_anchor(
     engine: DvcEngineHandle,
     addr: DvcCellAddr,
@@ -1437,6 +2304,9 @@ pub unsafe extern "C" fn dvc_insert_row(engine: DvcEngineHandle, at: u16) -> i32
         Ok(handle) => handle,
         Err(status) => return status,
     };
+    if let Some(status) = maybe_reject_structural(handle, DVC_STRUCT_OP_INSERT_ROW, at) {
+        return status;
+    }
     match engine_call!(handle, handle.engine.insert_row(at)) {
         Ok(()) => DVC_OK,
         Err(status) => status,
@@ -1449,6 +2319,9 @@ pub unsafe extern "C" fn dvc_delete_row(engine: DvcEngineHandle, at: u16) -> i32
         Ok(handle) => handle,
         Err(status) => return status,
     };
+    if let Some(status) = maybe_reject_structural(handle, DVC_STRUCT_OP_DELETE_ROW, at) {
+        return status;
+    }
     match engine_call!(handle, handle.engine.delete_row(at)) {
         Ok(()) => DVC_OK,
         Err(status) => status,
@@ -1461,6 +2334,9 @@ pub unsafe extern "C" fn dvc_insert_col(engine: DvcEngineHandle, at: u16) -> i32
         Ok(handle) => handle,
         Err(status) => return status,
     };
+    if let Some(status) = maybe_reject_structural(handle, DVC_STRUCT_OP_INSERT_COL, at) {
+        return status;
+    }
     match engine_call!(handle, handle.engine.insert_col(at)) {
         Ok(()) => DVC_OK,
         Err(status) => status,
@@ -1473,10 +2349,32 @@ pub unsafe extern "C" fn dvc_delete_col(engine: DvcEngineHandle, at: u16) -> i32
         Ok(handle) => handle,
         Err(status) => return status,
     };
+    if let Some(status) = maybe_reject_structural(handle, DVC_STRUCT_OP_DELETE_COL, at) {
+        return status;
+    }
     match engine_call!(handle, handle.engine.delete_col(at)) {
         Ok(()) => DVC_OK,
         Err(status) => status,
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_palette_color_name(
+    color: i32,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    let Some(name) = palette_color_name(color) else {
+        if !out_len.is_null() {
+            // SAFETY: out_len is checked non-null.
+            unsafe {
+                *out_len = 0;
+            }
+        }
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    write_utf8(name, buf, buf_len, out_len)
 }
 
 #[unsafe(no_mangle)]
@@ -1825,88 +2723,157 @@ pub unsafe extern "C" fn dvc_format_iterator_destroy(iterator: DvcIteratorHandle
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_control_define(
     engine: DvcEngineHandle,
-    _name: *const u8,
-    _name_len: u32,
-    _def: *const DvcControlDefRaw,
+    name: *const u8,
+    name_len: u32,
+    def: *const DvcControlDefRaw,
 ) -> i32 {
-    unsafe { unsupported_with_engine(engine, "dvc_control_define") }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if def.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_control_define: def is null",
+        );
+    }
+    let name = match read_text_arg(handle, name, name_len, "dvc_control_define name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    // SAFETY: `def` is validated non-null above.
+    let converted = unsafe { control_def_from_raw(*def) };
+    match engine_call!(handle, handle.engine.define_control(&name, converted)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_control_remove(
     engine: DvcEngineHandle,
-    _name: *const u8,
-    _name_len: u32,
+    name: *const u8,
+    name_len: u32,
     found: *mut i32,
 ) -> i32 {
-    if !found.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *found = 0;
-        }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if found.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_control_remove: found is null",
+        );
     }
-    unsafe { unsupported_with_engine(engine, "dvc_control_remove") }
+    let name = match read_text_arg(handle, name, name_len, "dvc_control_remove name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    let removed = handle.engine.remove_control(&name);
+    // SAFETY: `found` is validated non-null above.
+    unsafe {
+        *found = if removed { 1 } else { 0 };
+    }
+    handle.clear_error();
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_control_set_value(
     engine: DvcEngineHandle,
-    _name: *const u8,
-    _name_len: u32,
-    _value: f64,
+    name: *const u8,
+    name_len: u32,
+    value: f64,
 ) -> i32 {
-    unsafe { unsupported_with_engine(engine, "dvc_control_set_value") }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let name = match read_text_arg(handle, name, name_len, "dvc_control_set_value name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.set_control_value(&name, value)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_control_get_value(
     engine: DvcEngineHandle,
-    _name: *const u8,
-    _name_len: u32,
+    name: *const u8,
+    name_len: u32,
     out_value: *mut f64,
     found: *mut i32,
 ) -> i32 {
-    if !out_value.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_value.is_null() || found.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_control_get_value: out_value/found is null",
+        );
+    }
+    let name = match read_text_arg(handle, name, name_len, "dvc_control_get_value name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    // SAFETY: output pointers are validated non-null above.
+    unsafe {
+        if let Some(value) = handle.engine.control_value(&name) {
+            *found = 1;
+            *out_value = value;
+        } else {
+            *found = 0;
             *out_value = 0.0;
         }
     }
-    if !found.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *found = 0;
-        }
-    }
-    unsafe { unsupported_with_engine(engine, "dvc_control_get_value") }
+    handle.clear_error();
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_control_get_def(
     engine: DvcEngineHandle,
-    _name: *const u8,
-    _name_len: u32,
+    name: *const u8,
+    name_len: u32,
     out_def: *mut DvcControlDefRaw,
     found: *mut i32,
 ) -> i32 {
-    if !out_def.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *out_def = DvcControlDefRaw {
-                kind: DVC_CONTROL_SLIDER,
-                min: 0.0,
-                max: 0.0,
-                step: 0.0,
-            };
-        }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_def.is_null() || found.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_control_get_def: out_def/found is null",
+        );
     }
-    if !found.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
+    let name = match read_text_arg(handle, name, name_len, "dvc_control_get_def name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    // SAFETY: output pointers are validated non-null above.
+    unsafe {
+        if let Some(def) = handle.engine.control_definition(&name).copied() {
+            *found = 1;
+            *out_def = control_def_to_raw(def);
+        } else {
             *found = 0;
+            *out_def = DvcControlDefRaw::default();
         }
     }
-    unsafe { unsupported_with_engine(engine, "dvc_control_get_def") }
+    handle.clear_error();
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
@@ -1914,81 +2881,157 @@ pub unsafe extern "C" fn dvc_control_iterate(
     engine: DvcEngineHandle,
     out_iter: *mut DvcIteratorHandle,
 ) -> i32 {
-    if !out_iter.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *out_iter = ptr::null_mut();
-        }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_iter.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_control_iterate: out_iter is null",
+        );
     }
-    unsafe { unsupported_with_engine(engine, "dvc_control_iterate") }
+    let entries = handle
+        .engine
+        .all_controls()
+        .into_iter()
+        .map(|(name, def, value)| ControlIteratorEntry {
+            name,
+            def: control_def_to_raw(def),
+            value,
+        })
+        .collect();
+    let iterator = IteratorHandle::Control(ControlIteratorState { entries, index: 0 });
+    // SAFETY: `out_iter` is validated non-null above.
+    unsafe {
+        *out_iter = Box::into_raw(Box::new(iterator)).cast::<c_void>();
+    }
+    handle.clear_error();
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_control_iterator_next(
-    _iterator: DvcIteratorHandle,
-    _name_buf: *mut u8,
-    _name_buf_len: u32,
+    iterator: DvcIteratorHandle,
+    name_buf: *mut u8,
+    name_buf_len: u32,
     name_len: *mut u32,
     out_def: *mut DvcControlDefRaw,
     out_value: *mut f64,
     done: *mut i32,
 ) -> i32 {
-    if !name_len.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *name_len = 0;
-        }
+    if name_len.is_null() || out_def.is_null() || out_value.is_null() || done.is_null() {
+        return DVC_ERR_NULL_POINTER;
     }
-    if !out_def.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *out_def = DvcControlDefRaw::default();
-        }
-    }
-    if !out_value.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *out_value = 0.0;
-        }
-    }
-    if !done.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Control(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    if state.index >= state.entries.len() {
+        // SAFETY: output pointers are validated non-null above.
         unsafe {
             *done = 1;
+            *name_len = 0;
+            *out_def = DvcControlDefRaw::default();
+            *out_value = 0.0;
         }
+        return DVC_OK;
     }
-    DVC_ERR_UNSUPPORTED
+    let entry = state.entries[state.index].clone();
+    // SAFETY: output pointers are validated non-null above.
+    unsafe {
+        *out_def = entry.def;
+        *out_value = entry.value;
+        *done = 0;
+    }
+    let status = write_utf8(&entry.name, name_buf, name_buf_len, name_len);
+    if status != DVC_OK {
+        return status;
+    }
+    if should_advance_string_entry(name_buf, name_buf_len, &entry.name) {
+        state.index += 1;
+    }
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn dvc_control_iterator_destroy(_iterator: DvcIteratorHandle) -> i32 {
+pub unsafe extern "C" fn dvc_control_iterator_destroy(iterator: DvcIteratorHandle) -> i32 {
+    if iterator.is_null() {
+        return DVC_OK;
+    }
+    // SAFETY: `iterator` is allocated by `Box::into_raw` in iterate APIs.
+    unsafe {
+        drop(Box::from_raw(iterator.cast::<IteratorHandle>()));
+    }
     DVC_OK
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_chart_define(
     engine: DvcEngineHandle,
-    _name: *const u8,
-    _name_len: u32,
-    _def: *const DvcChartDefRaw,
+    name: *const u8,
+    name_len: u32,
+    def: *const DvcChartDefRaw,
 ) -> i32 {
-    unsafe { unsupported_with_engine(engine, "dvc_chart_define") }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if def.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_chart_define: def is null",
+        );
+    }
+    let name = match read_text_arg(handle, name, name_len, "dvc_chart_define name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    // SAFETY: `def` is validated non-null above.
+    let converted = match chart_def_from_raw(handle, unsafe { *def }) {
+        Ok(def) => def,
+        Err(status) => return status,
+    };
+    match engine_call!(handle, handle.engine.define_chart(&name, converted)) {
+        Ok(()) => DVC_OK,
+        Err(status) => status,
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_chart_remove(
     engine: DvcEngineHandle,
-    _name: *const u8,
-    _name_len: u32,
+    name: *const u8,
+    name_len: u32,
     found: *mut i32,
 ) -> i32 {
-    if !found.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *found = 0;
-        }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if found.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_chart_remove: found is null",
+        );
     }
-    unsafe { unsupported_with_engine(engine, "dvc_chart_remove") }
+    let name = match read_text_arg(handle, name, name_len, "dvc_chart_remove name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    let removed = handle.engine.remove_chart(&name);
+    // SAFETY: `found` is validated non-null above.
+    unsafe {
+        *found = if removed { 1 } else { 0 };
+    }
+    handle.clear_error();
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
@@ -1996,46 +3039,649 @@ pub unsafe extern "C" fn dvc_chart_iterate(
     engine: DvcEngineHandle,
     out_iter: *mut DvcIteratorHandle,
 ) -> i32 {
-    if !out_iter.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *out_iter = ptr::null_mut();
-        }
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_iter.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_chart_iterate: out_iter is null",
+        );
     }
-    unsafe { unsupported_with_engine(engine, "dvc_chart_iterate") }
+    let entries = handle
+        .engine
+        .all_charts()
+        .into_iter()
+        .map(|(name, def)| ChartIteratorEntry {
+            name,
+            def: chart_def_to_raw(def),
+        })
+        .collect();
+    let iterator = IteratorHandle::Chart(ChartIteratorState { entries, index: 0 });
+    // SAFETY: `out_iter` is validated non-null above.
+    unsafe {
+        *out_iter = Box::into_raw(Box::new(iterator)).cast::<c_void>();
+    }
+    handle.clear_error();
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dvc_chart_iterator_next(
-    _iterator: DvcIteratorHandle,
-    _name_buf: *mut u8,
-    _name_buf_len: u32,
+    iterator: DvcIteratorHandle,
+    name_buf: *mut u8,
+    name_buf_len: u32,
     name_len: *mut u32,
     out_def: *mut DvcChartDefRaw,
     done: *mut i32,
 ) -> i32 {
-    if !name_len.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *name_len = 0;
-        }
+    if name_len.is_null() || out_def.is_null() || done.is_null() {
+        return DVC_ERR_NULL_POINTER;
     }
-    if !out_def.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
-        unsafe {
-            *out_def = DvcChartDefRaw::default();
-        }
-    }
-    if !done.is_null() {
-        // SAFETY: Caller-provided out pointer is checked non-null.
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Chart(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    if state.index >= state.entries.len() {
+        // SAFETY: output pointers are validated non-null above.
         unsafe {
             *done = 1;
+            *name_len = 0;
+            *out_def = DvcChartDefRaw::default();
         }
+        return DVC_OK;
     }
-    DVC_ERR_UNSUPPORTED
+    let entry = state.entries[state.index].clone();
+    // SAFETY: output pointers are validated non-null above.
+    unsafe {
+        *out_def = entry.def;
+        *done = 0;
+    }
+    let status = write_utf8(&entry.name, name_buf, name_buf_len, name_len);
+    if status != DVC_OK {
+        return status;
+    }
+    if should_advance_string_entry(name_buf, name_buf_len, &entry.name) {
+        state.index += 1;
+    }
+    DVC_OK
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn dvc_chart_iterator_destroy(_iterator: DvcIteratorHandle) -> i32 {
+pub unsafe extern "C" fn dvc_chart_iterator_destroy(iterator: DvcIteratorHandle) -> i32 {
+    if iterator.is_null() {
+        return DVC_OK;
+    }
+    // SAFETY: `iterator` is allocated by `Box::into_raw` in iterate APIs.
+    unsafe {
+        drop(Box::from_raw(iterator.cast::<IteratorHandle>()));
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_chart_get_output(
+    engine: DvcEngineHandle,
+    name: *const u8,
+    name_len: u32,
+    out_output: *mut DvcChartOutputHandle,
+    found: *mut i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_output.is_null() || found.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_chart_get_output: out_output/found is null",
+        );
+    }
+    let name = match read_text_arg(handle, name, name_len, "dvc_chart_get_output name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    // SAFETY: pointers are validated non-null above.
+    unsafe {
+        if let Some(output) = handle.engine.chart_output(&name).cloned() {
+            *found = 1;
+            *out_output = handle.register_chart_output_handle(output);
+        } else {
+            *found = 0;
+            *out_output = std::ptr::null_mut();
+        }
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_chart_output_series_count(
+    output: DvcChartOutputHandle,
+    out_count: *mut u32,
+) -> i32 {
+    if out_count.is_null() {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { chart_output_handle(output) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let count = match u32::try_from(handle.output.series.len()) {
+        Ok(v) => v,
+        Err(_) => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    // SAFETY: `out_count` is validated non-null above.
+    unsafe {
+        *out_count = count;
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_chart_output_label_count(
+    output: DvcChartOutputHandle,
+    out_count: *mut u32,
+) -> i32 {
+    if out_count.is_null() {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { chart_output_handle(output) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let count = match u32::try_from(handle.output.labels.len()) {
+        Ok(v) => v,
+        Err(_) => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    // SAFETY: `out_count` is validated non-null above.
+    unsafe {
+        *out_count = count;
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_chart_output_label(
+    output: DvcChartOutputHandle,
+    index: u32,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    let handle = match unsafe { chart_output_handle(output) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let Some(label) = handle.output.labels.get(index as usize) else {
+        return DVC_ERR_OUT_OF_BOUNDS;
+    };
+    write_utf8(label, buf, buf_len, out_len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_chart_output_series_name(
+    output: DvcChartOutputHandle,
+    series_index: u32,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    let handle = match unsafe { chart_output_handle(output) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let Some(series) = handle.output.series.get(series_index as usize) else {
+        return DVC_ERR_OUT_OF_BOUNDS;
+    };
+    write_utf8(&series.name, buf, buf_len, out_len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_chart_output_series_values(
+    output: DvcChartOutputHandle,
+    series_index: u32,
+    buf: *mut f64,
+    buf_len: u32,
+    out_count: *mut u32,
+) -> i32 {
+    if out_count.is_null() {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { chart_output_handle(output) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let Some(series) = handle.output.series.get(series_index as usize) else {
+        return DVC_ERR_OUT_OF_BOUNDS;
+    };
+    let total = match u32::try_from(series.values.len()) {
+        Ok(v) => v,
+        Err(_) => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    // SAFETY: `out_count` is validated non-null above.
+    unsafe {
+        *out_count = total;
+    }
+    if !buf.is_null() && buf_len > 0 {
+        let count = std::cmp::min(buf_len as usize, series.values.len());
+        // SAFETY: caller provides writable f64 buffer of at least `count` elements.
+        unsafe {
+            ptr::copy_nonoverlapping(series.values.as_ptr(), buf, count);
+        }
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_udf_register(
+    engine: DvcEngineHandle,
+    name: *const u8,
+    name_len: u32,
+    callback: Option<DvcUdfCallback>,
+    user_data: *mut c_void,
+    volatility: i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let Some(callback) = callback else {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_udf_register: callback is null",
+        );
+    };
+    let name = match read_text_arg(handle, name, name_len, "dvc_udf_register name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    let volatility = match volatility_from_raw(volatility) {
+        Ok(volatility) => volatility,
+        Err(status) => {
+            return fail(
+                handle,
+                status,
+                "dvc_udf_register: volatility must be standard/volatile/externally-invalidated",
+            )
+        }
+    };
+    let udf = CApiUdf {
+        callback,
+        user_data,
+        volatility,
+    };
+    handle.engine.register_udf(&name, Box::new(udf));
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_udf_unregister(
+    engine: DvcEngineHandle,
+    name: *const u8,
+    name_len: u32,
+    found: *mut i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if found.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_udf_unregister: found is null",
+        );
+    }
+    let name = match read_text_arg(handle, name, name_len, "dvc_udf_unregister name") {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    let removed = handle.engine.unregister_udf(&name);
+    // SAFETY: `found` is validated non-null above.
+    unsafe {
+        *found = if removed { 1 } else { 0 };
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_tracking_enable(engine: DvcEngineHandle) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    handle.engine.enable_change_tracking();
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_tracking_disable(engine: DvcEngineHandle) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    handle.engine.disable_change_tracking();
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_tracking_is_enabled(
+    engine: DvcEngineHandle,
+    out_enabled: *mut i32,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_enabled.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_change_tracking_is_enabled: out_enabled is null",
+        );
+    }
+    // SAFETY: `out_enabled` is validated non-null above.
+    unsafe {
+        *out_enabled = if handle.engine.is_change_tracking_enabled() {
+            1
+        } else {
+            0
+        };
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_iterate(
+    engine: DvcEngineHandle,
+    out_iter: *mut DvcIteratorHandle,
+) -> i32 {
+    let handle = match unsafe { engine_handle_mut(engine) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    if out_iter.is_null() {
+        return fail(
+            handle,
+            DVC_ERR_NULL_POINTER,
+            "dvc_change_iterate: out_iter is null",
+        );
+    }
+    let iterator = IteratorHandle::Change(ChangeIteratorState {
+        entries: handle.engine.drain_changes(),
+        index: 0,
+        current: None,
+    });
+    // SAFETY: `out_iter` is validated non-null.
+    unsafe {
+        *out_iter = Box::into_raw(Box::new(iterator)).cast::<c_void>();
+    }
+    handle.clear_error();
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_iterator_next(
+    iterator: DvcIteratorHandle,
+    out_change_type: *mut i32,
+    out_epoch: *mut u64,
+    done: *mut i32,
+) -> i32 {
+    if out_change_type.is_null() || out_epoch.is_null() || done.is_null() {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Change(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    if state.index >= state.entries.len() {
+        // SAFETY: pointers are validated non-null above.
+        unsafe {
+            *done = 1;
+            *out_change_type = DVC_CHANGE_CELL_VALUE;
+            *out_epoch = 0;
+        }
+        return DVC_OK;
+    }
+    let entry = state.entries[state.index].clone();
+    state.index += 1;
+    let (change_type, epoch) = change_entry_type_and_epoch(&entry);
+    state.current = Some(entry);
+    // SAFETY: pointers are validated non-null above.
+    unsafe {
+        *done = 0;
+        *out_change_type = change_type;
+        *out_epoch = epoch;
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_get_cell(
+    iterator: DvcIteratorHandle,
+    out_addr: *mut DvcCellAddr,
+) -> i32 {
+    if out_addr.is_null() {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Change(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let Some(current) = state.current.as_ref() else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let cell = match current {
+        ChangeEntry::CellValue { cell, .. } => *cell,
+        _ => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    // SAFETY: out pointer is validated non-null above.
+    unsafe {
+        *out_addr = cell_to_addr(cell);
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_get_name(
+    iterator: DvcIteratorHandle,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Change(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let Some(current) = state.current.as_ref() else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let name = match current {
+        ChangeEntry::NameValue { name, .. } => name,
+        _ => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    write_utf8(name, buf, buf_len, out_len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_get_chart_name(
+    iterator: DvcIteratorHandle,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Change(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let Some(current) = state.current.as_ref() else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let name = match current {
+        ChangeEntry::ChartOutput { name, .. } => name,
+        _ => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    write_utf8(name, buf, buf_len, out_len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_get_spill(
+    iterator: DvcIteratorHandle,
+    out_anchor: *mut DvcCellAddr,
+    out_old_range: *mut DvcCellRange,
+    out_had_old: *mut i32,
+    out_new_range: *mut DvcCellRange,
+    out_has_new: *mut i32,
+) -> i32 {
+    if out_anchor.is_null()
+        || out_old_range.is_null()
+        || out_had_old.is_null()
+        || out_new_range.is_null()
+        || out_has_new.is_null()
+    {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Change(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let Some(current) = state.current.as_ref() else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let (anchor, old_range, new_range) = match current {
+        ChangeEntry::SpillRegion {
+            anchor,
+            old_range,
+            new_range,
+            ..
+        } => (*anchor, *old_range, *new_range),
+        _ => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    // SAFETY: pointers are validated non-null above.
+    unsafe {
+        *out_anchor = cell_to_addr(anchor);
+        if let Some(range) = old_range {
+            *out_had_old = 1;
+            *out_old_range = range_to_raw(range);
+        } else {
+            *out_had_old = 0;
+            *out_old_range = DvcCellRange::default();
+        }
+        if let Some(range) = new_range {
+            *out_has_new = 1;
+            *out_new_range = range_to_raw(range);
+        } else {
+            *out_has_new = 0;
+            *out_new_range = DvcCellRange::default();
+        }
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_get_format(
+    iterator: DvcIteratorHandle,
+    out_addr: *mut DvcCellAddr,
+    out_old_format: *mut DvcCellFormatRaw,
+    out_new_format: *mut DvcCellFormatRaw,
+) -> i32 {
+    if out_addr.is_null() || out_old_format.is_null() || out_new_format.is_null() {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Change(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let Some(current) = state.current.as_ref() else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let (cell, old, new) = match current {
+        ChangeEntry::CellFormat { cell, old, new, .. } => (*cell, old.clone(), new.clone()),
+        _ => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    // SAFETY: pointers are validated non-null above.
+    unsafe {
+        *out_addr = cell_to_addr(cell);
+        *out_old_format = format_to_raw(old);
+        *out_new_format = format_to_raw(new);
+    }
+    DVC_OK
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_get_diagnostic(
+    iterator: DvcIteratorHandle,
+    out_code: *mut i32,
+    buf: *mut u8,
+    buf_len: u32,
+    out_len: *mut u32,
+) -> i32 {
+    if out_code.is_null() {
+        return DVC_ERR_NULL_POINTER;
+    }
+    let handle = match unsafe { iterator_handle_mut(iterator) } {
+        Ok(handle) => handle,
+        Err(status) => return status,
+    };
+    let IteratorHandle::Change(state) = handle else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let Some(current) = state.current.as_ref() else {
+        return DVC_ERR_INVALID_ARGUMENT;
+    };
+    let (code, message) = match current {
+        ChangeEntry::Diagnostic { code, message, .. } => (*code, message),
+        _ => return DVC_ERR_INVALID_ARGUMENT,
+    };
+    let raw_code = match code {
+        DiagnosticCode::CircularReferenceDetected => DVC_DIAG_CIRCULAR_REFERENCE_DETECTED,
+    };
+    // SAFETY: `out_code` is validated non-null above.
+    unsafe {
+        *out_code = raw_code;
+    }
+    write_utf8(message, buf, buf_len, out_len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dvc_change_iterator_destroy(iterator: DvcIteratorHandle) -> i32 {
+    if iterator.is_null() {
+        return DVC_OK;
+    }
+    // SAFETY: `iterator` is allocated by `Box::into_raw` in iterate APIs.
+    unsafe {
+        drop(Box::from_raw(iterator.cast::<IteratorHandle>()));
+    }
     DVC_OK
 }
