@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -10,7 +11,7 @@ const DEFAULT_FORMULA_ROWS: u16 = 220;
 
 #[derive(Debug, Clone)]
 struct BenchResult {
-    backend: CoreEngineId,
+    backend_label: String,
     setup_ms: f64,
     initial_recalc_ms: f64,
     recalc_min_ms: f64,
@@ -28,12 +29,24 @@ struct WorkloadConfig {
     formula_rows: u16,
 }
 
+#[derive(Debug, Clone)]
+struct BenchTarget {
+    label: String,
+    coreengine: CoreEngineId,
+    dll_path: Option<PathBuf>,
+}
+
 fn main() {
     let mut iterations = DEFAULT_ITERATIONS;
     let mut output_path: Option<PathBuf> = None;
     let mut fill_full_grid_with_data = true;
     let mut formula_cols = DEFAULT_FORMULA_COLS;
     let mut formula_rows = DEFAULT_FORMULA_ROWS;
+    let mut include_ocaml = false;
+    let mut dotnet_dll: Option<PathBuf> = None;
+    let mut rust_dll: Option<PathBuf> = None;
+    let mut ocaml_dll: Option<PathBuf> = None;
+    let mut backend_filters: Vec<String> = Vec::new();
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -73,6 +86,29 @@ fn main() {
                     fill_full_grid_with_data = matches!(normalized.as_str(), "1" | "true" | "yes");
                 }
             }
+            "--include-ocaml" => {
+                include_ocaml = true;
+            }
+            "--dotnet-dll" => {
+                if let Some(raw) = args.next() {
+                    dotnet_dll = Some(PathBuf::from(raw));
+                }
+            }
+            "--rust-dll" => {
+                if let Some(raw) = args.next() {
+                    rust_dll = Some(PathBuf::from(raw));
+                }
+            }
+            "--ocaml-dll" => {
+                if let Some(raw) = args.next() {
+                    ocaml_dll = Some(PathBuf::from(raw));
+                }
+            }
+            "--backend" => {
+                if let Some(raw) = args.next() {
+                    backend_filters.push(raw.trim().to_ascii_lowercase());
+                }
+            }
             _ => {}
         }
     }
@@ -81,6 +117,33 @@ fn main() {
         formula_cols,
         formula_rows,
     };
+
+    let mut targets = vec![
+        BenchTarget {
+            label: CoreEngineId::DotnetCore.as_str().to_string(),
+            coreengine: CoreEngineId::DotnetCore,
+            dll_path: dotnet_dll,
+        },
+        BenchTarget {
+            label: CoreEngineId::RustCore.as_str().to_string(),
+            coreengine: CoreEngineId::RustCore,
+            dll_path: rust_dll,
+        },
+    ];
+    if include_ocaml {
+        targets.push(BenchTarget {
+            label: "ocaml-core".to_string(),
+            // The loader contract is C API + explicit DLL path; this id affects default lookup only.
+            coreengine: CoreEngineId::DotnetCore,
+            dll_path: Some(ocaml_dll.unwrap_or_else(|| {
+                PathBuf::from("engines/ocaml/coreengine-ocaml-01/dist/dvc_coreengine_ocaml01.dll")
+            })),
+        });
+    }
+    if !backend_filters.is_empty() {
+        let allow: HashSet<String> = backend_filters.into_iter().collect();
+        targets.retain(|t| allow.contains(&t.label));
+    }
 
     let mut lines = String::new();
     let _ = writeln!(
@@ -93,15 +156,14 @@ fn main() {
         "Timing includes recalc after per-iteration input mutations (manual recalc mode)."
     );
 
-    let backends = [CoreEngineId::DotnetCore, CoreEngineId::RustCore];
     let mut results: Vec<BenchResult> = Vec::new();
-    for backend in backends {
-        match run_backend(backend, iterations, workload) {
+    for target in &targets {
+        match run_backend(target, iterations, workload) {
             Ok(result) => {
                 let _ = writeln!(
                     lines,
                     "\n{}: setup={:.2}ms initial_recalc={:.2}ms recalc[min/p50/p95/mean/max]={:.2}/{:.2}/{:.2}/{:.2}/{:.2}ms committed_epoch={}",
-                    result.backend.as_str(),
+                    result.backend_label,
                     result.setup_ms,
                     result.initial_recalc_ms,
                     result.recalc_min_ms,
@@ -114,7 +176,7 @@ fn main() {
                 results.push(result);
             }
             Err(err) => {
-                let _ = writeln!(lines, "\n{}: unavailable ({err})", backend.as_str());
+                let _ = writeln!(lines, "\n{}: unavailable ({err})", target.label);
             }
         }
     }
@@ -127,9 +189,7 @@ fn main() {
             let _ = writeln!(
                 lines,
                 "\nrelative(mean recalc): {} / {} = {:.3}x",
-                a.backend.as_str(),
-                b.backend.as_str(),
-                ratio
+                a.backend_label, b.backend_label, ratio
             );
         }
     }
@@ -144,13 +204,13 @@ fn main() {
 }
 
 fn run_backend(
-    backend: CoreEngineId,
+    target: &BenchTarget,
     iterations: usize,
     workload: WorkloadConfig,
 ) -> Result<BenchResult, String> {
     let mut engine = Engine::try_new_with_config(EngineConfig {
-        coreengine: backend,
-        coreengine_dll: None,
+        coreengine: target.coreengine,
+        coreengine_dll: target.dll_path.clone(),
     })
     .map_err(|err| err.to_string())?;
 
@@ -237,7 +297,7 @@ fn run_backend(
         recalc_times_ms.iter().copied().sum::<f64>() / recalc_times_ms.len() as f64;
 
     Ok(BenchResult {
-        backend,
+        backend_label: target.label.clone(),
         setup_ms,
         initial_recalc_ms,
         recalc_min_ms,

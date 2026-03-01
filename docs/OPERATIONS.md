@@ -26,10 +26,12 @@ This guide applies to:
 Compatible engine implementations live under:
 - `engines/rust/<implementation-id>/`
 - `engines/dotnet/<implementation-id>/`
+- `engines/ocaml/<implementation-id>/`
 
 Examples:
 - `engines/rust/coreengine-rs-01/`
 - `engines/dotnet/coreengine-net-01/`
+- `engines/ocaml/coreengine-ocaml-01/`
 
 Repository reference backend note:
 - `crates/dnavisicalc-coreengine-rust/` is the in-workspace Rust reference backend used by current app crates.
@@ -142,6 +144,7 @@ Spec-derived implementation edit policy:
 `<implementation-id>` should include runtime and sequence:
 - Rust: `coreengine-rs-01`, `coreengine-rs-02`, ...
 - .NET: `coreengine-net-01`, `coreengine-net-02`, ...
+- OCaml: `coreengine-ocaml-01`, `coreengine-ocaml-02`, ...
 
 ## 10. Minimum Start Checklist
 
@@ -157,13 +160,22 @@ Use templates in:
 - `runs/templates/engine_impl/`
 
 Optional scaffold helper:
-- `scripts/new_engine_run.ps1 -Runtime <rust|dotnet> -ImplementationId <id> -SpecPackVersion <date>`
+- `scripts/new_engine_run.ps1 -Runtime <rust|dotnet|ocaml> -ImplementationId <id> -SpecPackVersion <date>`
 
 ## 12. Backend Selection Doctrine (runtime/testing)
 
 For conformance/perf/test runs, always pin both:
 - `DNAVISICALC_COREENGINE=<backend-id>`
 - `DNAVISICALC_COREENGINE_DLL=<absolute-path-to-target-dll>`
+
+Catalog-based selection is also supported when backend variants are pre-registered:
+- `DNAVISICALC_COREENGINE_TARGET=<hierarchical-catalog-name>`
+- optional `DNAVISICALC_COREENGINE_CATALOG=<catalog-path>` (default `coreengines/catalog.json`)
+
+Precedence:
+1. `DNAVISICALC_COREENGINE_DLL` (explicit DLL path)
+2. `DNAVISICALC_COREENGINE_TARGET` (+ catalog resolution)
+3. backend-id candidate resolution (`DNAVISICALC_COREENGINE`)
 
 Rationale:
 - avoids stale candidate DLL pickup,

@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory=$true)][ValidateSet('rust','dotnet')] [string]$Runtime,
+    [Parameter(Mandatory=$true)][ValidateSet('rust','dotnet','ocaml')] [string]$Runtime,
     [Parameter(Mandatory=$true)] [string]$ImplementationId,
     [Parameter(Mandatory=$false)] [string]$SpecPackVersion = '2026-02-27'
 )
