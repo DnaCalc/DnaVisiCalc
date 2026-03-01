@@ -237,7 +237,10 @@ fn render_capture_frame(frame: &mut ratatui::Frame, area: Rect, snapshot: &Captu
         lines.push(Line::from(spans));
     }
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), content_area);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        content_area,
+    );
 
     if let Some(cursor) = snapshot.cursor
         && cursor.x < content_area.width

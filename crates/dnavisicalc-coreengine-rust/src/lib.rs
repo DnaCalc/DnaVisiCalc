@@ -3310,7 +3310,7 @@ pub unsafe extern "C" fn dvc_udf_register(
                 handle,
                 status,
                 "dvc_udf_register: volatility must be standard/volatile/externally-invalidated",
-            )
+            );
         }
     };
     let udf = CApiUdf {
