@@ -5,14 +5,15 @@ namespace Dvc.Native;
 
 public static unsafe partial class Exports
 {
+    [DNNE.C99DeclCode(DnneNativeTypes.C99Declarations)]
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_set_number")]
-    public static int CellSetNumber(IntPtr enginePtr, DvcCellAddr addr, double value)
+    public static int CellSetNumber(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, double value)
     {
         return WithEngine(enginePtr, engine => (int)engine.SetCellNumber(addr, value));
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_set_text")]
-    public static int CellSetText(IntPtr enginePtr, DvcCellAddr addr, byte* text, uint textLen)
+    public static int CellSetText(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, byte* text, uint textLen)
     {
         return WithEngine(enginePtr, engine =>
         {
@@ -22,7 +23,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_set_formula")]
-    public static int CellSetFormula(IntPtr enginePtr, DvcCellAddr addr, byte* formula, uint formulaLen)
+    public static int CellSetFormula(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, byte* formula, uint formulaLen)
     {
         return WithEngine(enginePtr, engine =>
         {
@@ -32,13 +33,13 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_clear")]
-    public static int CellClear(IntPtr enginePtr, DvcCellAddr addr)
+    public static int CellClear(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr)
     {
         return WithEngine(enginePtr, engine => (int)engine.ClearCell(addr));
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_state")]
-    public static int CellGetState(IntPtr enginePtr, DvcCellAddr addr, DvcCellState* outState)
+    public static int CellGetState(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, [DNNE.C99Type("DvcCellState*")] DvcCellState* outState)
     {
         if (outState == null)
         {
@@ -54,7 +55,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_text")]
-    public static int CellGetText(IntPtr enginePtr, DvcCellAddr addr, byte* buf, uint bufLen, uint* outLen)
+    public static int CellGetText(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, byte* buf, uint bufLen, uint* outLen)
     {
         return WithEngine(enginePtr, engine =>
         {
@@ -69,7 +70,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_input_type")]
-    public static int CellGetInputType(IntPtr enginePtr, DvcCellAddr addr, DvcInputType* outType)
+    public static int CellGetInputType(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, [DNNE.C99Type("int32_t*")] DvcInputType* outType)
     {
         if (outType == null)
         {
@@ -85,7 +86,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_input_text")]
-    public static int CellGetInputText(IntPtr enginePtr, DvcCellAddr addr, byte* buf, uint bufLen, uint* outLen)
+    public static int CellGetInputText(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, byte* buf, uint bufLen, uint* outLen)
     {
         return WithEngine(enginePtr, engine =>
         {
@@ -128,7 +129,7 @@ public static unsafe partial class Exports
         WithA1(enginePtr, cellRef, refLen, (engine, addr) => (int)engine.ClearCell(addr));
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_state_a1")]
-    public static int CellGetStateA1(IntPtr enginePtr, byte* cellRef, uint refLen, DvcCellState* outState)
+    public static int CellGetStateA1(IntPtr enginePtr, byte* cellRef, uint refLen, [DNNE.C99Type("DvcCellState*")] DvcCellState* outState)
     {
         if (outState == null)
         {
@@ -159,7 +160,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_input_type_a1")]
-    public static int CellGetInputTypeA1(IntPtr enginePtr, byte* cellRef, uint refLen, DvcInputType* outType)
+    public static int CellGetInputTypeA1(IntPtr enginePtr, byte* cellRef, uint refLen, [DNNE.C99Type("int32_t*")] DvcInputType* outType)
     {
         if (outType == null)
         {
@@ -234,7 +235,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_name_get_input_type")]
-    public static int NameGetInputType(IntPtr enginePtr, byte* name, uint nameLen, DvcInputType* outType)
+    public static int NameGetInputType(IntPtr enginePtr, byte* name, uint nameLen, [DNNE.C99Type("int32_t*")] DvcInputType* outType)
     {
         if (outType == null)
         {
@@ -265,7 +266,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_format")]
-    public static int CellGetFormat(IntPtr enginePtr, DvcCellAddr addr, DvcCellFormat* outFormat)
+    public static int CellGetFormat(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, [DNNE.C99Type("DvcCellFormat*")] DvcCellFormat* outFormat)
     {
         if (outFormat == null)
         {
@@ -281,7 +282,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_set_format")]
-    public static int CellSetFormat(IntPtr enginePtr, DvcCellAddr addr, DvcCellFormat* format)
+    public static int CellSetFormat(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, [DNNE.C99Type("DvcCellFormat*")] DvcCellFormat* format)
     {
         if (format == null)
         {
@@ -292,7 +293,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_get_format_a1")]
-    public static int CellGetFormatA1(IntPtr enginePtr, byte* cellRef, uint refLen, DvcCellFormat* outFormat)
+    public static int CellGetFormatA1(IntPtr enginePtr, byte* cellRef, uint refLen, [DNNE.C99Type("DvcCellFormat*")] DvcCellFormat* outFormat)
     {
         if (outFormat == null)
         {
@@ -308,7 +309,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_set_format_a1")]
-    public static int CellSetFormatA1(IntPtr enginePtr, byte* cellRef, uint refLen, DvcCellFormat* format)
+    public static int CellSetFormatA1(IntPtr enginePtr, byte* cellRef, uint refLen, [DNNE.C99Type("DvcCellFormat*")] DvcCellFormat* format)
     {
         if (format == null)
         {
@@ -319,7 +320,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_spill_role")]
-    public static int CellSpillRole(IntPtr enginePtr, DvcCellAddr addr, DvcSpillRole* outRole)
+    public static int CellSpillRole(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, [DNNE.C99Type("int32_t*")] DvcSpillRole* outRole)
     {
         if (outRole == null)
         {
@@ -335,7 +336,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_spill_anchor")]
-    public static int CellSpillAnchor(IntPtr enginePtr, DvcCellAddr addr, DvcCellAddr* outAnchor, int* found)
+    public static int CellSpillAnchor(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, [DNNE.C99Type("DvcCellAddr*")] DvcCellAddr* outAnchor, int* found)
     {
         if (outAnchor == null || found == null)
         {
@@ -352,7 +353,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_spill_range")]
-    public static int CellSpillRange(IntPtr enginePtr, DvcCellAddr addr, DvcCellRange* outRange, int* found)
+    public static int CellSpillRange(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, [DNNE.C99Type("DvcCellRange*")] DvcCellRange* outRange, int* found)
     {
         if (outRange == null || found == null)
         {
@@ -414,3 +415,4 @@ public static unsafe partial class Exports
         return action(engine!);
     }
 }
+

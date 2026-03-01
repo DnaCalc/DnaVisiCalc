@@ -9,16 +9,17 @@ internal sealed record InputEntry(
     double Number,
     string Text,
     string Formula,
-    FormulaFeatures Features)
+    FormulaFeatures Features,
+    DvcEngineCore.ExprNode? ParsedFormula)
 {
     public static InputEntry NumberValue(double value) =>
-        new(DvcInputType.Number, value, string.Empty, string.Empty, default);
+        new(DvcInputType.Number, value, string.Empty, string.Empty, default, null);
 
     public static InputEntry TextValue(string value) =>
-        new(DvcInputType.Text, 0.0, value, string.Empty, default);
+        new(DvcInputType.Text, 0.0, value, string.Empty, default, null);
 
-    public static InputEntry FormulaValue(string formula, FormulaFeatures features) =>
-        new(DvcInputType.Formula, 0.0, string.Empty, formula, features);
+    public static InputEntry FormulaValue(string formula, FormulaFeatures features, DvcEngineCore.ExprNode? parsedFormula) =>
+        new(DvcInputType.Formula, 0.0, string.Empty, formula, features, parsedFormula);
 }
 
 internal readonly record struct CellEval(

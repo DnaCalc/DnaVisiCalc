@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Dvc.Core\Dvc.Core.csproj" />
@@ -9,9 +9,28 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <PublishAot>true</PublishAot>
-    <NativeLib>Shared</NativeLib>
+    <DvcExportVariant Condition="'$(DvcExportVariant)' == ''">native-aot</DvcExportVariant>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(DvcExportVariant)' == 'managed-jit'">
+    <PublishAot>false</PublishAot>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <SelfContained>false</SelfContained>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <DnneGenerateExports>true</DnneGenerateExports>
+    <DnneBuildExports>true</DnneBuildExports>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(DvcExportVariant)' == 'native-aot'">
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <DnneGenerateExports>false</DnneGenerateExports>
+    <DnneBuildExports>false</DnneBuildExports>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DNNE" Version="2.0.8" />
+  </ItemGroup>
 
 </Project>

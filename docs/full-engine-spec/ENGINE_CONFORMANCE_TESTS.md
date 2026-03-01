@@ -49,6 +49,8 @@ With iteration disabled:
 - `CT-DET-001`: verify INV-DET-001 with deterministic replay script.
 - `CT-STR-001`: verify INV-STR-001 for row/col structural rejection.
 - `CT-CYCLE-001`: verify INV-CYCLE-001 including diagnostic emission.
+- `CT-ENT-051`: verify non-consuming iterator probe/retry semantics for name/control/chart iterators.
+- `CT-UDF-035` (planned): verify UDF lifecycle and execution behavior (`register_udf`/`unregister_udf`, invocation, invalidation, volatility handling).
 
 ## 5. Harness Shape (Planned)
 - Shared scenario corpus (JSON/script form) with expected API-level observations.

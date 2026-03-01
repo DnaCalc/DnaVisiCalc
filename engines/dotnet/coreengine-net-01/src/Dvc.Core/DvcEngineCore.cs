@@ -33,6 +33,8 @@ public sealed partial class DvcEngineCore
     private DvcLastRejectContext _lastRejectContext = default;
     private bool _changeTrackingEnabled;
     private bool _cycleDetectedInCurrentRecalc;
+    private Dictionary<long, CellEval>? _activeCellCache;
+    private Dictionary<string, CellEval>? _activeNameCache;
 
     public DvcEngineCore()
     {
@@ -124,12 +126,12 @@ public sealed partial class DvcEngineCore
             return status;
         }
 
-        if (!TryValidateFormulaSyntax(formula))
+        if (!TryParseFormula(formula, out var parsed))
         {
             return MarkError(DvcStatus.ErrParse, "Formula parse failed.");
         }
 
-        _cells[addr.Key] = InputEntry.FormulaValue(formula, ClassifyFormula(formula));
+        _cells[addr.Key] = InputEntry.FormulaValue(formula, ClassifyFormula(formula), parsed);
         RecordChange(ChangeItem.CreateCell(addr, _committedEpoch + 1));
         return CommitMutation(false);
     }
@@ -253,12 +255,12 @@ public sealed partial class DvcEngineCore
             return status;
         }
 
-        if (!TryValidateFormulaSyntax(formula))
+        if (!TryParseFormula(formula, out var parsed))
         {
             return MarkError(DvcStatus.ErrParse, "Formula parse failed.");
         }
 
-        _names[norm] = InputEntry.FormulaValue(formula, ClassifyFormula(formula));
+        _names[norm] = InputEntry.FormulaValue(formula, ClassifyFormula(formula), parsed);
         RecordChange(ChangeItem.CreateName(norm, _committedEpoch + 1));
         return CommitMutation(false);
     }
@@ -315,6 +317,8 @@ public sealed partial class DvcEngineCore
         _spillMembers.Clear();
         var nextCells = new Dictionary<long, CellEval>();
         var nextNames = new Dictionary<string, CellEval>(StringComparer.Ordinal);
+        var visitingCells = new HashSet<long>();
+        var visitingNames = new HashSet<string>(StringComparer.Ordinal);
         var nonIterativeCycleDetected = false;
         var limit = _iterationConfig.Enabled == 1 ? Math.Max(1u, _iterationConfig.MaxIterations) : 1u;
         var prevCells = _cellComputed.ToDictionary(kv => kv.Key, kv => kv.Value);
@@ -324,17 +328,23 @@ public sealed partial class DvcEngineCore
         {
             nextCells.Clear();
             nextNames.Clear();
+            _activeCellCache = nextCells;
+            _activeNameCache = nextNames;
             _cycleDetectedInCurrentRecalc = false;
             foreach (var name in _names.Keys.OrderBy(x => x, StringComparer.Ordinal))
             {
-                var value = EvaluateName(name, [], []);
+                visitingCells.Clear();
+                visitingNames.Clear();
+                var value = EvaluateName(name, visitingCells, visitingNames);
                 nextNames[name] = value with { Epoch = _committedEpoch };
             }
 
             foreach (var cellKey in _cells.Keys.OrderBy(x => x))
             {
+                visitingCells.Clear();
+                visitingNames.Clear();
                 var addr = KeyToAddr(cellKey);
-                var value = EvaluateCell(addr, [], []);
+                var value = EvaluateCell(addr, visitingCells, visitingNames);
                 nextCells[cellKey] = value with { Epoch = _committedEpoch };
             }
 
@@ -353,6 +363,8 @@ public sealed partial class DvcEngineCore
             prevCells = nextCells.ToDictionary(kv => kv.Key, kv => kv.Value);
             prevNames = nextNames.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
         }
+        _activeCellCache = null;
+        _activeNameCache = null;
 
         _cellComputed.Clear();
         foreach (var kv in nextCells)
@@ -715,7 +727,7 @@ public sealed partial class DvcEngineCore
             if (entry.Kind == DvcInputType.Formula)
             {
                 var rewritten = RewriteFormulaRefs(entry.Formula, kind, at);
-                entry = InputEntry.FormulaValue(rewritten, ClassifyFormula(rewritten));
+                entry = InputEntry.FormulaValue(rewritten, ClassifyFormula(rewritten), ParseFormulaOrNull(rewritten));
             }
 
             nextCells[shifted.Key] = entry;
@@ -750,7 +762,7 @@ public sealed partial class DvcEngineCore
             if (value.Kind == DvcInputType.Formula)
             {
                 var rewritten = RewriteFormulaRefs(value.Formula, kind, at);
-                _names[name] = InputEntry.FormulaValue(rewritten, ClassifyFormula(rewritten));
+                _names[name] = InputEntry.FormulaValue(rewritten, ClassifyFormula(rewritten), ParseFormulaOrNull(rewritten));
             }
         }
 
@@ -804,6 +816,11 @@ public sealed partial class DvcEngineCore
 
     private CellEval EvaluateCell(DvcCellAddr addr, HashSet<long> visitingCells, HashSet<string> visitingNames)
     {
+        if (_activeCellCache is not null && _activeCellCache.TryGetValue(addr.Key, out var cached))
+        {
+            return cached;
+        }
+
         if (_spillMembers.TryGetValue(addr.Key, out var anchorKey) && _spillAnchors.TryGetValue(anchorKey, out var spill))
         {
             return spill.GetValue(addr);
@@ -827,28 +844,55 @@ public sealed partial class DvcEngineCore
 
         if (input.Kind == DvcInputType.Number)
         {
-            return CellEval.NumberValue(input.Number);
+            var scalar = CellEval.NumberValue(input.Number);
+            if (_activeCellCache is not null)
+            {
+                _activeCellCache[addr.Key] = scalar;
+            }
+
+            return scalar;
         }
 
         if (input.Kind == DvcInputType.Text)
         {
-            return CellEval.TextValue(input.Text);
+            var scalar = CellEval.TextValue(input.Text);
+            if (_activeCellCache is not null)
+            {
+                _activeCellCache[addr.Key] = scalar;
+            }
+
+            return scalar;
         }
 
         visitingCells.Add(addr.Key);
-        var eval = EvaluateFormula(input.Formula, addr, visitingCells, visitingNames);
+        var eval = EvaluateFormula(input, addr, visitingCells, visitingNames);
         visitingCells.Remove(addr.Key);
+        CellEval result;
         if (eval.Matrix is null)
         {
-            return eval.Scalar;
+            result = eval.Scalar;
+        }
+        else
+        {
+            var applied = TryApplySpill(addr, eval.Matrix, out var top);
+            result = applied ? top : CellEval.ErrorValue(DvcCellErrorKind.Spill, "Spill blocked.");
         }
 
-        var applied = TryApplySpill(addr, eval.Matrix, out var top);
-        return applied ? top : CellEval.ErrorValue(DvcCellErrorKind.Spill, "Spill blocked.");
+        if (_activeCellCache is not null)
+        {
+            _activeCellCache[addr.Key] = result;
+        }
+
+        return result;
     }
 
     private CellEval EvaluateName(string name, HashSet<long> visitingCells, HashSet<string> visitingNames)
     {
+        if (_activeNameCache is not null && _activeNameCache.TryGetValue(name, out var cached))
+        {
+            return cached;
+        }
+
         if (visitingNames.Contains(name))
         {
             if (_iterationConfig.Enabled == 0)
@@ -867,18 +911,36 @@ public sealed partial class DvcEngineCore
 
         if (input.Kind == DvcInputType.Number)
         {
-            return CellEval.NumberValue(input.Number);
+            var scalar = CellEval.NumberValue(input.Number);
+            if (_activeNameCache is not null)
+            {
+                _activeNameCache[name] = scalar;
+            }
+
+            return scalar;
         }
 
         if (input.Kind == DvcInputType.Text)
         {
-            return CellEval.TextValue(input.Text);
+            var scalar = CellEval.TextValue(input.Text);
+            if (_activeNameCache is not null)
+            {
+                _activeNameCache[name] = scalar;
+            }
+
+            return scalar;
         }
 
         visitingNames.Add(name);
-        var eval = EvaluateFormula(input.Formula, default, visitingCells, visitingNames);
+        var eval = EvaluateFormula(input, default, visitingCells, visitingNames);
         visitingNames.Remove(name);
-        return eval.Scalar;
+        var result = eval.Scalar;
+        if (_activeNameCache is not null)
+        {
+            _activeNameCache[name] = result;
+        }
+
+        return result;
     }
 
     private CellEval GetNonIterativeCycleFallback(DvcCellAddr addr)

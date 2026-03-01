@@ -222,6 +222,37 @@ public sealed class CoreEngineTests
     }
 
     [Fact]
+    public void Recalculate_EvaluatesSharedDependencyOncePerPass()
+    {
+        var engine = new DvcEngineCore();
+        Assert.Equal(DvcStatus.Ok, engine.SetRecalcMode(DvcRecalcMode.Manual));
+
+        var callCount = 0;
+        DvcStatus Tick(DvcCellValue[] _, out DvcCellValue result)
+        {
+            callCount++;
+            result = new DvcCellValue
+            {
+                Type = DvcValueType.Number,
+                Number = 1.0,
+            };
+            return DvcStatus.Ok;
+        }
+
+        Assert.Equal(DvcStatus.Ok, engine.UdfRegister("TICK", DvcVolatility.Standard, Tick));
+        Assert.Equal(DvcStatus.Ok, engine.SetCellFormula(new DvcCellAddr(1, 1), "=TICK()"));
+        Assert.Equal(DvcStatus.Ok, engine.SetCellFormula(new DvcCellAddr(2, 1), "=A1+A1"));
+        Assert.Equal(DvcStatus.Ok, engine.SetCellFormula(new DvcCellAddr(3, 1), "=B1+B1"));
+        Assert.Equal(DvcStatus.Ok, engine.SetCellFormula(new DvcCellAddr(4, 1), "=C1+C1"));
+        Assert.Equal(DvcStatus.Ok, engine.Recalculate());
+
+        Assert.Equal(1, callCount);
+        Assert.Equal(DvcStatus.Ok, engine.GetCellState(new DvcCellAddr(4, 1), out var state));
+        Assert.Equal(DvcValueType.Number, state.Value.Type);
+        Assert.Equal(8.0, state.Value.Number, 6);
+    }
+
+    [Fact]
     public void CycleBehavior_NonIterativeRecalculateUsesFallbackSemantics()
     {
         var engine = new DvcEngineCore();

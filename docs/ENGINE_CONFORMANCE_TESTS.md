@@ -79,8 +79,10 @@ Temporal property semantics are defined in `docs/ENGINE_FORMAL_PROPERTIES.md`.
 - `CT-STR-010`: mixed/absolute reference rewrite matrix under row/col insert/delete.
 - `CT-ARR-020`: dynamic-array spill anchor/range behavior under structural ops.
 - `CT-FN-030`: function-set parity corpus (`REQ-CALC-008`) across both engines.
+- `CT-UDF-035`: UDF lifecycle and execution (`register_udf`/`unregister_udf`, invocation, invalidation) including volatility/invalidation behavior.
 - `CT-ERR-040`: reject/error diagnostic surfaces (`dvc_last_*`) under malformed/invalid/rejected operations.
 - `CT-ENT-050`: controls/charts define/query/iterate/remove and persistence roundtrip.
+- `CT-ENT-051`: iterator probe/retry semantics for name/control/chart iterators (length-probe and insufficient-buffer calls are non-consuming).
 
 ## 6. Harness and Reporting Shape
 - Shared scenario corpus (`runs/conformance/scenarios/*`) with stable IDs.

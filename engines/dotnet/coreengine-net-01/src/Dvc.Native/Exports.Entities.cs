@@ -28,7 +28,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_iterator_next")]
-    public static int CellIteratorNext(IntPtr iterPtr, DvcCellAddr* outAddr, DvcInputType* outType, int* done)
+    public static int CellIteratorNext(IntPtr iterPtr, [DNNE.C99Type("DvcCellAddr*")] DvcCellAddr* outAddr, [DNNE.C99Type("int32_t*")] DvcInputType* outType, int* done)
     {
         if (done == null || outAddr == null || outType == null)
         {
@@ -93,7 +93,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_name_iterator_next")]
-    public static int NameIteratorNext(IntPtr iterPtr, byte* nameBuf, uint nameBufLen, uint* nameLen, DvcInputType* inputType, int* done)
+    public static int NameIteratorNext(IntPtr iterPtr, byte* nameBuf, uint nameBufLen, uint* nameLen, [DNNE.C99Type("int32_t*")] DvcInputType* inputType, int* done)
     {
         if (done == null || nameLen == null || inputType == null)
         {
@@ -179,7 +179,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_format_iterator_next")]
-    public static int FormatIteratorNext(IntPtr iterPtr, DvcCellAddr* outAddr, DvcCellFormat* outFormat, int* done)
+    public static int FormatIteratorNext(IntPtr iterPtr, [DNNE.C99Type("DvcCellAddr*")] DvcCellAddr* outAddr, [DNNE.C99Type("DvcCellFormat*")] DvcCellFormat* outFormat, int* done)
     {
         if (done == null || outAddr == null || outFormat == null)
         {
@@ -211,7 +211,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_control_define")]
-    public static int ControlDefine(IntPtr enginePtr, byte* name, uint nameLen, DvcControlDef* def)
+    public static int ControlDefine(IntPtr enginePtr, byte* name, uint nameLen, [DNNE.C99Type("DvcControlDef*")] DvcControlDef* def)
     {
         if (def == null)
         {
@@ -256,7 +256,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_control_get_def")]
-    public static int ControlGetDef(IntPtr enginePtr, byte* name, uint nameLen, DvcControlDef* outDef, int* found)
+    public static int ControlGetDef(IntPtr enginePtr, byte* name, uint nameLen, [DNNE.C99Type("DvcControlDef*")] DvcControlDef* outDef, int* found)
     {
         if (outDef == null || found == null)
         {
@@ -294,7 +294,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_control_iterator_next")]
-    public static int ControlIteratorNext(IntPtr iterPtr, byte* nameBuf, uint nameBufLen, uint* nameLen, DvcControlDef* def, double* value, int* done)
+    public static int ControlIteratorNext(IntPtr iterPtr, byte* nameBuf, uint nameBufLen, uint* nameLen, [DNNE.C99Type("DvcControlDef*")] DvcControlDef* def, double* value, int* done)
     {
         if (done == null || nameLen == null || def == null || value == null)
         {
@@ -348,7 +348,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_chart_define")]
-    public static int ChartDefine(IntPtr enginePtr, byte* name, uint nameLen, DvcChartDef* def)
+    public static int ChartDefine(IntPtr enginePtr, byte* name, uint nameLen, [DNNE.C99Type("DvcChartDef*")] DvcChartDef* def)
     {
         if (def == null)
         {
@@ -517,7 +517,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_chart_iterator_next")]
-    public static int ChartIteratorNext(IntPtr iterPtr, byte* nameBuf, uint nameBufLen, uint* nameLen, DvcChartDef* def, int* done)
+    public static int ChartIteratorNext(IntPtr iterPtr, byte* nameBuf, uint nameBufLen, uint* nameLen, [DNNE.C99Type("DvcChartDef*")] DvcChartDef* def, int* done)
     {
         if (done == null || nameLen == null || def == null)
         {
@@ -570,7 +570,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_udf_register")]
-    public static int UdfRegister(IntPtr enginePtr, byte* name, uint nameLen, IntPtr callback, void* userData, DvcVolatility volatility)
+    public static int UdfRegister(IntPtr enginePtr, byte* name, uint nameLen, IntPtr callback, void* userData, [DNNE.C99Type("int32_t")] DvcVolatility volatility)
     {
         if (callback == IntPtr.Zero)
         {
@@ -644,7 +644,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_change_iterator_next")]
-    public static int ChangeIteratorNext(IntPtr iterPtr, DvcChangeType* outType, ulong* outEpoch, int* done)
+    public static int ChangeIteratorNext(IntPtr iterPtr, [DNNE.C99Type("int32_t*")] DvcChangeType* outType, ulong* outEpoch, int* done)
     {
         if (done == null || outType == null || outEpoch == null)
         {
@@ -670,7 +670,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_change_get_cell")]
-    public static int ChangeGetCell(IntPtr iterPtr, DvcCellAddr* outAddr)
+    public static int ChangeGetCell(IntPtr iterPtr, [DNNE.C99Type("DvcCellAddr*")] DvcCellAddr* outAddr)
     {
         if (outAddr == null)
         {
@@ -709,7 +709,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_change_get_spill")]
-    public static int ChangeGetSpill(IntPtr iterPtr, DvcCellAddr* anchor, DvcCellRange* oldRange, int* hadOld, DvcCellRange* newRange, int* hasNew)
+    public static int ChangeGetSpill(IntPtr iterPtr, [DNNE.C99Type("DvcCellAddr*")] DvcCellAddr* anchor, [DNNE.C99Type("DvcCellRange*")] DvcCellRange* oldRange, int* hadOld, [DNNE.C99Type("DvcCellRange*")] DvcCellRange* newRange, int* hasNew)
     {
         if (anchor == null || oldRange == null || hadOld == null || newRange == null || hasNew == null)
         {
@@ -730,7 +730,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_change_get_format")]
-    public static int ChangeGetFormat(IntPtr iterPtr, DvcCellAddr* addr, DvcCellFormat* oldFmt, DvcCellFormat* newFmt)
+    public static int ChangeGetFormat(IntPtr iterPtr, [DNNE.C99Type("DvcCellAddr*")] DvcCellAddr* addr, [DNNE.C99Type("DvcCellFormat*")] DvcCellFormat* oldFmt, [DNNE.C99Type("DvcCellFormat*")] DvcCellFormat* newFmt)
     {
         if (addr == null || oldFmt == null || newFmt == null)
         {
@@ -749,7 +749,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_change_get_diagnostic")]
-    public static int ChangeGetDiagnostic(IntPtr iterPtr, DvcDiagnosticCode* code, byte* buf, uint bufLen, uint* outLen)
+    public static int ChangeGetDiagnostic(IntPtr iterPtr, [DNNE.C99Type("int32_t*")] DvcDiagnosticCode* code, byte* buf, uint bufLen, uint* outLen)
     {
         if (code == null)
         {
@@ -772,3 +772,4 @@ public static unsafe partial class Exports
         return (int)DvcStatus.Ok;
     }
 }
+

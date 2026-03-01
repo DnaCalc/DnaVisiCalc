@@ -754,6 +754,11 @@ Iterators provide forward-only traversal of bulk data in deterministic order. Th
 
 Iterators capture a snapshot of the data at creation time. Mutations to the engine during iteration do not affect the iterator's output, but the iterator must be destroyed before the engine is destroyed.
 
+Iterator advancement contract:
+- A `next` call is consuming only when it returns `DVC_OK` with `*done == 0` and a record is successfully emitted.
+- Non-consuming calls (for example invalid-argument errors, or string-length probe calls described below) must leave iterator position unchanged.
+- Callers may therefore probe required string lengths and retry with a larger buffer without losing entries.
+
 ### Cell Input Iterator
 
 ```c
@@ -792,6 +797,8 @@ DvcStatus dvc_name_iterator_destroy(DvcNameIterator *iter);
 ```
 
 Iterates over all named values in alphabetical order.
+
+For `dvc_name_iterator_next`, if `name_buf == NULL` and `name_len != NULL`, the call is a length probe for the current entry and must be non-consuming. If `name_buf` is non-NULL but `name_buf_len` is insufficient, return `DVC_ERR_INVALID_ARGUMENT` and do not advance.
 
 ### Format Iterator
 
@@ -981,6 +988,8 @@ DvcStatus dvc_control_iterator_destroy(DvcControlIterator *iter);
 
 Iterates over all controls in alphabetical order by name. Each iteration step produces the control name, definition, and current value.
 
+For `dvc_control_iterator_next`, if `name_buf == NULL` and `name_len != NULL`, the call is a length probe for the current entry and must be non-consuming. If `name_buf` is non-NULL but `name_buf_len` is insufficient, return `DVC_ERR_INVALID_ARGUMENT` and do not advance.
+
 ## 14. Chart Functions
 
 Charts are sink nodes in the dependency graph. See [ENGINE_DESIGN_NOTES.md §3](ENGINE_DESIGN_NOTES.md#3-charts-as-engine-entities) for design rationale.
@@ -1064,6 +1073,8 @@ DvcStatus dvc_chart_iterator_destroy(DvcChartIterator *iter);
 ```
 
 Iterates over all chart definitions in alphabetical order.
+
+For `dvc_chart_iterator_next`, if `name_buf == NULL` and `name_len != NULL`, the call is a length probe for the current entry and must be non-consuming. If `name_buf` is non-NULL but `name_buf_len` is insufficient, return `DVC_ERR_INVALID_ARGUMENT` and do not advance.
 
 ## 15. UDF Registration Functions
 

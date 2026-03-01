@@ -5,14 +5,9 @@ namespace Dvc.Core;
 internal sealed class ExprParser
 {
     private readonly string _text;
-    private readonly Func<CellAddressToken, EvalValue> _cellResolver;
-    private readonly Func<string, EvalValue> _nameResolver;
     private int _pos;
 
-    public ExprParser(
-        string formula,
-        Func<CellAddressToken, EvalValue> cellResolver,
-        Func<string, EvalValue> nameResolver)
+    public ExprParser(string formula)
     {
         _text = formula.Trim();
         if (_text.StartsWith('='))
@@ -24,9 +19,6 @@ internal sealed class ExprParser
         {
             _text = _text[1..];
         }
-
-        _cellResolver = cellResolver;
-        _nameResolver = nameResolver;
     }
 
     public bool TryParse(out DvcEngineCore.ExprNode root)
@@ -299,7 +291,6 @@ internal sealed class ExprParser
             node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.Cell)
             {
                 CellToken = cell,
-                CellResolver = _cellResolver,
             };
             return true;
         }
@@ -307,7 +298,6 @@ internal sealed class ExprParser
         node = new DvcEngineCore.ExprNode(DvcEngineCore.ExprKind.Name)
         {
             Name = literal,
-            NameResolver = _nameResolver,
         };
         return true;
     }

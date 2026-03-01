@@ -22,48 +22,37 @@ public sealed partial class DvcEngineCore
         return new FormulaFeatures(hasVol, hasStream, hasStream);
     }
 
-    private bool TryValidateFormulaSyntax(string formula)
+    private static bool TryParseFormula(string formula, out ExprNode ast)
     {
-        var parser = new ExprParser(formula, _ => EvalValue.FromScalar(CellEval.NumberValue(0.0)), _ => EvalValue.FromScalar(CellEval.NumberValue(0.0)));
-        return parser.TryParse(out _);
+        var parser = new ExprParser(formula);
+        return parser.TryParse(out ast);
     }
 
-    private EvalValue EvaluateFormula(string formula, DvcCellAddr self, HashSet<long> visitingCells, HashSet<string> visitingNames)
+    private static ExprNode? ParseFormulaOrNull(string formula)
     {
+        if (formula.Contains("#REF!", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return TryParseFormula(formula, out var ast) ? ast : null;
+    }
+
+    private EvalValue EvaluateFormula(InputEntry input, DvcCellAddr self, HashSet<long> visitingCells, HashSet<string> visitingNames)
+    {
+        var formula = input.Formula;
         if (formula.Contains("#REF!", StringComparison.OrdinalIgnoreCase))
         {
             return EvalValue.FromScalar(CellEval.ErrorValue(DvcCellErrorKind.Ref, "Formula contains invalid reference."));
         }
 
-        EvalValue ResolveCell(CellAddressToken token)
-        {
-            var addr = token.ToAbsolute(self);
-            if (!IsInBounds(addr))
-            {
-                return EvalValue.FromScalar(CellEval.ErrorValue(DvcCellErrorKind.Ref, "Cell reference out of bounds."));
-            }
-
-            return EvalValue.FromScalar(EvaluateCell(addr, visitingCells, visitingNames));
-        }
-
-        EvalValue ResolveName(string name)
-        {
-            var norm = name.ToUpperInvariant();
-            if (!_names.ContainsKey(norm))
-            {
-                return EvalValue.FromScalar(CellEval.ErrorValue(DvcCellErrorKind.UnknownName, "Unknown name."));
-            }
-
-            return EvalValue.FromScalar(EvaluateName(norm, visitingCells, visitingNames));
-        }
-
-        var parser = new ExprParser(formula, ResolveCell, ResolveName);
-        if (!parser.TryParse(out var ast))
+        var ast = input.ParsedFormula;
+        if (ast is null && !TryParseFormula(formula, out ast))
         {
             return EvalValue.FromScalar(CellEval.ErrorValue(DvcCellErrorKind.Value, "Formula parse failed."));
         }
 
-        return EvalAst(ast, self, visitingCells, visitingNames);
+        return EvalAst(ast!, self, visitingCells, visitingNames);
     }
 
     private EvalValue EvalAst(ExprNode node, DvcCellAddr self, HashSet<long> visitingCells, HashSet<string> visitingNames)
@@ -77,7 +66,15 @@ public sealed partial class DvcEngineCore
             case ExprKind.Bool:
                 return EvalValue.FromScalar(CellEval.BoolValue(node.Bool != 0));
             case ExprKind.Cell:
-                return node.CellResolver!(node.CellToken);
+            {
+                var addr = node.CellToken.ToAbsolute(self);
+                if (!IsInBounds(addr))
+                {
+                    return EvalValue.FromScalar(CellEval.ErrorValue(DvcCellErrorKind.Ref, "Cell reference out of bounds."));
+                }
+
+                return EvalValue.FromScalar(EvaluateCell(addr, visitingCells, visitingNames));
+            }
             case ExprKind.SpillRef:
             {
                 var anchor = node.CellToken.ToAbsolute(self);
@@ -99,7 +96,15 @@ public sealed partial class DvcEngineCore
                 return EvalValue.FromMatrix(spill.Matrix);
             }
             case ExprKind.Name:
-                return node.NameResolver!(node.Name);
+            {
+                var norm = node.Name.ToUpperInvariant();
+                if (!_names.ContainsKey(norm))
+                {
+                    return EvalValue.FromScalar(CellEval.ErrorValue(DvcCellErrorKind.UnknownName, "Unknown name."));
+                }
+
+                return EvalValue.FromScalar(EvaluateName(norm, visitingCells, visitingNames));
+            }
             case ExprKind.Unary:
             {
                 var inner = EvalAst(node.Arguments[0], self, visitingCells, visitingNames).Scalar;
@@ -722,8 +727,6 @@ public sealed partial class DvcEngineCore
         public string Operator { get; init; } = string.Empty;
         public IReadOnlyList<ExprNode> Arguments { get; init; } = Array.Empty<ExprNode>();
         public CellAddressToken CellToken { get; init; }
-        public Func<CellAddressToken, EvalValue>? CellResolver { get; init; }
-        public Func<string, EvalValue>? NameResolver { get; init; }
         public CellAddressToken? RangeStart { get; init; }
         public CellAddressToken? RangeEnd { get; init; }
     }

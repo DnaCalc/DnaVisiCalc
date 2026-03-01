@@ -29,7 +29,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_engine_create_with_bounds")]
-    public static int EngineCreateWithBounds(DvcSheetBounds bounds, IntPtr* outEngine)
+    public static int EngineCreateWithBounds([DNNE.C99Type("DvcSheetBounds")] DvcSheetBounds bounds, IntPtr* outEngine)
     {
         if (outEngine == null)
         {
@@ -72,7 +72,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_engine_bounds")]
-    public static int EngineBounds(IntPtr enginePtr, DvcSheetBounds* outBounds)
+    public static int EngineBounds(IntPtr enginePtr, [DNNE.C99Type("DvcSheetBounds*")] DvcSheetBounds* outBounds)
     {
         if (outBounds == null)
         {
@@ -89,7 +89,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_engine_get_recalc_mode")]
-    public static int EngineGetRecalcMode(IntPtr enginePtr, DvcRecalcMode* outMode)
+    public static int EngineGetRecalcMode(IntPtr enginePtr, [DNNE.C99Type("int32_t*")] DvcRecalcMode* outMode)
     {
         if (outMode == null)
         {
@@ -107,7 +107,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_engine_set_recalc_mode")]
-    public static int EngineSetRecalcMode(IntPtr enginePtr, DvcRecalcMode mode)
+    public static int EngineSetRecalcMode(IntPtr enginePtr, [DNNE.C99Type("int32_t")] DvcRecalcMode mode)
     {
         if (!NativeHelpers.TryGetEngine(enginePtr, out var engine, out var status))
         {
@@ -271,7 +271,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_engine_get_iteration_config")]
-    public static int GetIterationConfig(IntPtr enginePtr, DvcIterationConfig* outCfg)
+    public static int GetIterationConfig(IntPtr enginePtr, [DNNE.C99Type("DvcIterationConfig*")] DvcIterationConfig* outCfg)
     {
         if (outCfg == null)
         {
@@ -287,7 +287,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_engine_set_iteration_config")]
-    public static int SetIterationConfig(IntPtr enginePtr, DvcIterationConfig* cfg)
+    public static int SetIterationConfig(IntPtr enginePtr, [DNNE.C99Type("DvcIterationConfig*")] DvcIterationConfig* cfg)
     {
         if (cfg == null)
         {
@@ -315,7 +315,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_last_error_kind")]
-    public static int LastErrorKind(IntPtr enginePtr, DvcStatus* outStatus)
+    public static int LastErrorKind(IntPtr enginePtr, [DNNE.C99Type("int32_t*")] DvcStatus* outStatus)
     {
         if (outStatus == null)
         {
@@ -333,7 +333,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_last_reject_kind")]
-    public static int LastRejectKind(IntPtr enginePtr, DvcRejectKind* outKind)
+    public static int LastRejectKind(IntPtr enginePtr, [DNNE.C99Type("int32_t*")] DvcRejectKind* outKind)
     {
         if (outKind == null)
         {
@@ -351,7 +351,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_last_reject_context")]
-    public static int LastRejectContext(IntPtr enginePtr, DvcLastRejectContext* outContext)
+    public static int LastRejectContext(IntPtr enginePtr, [DNNE.C99Type("DvcLastRejectContext*")] DvcLastRejectContext* outContext)
     {
         if (outContext == null)
         {
@@ -369,7 +369,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_cell_error_message")]
-    public static int CellErrorMessage(IntPtr enginePtr, DvcCellAddr addr, byte* buf, uint bufLen, uint* outLen)
+    public static int CellErrorMessage(IntPtr enginePtr, [DNNE.C99Type("DvcCellAddr")] DvcCellAddr addr, byte* buf, uint bufLen, uint* outLen)
     {
         if (!NativeHelpers.TryGetEngine(enginePtr, out var engine, out var status))
         {
@@ -386,7 +386,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_palette_color_name")]
-    public static int PaletteColorName(DvcPaletteColor color, byte* buf, uint bufLen, uint* outLen)
+    public static int PaletteColorName([DNNE.C99Type("int32_t")] DvcPaletteColor color, byte* buf, uint bufLen, uint* outLen)
     {
         if (!DvcEngineCore.TryPaletteColorName(color, out var name))
         {
@@ -402,7 +402,7 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly(EntryPoint = "dvc_parse_cell_ref")]
-    public static int ParseCellRef(IntPtr enginePtr, byte* text, uint textLen, DvcCellAddr* outAddr)
+    public static int ParseCellRef(IntPtr enginePtr, byte* text, uint textLen, [DNNE.C99Type("DvcCellAddr*")] DvcCellAddr* outAddr)
     {
         if (outAddr == null)
         {
@@ -429,3 +429,4 @@ public static unsafe partial class Exports
         return status;
     }
 }
+
