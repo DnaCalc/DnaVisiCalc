@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 
 use crate::address::{
     AddressError, CellRange, CellRef, DEFAULT_SHEET_BOUNDS, SheetBounds, col_index_to_label,
@@ -293,7 +294,7 @@ enum NameEntry {
 #[derive(Debug, Clone)]
 struct FormulaEntry {
     source: String,
-    expr: Expr,
+    expr: Rc<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -358,6 +359,14 @@ pub struct Engine {
     change_tracking_enabled: bool,
     /// Accumulated change entries since last drain.
     change_journal: Vec<ChangeEntry>,
+    /// Pre-split eval maps, kept in sync with cells/names for zero-copy
+    /// borrowing by EvalContext. Avoids rebuilding 6 HashMaps on every recalc.
+    eval_formulas: HashMap<CellRef, Rc<Expr>>,
+    eval_literals: HashMap<CellRef, f64>,
+    eval_text_literals: HashMap<CellRef, String>,
+    eval_name_formulas: HashMap<String, Rc<Expr>>,
+    eval_name_literals: HashMap<String, f64>,
+    eval_name_text_literals: HashMap<String, String>,
 }
 
 impl Default for Engine {
@@ -400,6 +409,12 @@ impl Engine {
             chart_outputs: HashMap::new(),
             change_tracking_enabled: false,
             change_journal: Vec::new(),
+            eval_formulas: HashMap::new(),
+            eval_literals: HashMap::new(),
+            eval_text_literals: HashMap::new(),
+            eval_name_formulas: HashMap::new(),
+            eval_name_literals: HashMap::new(),
+            eval_name_text_literals: HashMap::new(),
         }
     }
 
@@ -452,6 +467,12 @@ impl Engine {
         self.dirty_names.clear();
         self.full_recalc_needed = true;
         self.reverse_deps.clear();
+        self.eval_formulas.clear();
+        self.eval_literals.clear();
+        self.eval_text_literals.clear();
+        self.eval_name_formulas.clear();
+        self.eval_name_literals.clear();
+        self.eval_name_text_literals.clear();
         self.controls.clear();
         self.charts.clear();
         self.chart_outputs.clear();
@@ -499,6 +520,9 @@ impl Engine {
         )?;
 
         self.controls.insert(key.clone(), def);
+        self.eval_name_formulas.remove(&key);
+        self.eval_name_text_literals.remove(&key);
+        self.eval_name_literals.insert(key.clone(), initial);
         self.names.insert(key.clone(), NameEntry::Number(initial));
         self.dirty_names.insert(key);
         self.full_recalc_needed = true;
@@ -625,7 +649,10 @@ impl Engine {
         if was_formula {
             self.remove_reverse_deps_for(cell);
             self.full_recalc_needed = true;
+            self.eval_formulas.remove(&cell);
         }
+        self.eval_text_literals.remove(&cell);
+        self.eval_literals.insert(cell, number);
         self.cells.insert(cell, CellEntry::Number(number));
         self.committed_epoch += 1;
         self.dirty_cells.insert(cell);
@@ -658,8 +685,11 @@ impl Engine {
         if was_formula {
             self.remove_reverse_deps_for(cell);
             self.full_recalc_needed = true;
+            self.eval_formulas.remove(&cell);
         }
+        self.eval_literals.remove(&cell);
         let text = text.into();
+        self.eval_text_literals.insert(cell, text.clone());
         self.cells.insert(cell, CellEntry::Text(text.clone()));
         self.committed_epoch += 1;
         self.dirty_cells.insert(cell);
@@ -688,6 +718,10 @@ impl Engine {
         if matches!(self.cells.get(&cell), Some(CellEntry::Formula(_))) {
             self.remove_reverse_deps_for(cell);
         }
+        self.eval_literals.remove(&cell);
+        self.eval_text_literals.remove(&cell);
+        let expr = Rc::new(expr);
+        self.eval_formulas.insert(cell, Rc::clone(&expr));
         self.cells.insert(
             cell,
             CellEntry::Formula(FormulaEntry {
@@ -712,7 +746,10 @@ impl Engine {
         if was_formula {
             self.remove_reverse_deps_for(cell);
             self.full_recalc_needed = true;
+            self.eval_formulas.remove(&cell);
         }
+        self.eval_literals.remove(&cell);
+        self.eval_text_literals.remove(&cell);
         self.cells.remove(&cell);
         self.values.remove(&cell);
         self.dirty_cells.insert(cell);
@@ -737,6 +774,9 @@ impl Engine {
             .unwrap_or(Value::Blank);
         self.dirty_names.insert(key.clone());
         self.full_recalc_needed = true; // names affect all formulas referencing them
+        self.eval_name_formulas.remove(&key);
+        self.eval_name_text_literals.remove(&key);
+        self.eval_name_literals.insert(key.clone(), number);
         self.names.insert(key.clone(), NameEntry::Number(number));
         self.committed_epoch += 1;
         self.name_values.insert(
@@ -771,6 +811,9 @@ impl Engine {
         self.dirty_names.insert(key.clone());
         self.full_recalc_needed = true;
         let text = text.into();
+        self.eval_name_formulas.remove(&key);
+        self.eval_name_literals.remove(&key);
+        self.eval_name_text_literals.insert(key.clone(), text.clone());
         self.names
             .insert(key.clone(), NameEntry::Text(text.clone()));
         self.committed_epoch += 1;
@@ -796,7 +839,10 @@ impl Engine {
         let key = self.normalize_name(name)?;
         self.dirty_names.insert(key.clone());
         self.full_recalc_needed = true;
-        let expr = parse_formula(formula, self.bounds)?;
+        let expr = Rc::new(parse_formula(formula, self.bounds)?);
+        self.eval_name_literals.remove(&key);
+        self.eval_name_text_literals.remove(&key);
+        self.eval_name_formulas.insert(key.clone(), Rc::clone(&expr));
         self.names.insert(
             key,
             NameEntry::Formula(FormulaEntry {
@@ -825,6 +871,9 @@ impl Engine {
             .unwrap_or(Value::Blank);
         self.dirty_names.insert(key.clone());
         self.full_recalc_needed = true;
+        self.eval_name_formulas.remove(&key);
+        self.eval_name_literals.remove(&key);
+        self.eval_name_text_literals.remove(&key);
         self.names.remove(&key);
         self.name_values.remove(&key);
         self.committed_epoch += 1;
@@ -953,7 +1002,7 @@ impl Engine {
                         cell,
                         CellEntry::Formula(FormulaEntry {
                             source: new_source,
-                            expr: new_expr,
+                            expr: Rc::new(new_expr),
                         }),
                     );
                 } else {
@@ -987,7 +1036,7 @@ impl Engine {
                         name,
                         NameEntry::Formula(FormulaEntry {
                             source: new_source,
-                            expr: new_expr,
+                            expr: Rc::new(new_expr),
                         }),
                     );
                 } else {
@@ -1013,6 +1062,8 @@ impl Engine {
         self.dirty_cells.clear();
         self.dirty_names.clear();
         self.full_recalc_needed = true;
+        // Rebuild eval maps from the restructured cells/names.
+        self.rebuild_eval_maps();
         self.committed_epoch += 1;
         self.maybe_recalculate()
     }
@@ -1036,39 +1087,13 @@ impl Engine {
     /// Full recalculation: rebuild dependency graph, evaluate all formulas.
     fn recalculate_full(&mut self) -> Result<(), EngineError> {
         let baseline = self.capture_change_baseline();
-        let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
-        let mut literals: HashMap<CellRef, f64> = HashMap::new();
-        let mut text_literals: HashMap<CellRef, String> = HashMap::new();
-        let mut name_formulas: HashMap<String, Expr> = HashMap::new();
-        let mut name_literals: HashMap<String, f64> = HashMap::new();
-        let mut name_text_literals: HashMap<String, String> = HashMap::new();
-
-        for (cell, entry) in &self.cells {
-            match entry {
-                CellEntry::Number(n) => {
-                    literals.insert(*cell, *n);
-                }
-                CellEntry::Text(t) => {
-                    text_literals.insert(*cell, t.clone());
-                }
-                CellEntry::Formula(formula) => {
-                    formulas.insert(*cell, formula.expr.clone());
-                }
-            }
-        }
-        for (name, entry) in &self.names {
-            match entry {
-                NameEntry::Number(n) => {
-                    name_literals.insert(name.clone(), *n);
-                }
-                NameEntry::Text(t) => {
-                    name_text_literals.insert(name.clone(), t.clone());
-                }
-                NameEntry::Formula(formula) => {
-                    name_formulas.insert(name.clone(), formula.expr.clone());
-                }
-            }
-        }
+        // Take cached eval maps (O(1) pointer swaps) instead of rebuilding them.
+        let formulas = std::mem::take(&mut self.eval_formulas);
+        let literals = std::mem::take(&mut self.eval_literals);
+        let text_literals = std::mem::take(&mut self.eval_text_literals);
+        let name_formulas = std::mem::take(&mut self.eval_name_formulas);
+        let name_literals = std::mem::take(&mut self.eval_name_literals);
+        let name_text_literals = std::mem::take(&mut self.eval_name_text_literals);
 
         let tree = build_calc_tree_allow_cycles(&formulas);
 
@@ -1299,11 +1324,24 @@ impl Engine {
         self.spill_ranges = spill_ranges;
         self.chart_outputs = new_chart_outputs;
         self.stabilized_epoch = self.committed_epoch;
-        self.calc_tree = Some(tree);
         self.last_eval_count = eval_count;
 
-        // Rebuild reverse dependency map after full recalc.
-        self.rebuild_reverse_deps();
+        // Rebuild reverse dependency map from the calc tree nodes (which already
+        // have pre-computed dependencies), avoiding a redundant O(N) AST walk.
+        self.reverse_deps.clear();
+        for (cell, node) in &tree.nodes {
+            for dep in &node.dependencies {
+                self.reverse_deps.entry(*dep).or_default().insert(*cell);
+            }
+        }
+        self.calc_tree = Some(tree);
+        // Restore the cached eval maps.
+        self.eval_formulas = formulas;
+        self.eval_literals = literals;
+        self.eval_text_literals = text_literals;
+        self.eval_name_formulas = name_formulas;
+        self.eval_name_literals = name_literals;
+        self.eval_name_text_literals = name_text_literals;
         self.dirty_cells.clear();
         self.dirty_names.clear();
         self.full_recalc_needed = false;
@@ -1320,41 +1358,13 @@ impl Engine {
         // Compute dirty closure: all formula cells transitively dependent on dirty cells.
         let dirty_closure = self.compute_dirty_closure();
 
-        // Build evaluation context (same as full recalc — we need all formulas
-        // available since dirty cells might reference any cell).
-        let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
-        let mut literals: HashMap<CellRef, f64> = HashMap::new();
-        let mut text_literals: HashMap<CellRef, String> = HashMap::new();
-        let mut name_formulas: HashMap<String, Expr> = HashMap::new();
-        let mut name_literals: HashMap<String, f64> = HashMap::new();
-        let mut name_text_literals: HashMap<String, String> = HashMap::new();
-
-        for (cell, entry) in &self.cells {
-            match entry {
-                CellEntry::Number(n) => {
-                    literals.insert(*cell, *n);
-                }
-                CellEntry::Text(t) => {
-                    text_literals.insert(*cell, t.clone());
-                }
-                CellEntry::Formula(formula) => {
-                    formulas.insert(*cell, formula.expr.clone());
-                }
-            }
-        }
-        for (name, entry) in &self.names {
-            match entry {
-                NameEntry::Number(n) => {
-                    name_literals.insert(name.clone(), *n);
-                }
-                NameEntry::Text(t) => {
-                    name_text_literals.insert(name.clone(), t.clone());
-                }
-                NameEntry::Formula(formula) => {
-                    name_formulas.insert(name.clone(), formula.expr.clone());
-                }
-            }
-        }
+        // Take cached eval maps (O(1) pointer swaps) instead of rebuilding them.
+        let formulas = std::mem::take(&mut self.eval_formulas);
+        let literals = std::mem::take(&mut self.eval_literals);
+        let text_literals = std::mem::take(&mut self.eval_text_literals);
+        let name_formulas = std::mem::take(&mut self.eval_name_formulas);
+        let name_literals = std::mem::take(&mut self.eval_name_literals);
+        let name_text_literals = std::mem::take(&mut self.eval_name_text_literals);
 
         // We still need the CalcTree for evaluation order.
         // Use the cached tree (we know it exists since we checked in recalculate()).
@@ -1623,6 +1633,13 @@ impl Engine {
         self.stabilized_epoch = self.committed_epoch;
         self.calc_tree = Some(tree);
         self.last_eval_count = eval_count;
+        // Restore the cached eval maps.
+        self.eval_formulas = formulas;
+        self.eval_literals = literals;
+        self.eval_text_literals = text_literals;
+        self.eval_name_formulas = name_formulas;
+        self.eval_name_literals = name_literals;
+        self.eval_name_text_literals = name_text_literals;
         self.dirty_cells.clear();
         self.dirty_names.clear();
         if let Some(baseline) = baseline {
@@ -2304,14 +2321,38 @@ impl Engine {
         }
     }
 
-    /// Rebuild the reverse dependency map from scratch.
-    fn rebuild_reverse_deps(&mut self) {
-        self.reverse_deps.clear();
+    /// Rebuild the cached eval maps from scratch (used after structural ops).
+    fn rebuild_eval_maps(&mut self) {
+        self.eval_formulas.clear();
+        self.eval_literals.clear();
+        self.eval_text_literals.clear();
         for (cell, entry) in &self.cells {
-            if let CellEntry::Formula(fe) = entry {
-                let deps = crate::deps::dependencies_for_expr(&fe.expr);
-                for dep in deps {
-                    self.reverse_deps.entry(dep).or_default().insert(*cell);
+            match entry {
+                CellEntry::Number(n) => {
+                    self.eval_literals.insert(*cell, *n);
+                }
+                CellEntry::Text(t) => {
+                    self.eval_text_literals.insert(*cell, t.clone());
+                }
+                CellEntry::Formula(formula) => {
+                    self.eval_formulas.insert(*cell, Rc::clone(&formula.expr));
+                }
+            }
+        }
+        self.eval_name_formulas.clear();
+        self.eval_name_literals.clear();
+        self.eval_name_text_literals.clear();
+        for (name, entry) in &self.names {
+            match entry {
+                NameEntry::Number(n) => {
+                    self.eval_name_literals.insert(name.clone(), *n);
+                }
+                NameEntry::Text(t) => {
+                    self.eval_name_text_literals.insert(name.clone(), t.clone());
+                }
+                NameEntry::Formula(formula) => {
+                    self.eval_name_formulas
+                        .insert(name.clone(), Rc::clone(&formula.expr));
                 }
             }
         }

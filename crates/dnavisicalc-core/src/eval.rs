@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 
 use crate::address::CellRef;
 use crate::address::{AddressError, parse_cell_ref};
@@ -320,16 +321,18 @@ impl<F: Fn(&[Value]) -> Value> UdfHandler for FnUdfWithVolatility<F> {
 }
 
 pub struct EvalContext<'a> {
-    formulas: &'a HashMap<CellRef, Expr>,
+    formulas: &'a HashMap<CellRef, Rc<Expr>>,
     literals: &'a HashMap<CellRef, f64>,
     text_literals: &'a HashMap<CellRef, String>,
-    name_formulas: &'a HashMap<String, Expr>,
+    name_formulas: &'a HashMap<String, Rc<Expr>>,
     name_literals: &'a HashMap<String, f64>,
     name_text_literals: &'a HashMap<String, String>,
     bounds: SheetBounds,
     cache: HashMap<CellRef, RuntimeValue>,
     name_cache: HashMap<String, RuntimeValue>,
     stack: Vec<EvalStackNode>,
+    /// O(1) lookup set for cell cycle detection — mirrors Cell entries in stack.
+    cell_stack_set: HashSet<CellRef>,
     local_scopes: Vec<HashMap<String, RuntimeValue>>,
     recalc_serial: u64,
     random_counter: u64,
@@ -364,10 +367,10 @@ enum EvalStackNode {
 
 impl<'a> EvalContext<'a> {
     pub fn new(
-        formulas: &'a HashMap<CellRef, Expr>,
+        formulas: &'a HashMap<CellRef, Rc<Expr>>,
         literals: &'a HashMap<CellRef, f64>,
         text_literals: &'a HashMap<CellRef, String>,
-        name_formulas: &'a HashMap<String, Expr>,
+        name_formulas: &'a HashMap<String, Rc<Expr>>,
         name_literals: &'a HashMap<String, f64>,
         name_text_literals: &'a HashMap<String, String>,
         bounds: SheetBounds,
@@ -387,6 +390,7 @@ impl<'a> EvalContext<'a> {
             cache: HashMap::new(),
             name_cache: HashMap::new(),
             stack: Vec::new(),
+            cell_stack_set: HashSet::new(),
             local_scopes: Vec::new(),
             recalc_serial,
             random_counter: 0,
@@ -496,11 +500,7 @@ impl<'a> EvalContext<'a> {
             self.cell_eval_depth -= 1;
             return value.clone();
         }
-        if self
-            .stack
-            .iter()
-            .any(|node| *node == EvalStackNode::Cell(cell))
-        {
+        if self.cell_stack_set.contains(&cell) {
             self.cycle_detected = true;
             // During iterative SCC evaluation, return the previous iteration's
             // value instead of a cycle error.
@@ -514,8 +514,10 @@ impl<'a> EvalContext<'a> {
 
         if let Some(expr) = self.formulas.get(&cell) {
             self.stack.push(EvalStackNode::Cell(cell));
+            self.cell_stack_set.insert(cell);
             let value = self.evaluate_expr(expr);
             self.stack.pop();
+            self.cell_stack_set.remove(&cell);
             self.cache.insert(cell, value.clone());
             self.cell_eval_depth -= 1;
             return value;
@@ -1067,46 +1069,83 @@ fn aggregate_numbers(
     ctx: &mut EvalContext<'_>,
     kind: AggregateKind,
 ) -> RuntimeValue {
-    let mut values: Vec<f64> = Vec::new();
+    let mut sum = 0.0_f64;
+    let mut count = 0_u64;
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+
     for arg in args {
-        let flattened = expand_argument(arg, ctx);
-        for value in flattened {
-            match value {
-                Value::Error(err) => return RuntimeValue::scalar(Value::Error(err)),
-                Value::Blank => {}
-                _ => match coerce_number(&value) {
-                    Ok(num) => values.push(num),
-                    Err(err) => return RuntimeValue::scalar(Value::Error(err)),
-                },
+        match arg {
+            Expr::Range(range, _, _) => {
+                for cell in range.iter() {
+                    let value = ctx.evaluate_cell_runtime(cell).to_scalar();
+                    match value {
+                        Value::Error(err) => return RuntimeValue::scalar(Value::Error(err)),
+                        Value::Blank => {}
+                        _ => match coerce_number(&value) {
+                            Ok(num) => {
+                                sum += num;
+                                count += 1;
+                                if num < min {
+                                    min = num;
+                                }
+                                if num > max {
+                                    max = num;
+                                }
+                            }
+                            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+                        },
+                    }
+                }
+            }
+            _ => {
+                for value in ctx.evaluate_expr(arg).flatten_values() {
+                    match value {
+                        Value::Error(err) => return RuntimeValue::scalar(Value::Error(err)),
+                        Value::Blank => {}
+                        _ => match coerce_number(&value) {
+                            Ok(num) => {
+                                sum += num;
+                                count += 1;
+                                if num < min {
+                                    min = num;
+                                }
+                                if num > max {
+                                    max = num;
+                                }
+                            }
+                            Err(err) => return RuntimeValue::scalar(Value::Error(err)),
+                        },
+                    }
+                }
             }
         }
     }
 
     let out = match kind {
-        AggregateKind::Sum => Value::Number(values.iter().copied().sum()),
+        AggregateKind::Sum => Value::Number(sum),
         AggregateKind::Min => {
-            if let Some(min) = values.into_iter().reduce(f64::min) {
+            if count > 0 {
                 Value::Number(min)
             } else {
                 Value::Number(0.0)
             }
         }
         AggregateKind::Max => {
-            if let Some(max) = values.into_iter().reduce(f64::max) {
+            if count > 0 {
                 Value::Number(max)
             } else {
                 Value::Number(0.0)
             }
         }
         AggregateKind::Average => {
-            if values.is_empty() {
+            if count == 0 {
                 Value::Number(0.0)
             } else {
-                let sum: f64 = values.iter().copied().sum();
-                Value::Number(sum / values.len() as f64)
+                Value::Number(sum / count as f64)
             }
         }
-        AggregateKind::Count => Value::Number(values.len() as f64),
+        AggregateKind::Count => Value::Number(count as f64),
     };
     RuntimeValue::scalar(out)
 }

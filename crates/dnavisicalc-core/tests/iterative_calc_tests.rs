@@ -174,6 +174,7 @@ fn mixed_acyclic_and_cyclic_cells() {
 fn calc_tree_reports_cycles() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     let bounds = SheetBounds {
         max_columns: 63,
@@ -183,8 +184,8 @@ fn calc_tree_reports_cycles() {
     let b1 = CellRef::new(2, 1, bounds).unwrap();
 
     let mut formulas = HashMap::new();
-    formulas.insert(a1, Expr::Cell(b1, RefFlags::RELATIVE));
-    formulas.insert(b1, Expr::Cell(a1, RefFlags::RELATIVE));
+    formulas.insert(a1, Rc::new(Expr::Cell(b1, RefFlags::RELATIVE)));
+    formulas.insert(b1, Rc::new(Expr::Cell(a1, RefFlags::RELATIVE)));
 
     let tree = build_calc_tree_allow_cycles(&formulas);
     assert!(tree.has_cycles());
@@ -197,6 +198,7 @@ fn calc_tree_reports_cycles() {
 fn calc_tree_no_cycles_for_dag() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     let bounds = SheetBounds {
         max_columns: 63,
@@ -206,7 +208,7 @@ fn calc_tree_no_cycles_for_dag() {
     let b1 = CellRef::new(2, 1, bounds).unwrap();
 
     let mut formulas = HashMap::new();
-    formulas.insert(b1, Expr::Cell(a1, RefFlags::RELATIVE));
+    formulas.insert(b1, Rc::new(Expr::Cell(a1, RefFlags::RELATIVE)));
     // a1 is not a formula cell, so b1 has no formula-dependency edge
 
     let tree = build_calc_tree_allow_cycles(&formulas);
@@ -217,6 +219,7 @@ fn calc_tree_no_cycles_for_dag() {
 fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     let bounds = SheetBounds {
         max_columns: 63,
@@ -224,7 +227,7 @@ fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
     };
     let total = 4000usize;
 
-    let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
+    let mut formulas: HashMap<CellRef, Rc<Expr>> = HashMap::new();
     let mut cells: Vec<CellRef> = Vec::with_capacity(total);
 
     for i in 0..total {
@@ -234,9 +237,9 @@ fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
         cells.push(CellRef::new(col, row, bounds).expect("cell in bounds"));
     }
 
-    formulas.insert(cells[0], Expr::Number(1.0));
+    formulas.insert(cells[0], Rc::new(Expr::Number(1.0)));
     for i in 1..total {
-        formulas.insert(cells[i], Expr::Cell(cells[i - 1], RefFlags::RELATIVE));
+        formulas.insert(cells[i], Rc::new(Expr::Cell(cells[i - 1], RefFlags::RELATIVE)));
     }
 
     let tree = build_calc_tree_allow_cycles(&formulas);
@@ -251,6 +254,7 @@ fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
 fn calc_tree_order_respects_dependencies_on_dense_grid() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     let bounds = SheetBounds {
         max_columns: 63,
@@ -258,7 +262,7 @@ fn calc_tree_order_respects_dependencies_on_dense_grid() {
     };
     let cols: u16 = 20;
     let rows: u16 = 90;
-    let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
+    let mut formulas: HashMap<CellRef, Rc<Expr>> = HashMap::new();
 
     for row in 2..=rows {
         for col in 2..=cols {
@@ -268,7 +272,7 @@ fn calc_tree_order_respects_dependencies_on_dense_grid() {
             let diag = CellRef::new(col - 1, row - 1, bounds).expect("diag");
             formulas.insert(
                 cell,
-                Expr::Binary {
+                Rc::new(Expr::Binary {
                     op: dnavisicalc_core::BinaryOp::Add,
                     left: Box::new(Expr::Binary {
                         op: dnavisicalc_core::BinaryOp::Add,
@@ -276,7 +280,7 @@ fn calc_tree_order_respects_dependencies_on_dense_grid() {
                         right: Box::new(Expr::Cell(left, RefFlags::RELATIVE)),
                     }),
                     right: Box::new(Expr::Cell(diag, RefFlags::RELATIVE)),
-                },
+                }),
             );
         }
     }

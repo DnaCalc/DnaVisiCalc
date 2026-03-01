@@ -1,5 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 
 use crate::address::CellRef;
 use crate::ast::Expr;
@@ -7,8 +8,8 @@ use crate::ast::Expr;
 #[derive(Debug, Clone, PartialEq)]
 pub struct CalcNode {
     pub cell: CellRef,
-    pub expr: Expr,
-    pub dependencies: BTreeSet<CellRef>,
+    pub expr: Rc<Expr>,
+    pub dependencies: HashSet<CellRef>,
 }
 
 /// A strongly connected component in the dependency graph.
@@ -22,7 +23,7 @@ pub struct Scc {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CalcTree {
-    pub nodes: BTreeMap<CellRef, CalcNode>,
+    pub nodes: HashMap<CellRef, CalcNode>,
     /// Flat topological evaluation order (only valid when there are no cycles).
     pub order: Vec<CellRef>,
     /// SCCs in reverse-topological order of the condensation DAG
@@ -61,7 +62,7 @@ impl std::error::Error for DependencyError {}
 
 /// Builds the calculation tree with cycle detection. Returns an error if any
 /// circular dependency is found. This is the original strict-mode behaviour.
-pub fn build_calc_tree(formulas: &HashMap<CellRef, Expr>) -> Result<CalcTree, DependencyError> {
+pub fn build_calc_tree(formulas: &HashMap<CellRef, Rc<Expr>>) -> Result<CalcTree, DependencyError> {
     let (nodes, formula_edges) = build_nodes_and_edges(formulas);
     let sccs = tarjan_sccs(&nodes, &formula_edges);
 
@@ -84,7 +85,7 @@ pub fn build_calc_tree(formulas: &HashMap<CellRef, Expr>) -> Result<CalcTree, De
 /// Builds the calculation tree allowing circular dependencies. Cycles are
 /// captured as cyclic SCCs rather than producing errors. The Engine can then
 /// choose to iterate cyclic SCCs or report errors.
-pub fn build_calc_tree_allow_cycles(formulas: &HashMap<CellRef, Expr>) -> CalcTree {
+pub fn build_calc_tree_allow_cycles(formulas: &HashMap<CellRef, Rc<Expr>>) -> CalcTree {
     let (nodes, formula_edges) = build_nodes_and_edges(formulas);
     let sccs = tarjan_sccs(&nodes, &formula_edges);
     let order: Vec<CellRef> = sccs
@@ -95,28 +96,28 @@ pub fn build_calc_tree_allow_cycles(formulas: &HashMap<CellRef, Expr>) -> CalcTr
 }
 
 fn build_nodes_and_edges(
-    formulas: &HashMap<CellRef, Expr>,
+    formulas: &HashMap<CellRef, Rc<Expr>>,
 ) -> (
-    BTreeMap<CellRef, CalcNode>,
-    BTreeMap<CellRef, BTreeSet<CellRef>>,
+    HashMap<CellRef, CalcNode>,
+    HashMap<CellRef, HashSet<CellRef>>,
 ) {
-    let mut nodes: BTreeMap<CellRef, CalcNode> = BTreeMap::new();
+    let mut nodes: HashMap<CellRef, CalcNode> = HashMap::new();
     for (cell, expr) in formulas {
         let dependencies = dependencies_for_expr(expr);
         nodes.insert(
             *cell,
             CalcNode {
                 cell: *cell,
-                expr: expr.clone(),
+                expr: Rc::clone(expr),
                 dependencies,
             },
         );
     }
 
-    let formula_cells: BTreeSet<CellRef> = nodes.keys().copied().collect();
-    let mut formula_edges: BTreeMap<CellRef, BTreeSet<CellRef>> = BTreeMap::new();
+    let formula_cells: HashSet<CellRef> = nodes.keys().copied().collect();
+    let mut formula_edges: HashMap<CellRef, HashSet<CellRef>> = HashMap::new();
     for (cell, node) in &nodes {
-        let mut deps = BTreeSet::new();
+        let mut deps = HashSet::new();
         for dep in &node.dependencies {
             if formula_cells.contains(dep) {
                 deps.insert(*dep);
@@ -128,13 +129,13 @@ fn build_nodes_and_edges(
     (nodes, formula_edges)
 }
 
-pub fn dependencies_for_expr(expr: &Expr) -> BTreeSet<CellRef> {
-    let mut out = BTreeSet::new();
+pub fn dependencies_for_expr(expr: &Expr) -> HashSet<CellRef> {
+    let mut out = HashSet::new();
     collect_dependencies(expr, &mut out);
     out
 }
 
-fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
+fn collect_dependencies(expr: &Expr, out: &mut HashSet<CellRef>) {
     match expr {
         Expr::Cell(cell, _) => {
             out.insert(*cell);
@@ -174,10 +175,12 @@ fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
 // ---------------------------------------------------------------------------
 
 fn tarjan_sccs(
-    nodes: &BTreeMap<CellRef, CalcNode>,
-    edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
+    nodes: &HashMap<CellRef, CalcNode>,
+    edges: &HashMap<CellRef, HashSet<CellRef>>,
 ) -> Vec<Scc> {
-    let node_list: Vec<CellRef> = nodes.keys().copied().collect();
+    // Sort node keys for deterministic iteration order.
+    let mut node_list: Vec<CellRef> = nodes.keys().copied().collect();
+    node_list.sort();
     let reverse_edges = build_reverse_edges(&node_list, edges);
     let components = kosaraju_components_iterative(&node_list, edges, &reverse_edges);
 
@@ -200,9 +203,9 @@ fn tarjan_sccs(
 
 fn build_reverse_edges(
     nodes: &[CellRef],
-    edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
-) -> BTreeMap<CellRef, BTreeSet<CellRef>> {
-    let mut reverse_edges: BTreeMap<CellRef, BTreeSet<CellRef>> = BTreeMap::new();
+    edges: &HashMap<CellRef, HashSet<CellRef>>,
+) -> HashMap<CellRef, HashSet<CellRef>> {
+    let mut reverse_edges: HashMap<CellRef, HashSet<CellRef>> = HashMap::new();
     for node in nodes {
         reverse_edges.entry(*node).or_default();
     }
@@ -216,8 +219,8 @@ fn build_reverse_edges(
 
 fn kosaraju_components_iterative(
     nodes: &[CellRef],
-    edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
-    reverse_edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
+    edges: &HashMap<CellRef, HashSet<CellRef>>,
+    reverse_edges: &HashMap<CellRef, HashSet<CellRef>>,
 ) -> Vec<Vec<CellRef>> {
     // Pass 1: finish order on original graph.
     let mut visited: HashSet<CellRef> = HashSet::new();
@@ -237,7 +240,10 @@ fn kosaraju_components_iterative(
             }
             stack.push((cell, true));
             if let Some(deps) = edges.get(&cell) {
-                for dep in deps.iter().rev() {
+                // Sort deps for deterministic traversal order.
+                let mut sorted_deps: Vec<CellRef> = deps.iter().copied().collect();
+                sorted_deps.sort();
+                for dep in sorted_deps.iter().rev() {
                     if !visited.contains(dep) {
                         stack.push((*dep, false));
                     }
@@ -259,7 +265,9 @@ fn kosaraju_components_iterative(
         while let Some(cell) = stack.pop() {
             component.push(cell);
             if let Some(preds) = reverse_edges.get(&cell) {
-                for pred in preds.iter().rev() {
+                let mut sorted_preds: Vec<CellRef> = preds.iter().copied().collect();
+                sorted_preds.sort();
+                for pred in sorted_preds.iter().rev() {
                     if assigned.insert(*pred) {
                         stack.push(*pred);
                     }
@@ -286,7 +294,7 @@ fn build_component_index(components: &[Vec<CellRef>]) -> HashMap<CellRef, usize>
 fn order_components_for_evaluation(
     components: &[Vec<CellRef>],
     comp_index: &HashMap<CellRef, usize>,
-    edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
+    edges: &HashMap<CellRef, HashSet<CellRef>>,
 ) -> Vec<usize> {
     // Condensation graph edges are component(dependent) -> component(dependency).
     // For evaluation, we need dependencies first, so we topologically sort the
@@ -343,7 +351,7 @@ fn order_components_for_evaluation(
     ordered
 }
 
-fn is_cyclic_component(cells: &[CellRef], edges: &BTreeMap<CellRef, BTreeSet<CellRef>>) -> bool {
+fn is_cyclic_component(cells: &[CellRef], edges: &HashMap<CellRef, HashSet<CellRef>>) -> bool {
     if cells.len() > 1 {
         return true;
     }
