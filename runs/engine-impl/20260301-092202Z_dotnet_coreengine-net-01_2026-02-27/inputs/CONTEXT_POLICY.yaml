@@ -1,0 +1,24 @@
+mode: managed-context
+allowed_read_paths:
+  - docs/full-engine-spec/2026-02-27
+  - docs/OPERATIONS.md
+  - runs/engine-impl/20260301-092202Z_dotnet_coreengine-net-01_2026-02-27/inputs
+  - runs/engine-impl/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/handoff/HANDOFF.md
+  - crates/dnavisicalc-engine/tests/conformance_smoke.rs
+  - engines/dotnet/coreengine-net-01
+forbidden_read_paths:
+  - crates (except crates/dnavisicalc-engine/tests/conformance_smoke.rs)
+  - src
+  - tests
+  - engines (except engines/dotnet/coreengine-net-01)
+  - engines/rust
+  - engines/ocaml
+allowed_write_paths:
+  - engines/dotnet/coreengine-net-01
+  - runs/engine-impl/20260301-092202Z_dotnet_coreengine-net-01_2026-02-27
+  - .tmp/runs/20260301-092202Z_dotnet_coreengine-net-01_2026-02-27
+api_boundary_exception_protocol:
+  - Before any exception read, record file path and reason in execution/SESSION_LOG.md.
+  - Tag corresponding TOOL_LOG.jsonl entry with policy=exception-approved.
+  - Increment api_boundary_exception_count in validation/SUMMARY.yaml.
+

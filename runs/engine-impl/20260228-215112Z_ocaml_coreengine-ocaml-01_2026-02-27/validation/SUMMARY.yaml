@@ -1,0 +1,15 @@
+status: blocked
+summary: DLL/export and smoke validation succeeded, but full spec/API conformance is not established.
+failures:
+  - REQ-CALC-008/009: full function surface semantics are incomplete (many required functions only partially implemented or not implemented to contract).
+  - REQ-STR-002..010: structural rewrite semantics for formulas/names/ranges/spill refs are not fully implemented to normative rules.
+  - REQ-CALC-004 and REQ-DELTA-004: circular-reference non-fatal diagnostic channel behavior is incomplete.
+  - ENGINE_API behavioral contract: many APIs are export-complete but only smoke-level validated; no comprehensive conformance-case evidence.
+  - RUN additional requirement: OCaml engine is implemented in C for this run; Jane Street Incremental integration not implemented.
+blocked_reason: Full spec-pack behavioral conformance cannot be truthfully claimed from current implementation and evidence.
+validation_commands_total: 8
+validation_pass_count: 8
+validation_fail_count: 0
+forbidden_access_count: 0
+api_boundary_exception_count: 1
+clean_room_attested: false

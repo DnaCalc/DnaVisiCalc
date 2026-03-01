@@ -1,0 +1,7 @@
+status: pass
+summary: Added dual export variants for coreengine-net-01 (managed-jit via DNNE + native-aot preserved), and conformance smoke passes against both backend-pinned DLL artifacts.
+failures: []
+blocked_reason: ""
+forbidden_access_count: 0
+api_boundary_exception_count: 0
+clean_room_attested: true

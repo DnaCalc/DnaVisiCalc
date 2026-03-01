@@ -1,0 +1,33 @@
+{
+  "hash_algorithm": "sha256",
+  "inputs": [
+    {
+      "path": "docs/full-engine-spec/2026-02-27/SPEC_v0.md",
+      "sha256": "7d280601cd48bf4d1b69854f02a2938a46d1868ce43302145c9b573aeb4dce9b"
+    },
+    {
+      "path": "docs/full-engine-spec/2026-02-27/ENGINE_REQUIREMENTS.md",
+      "sha256": "36c986cb9422a86e1061e75fa39143eb4cca5b976617b8369201964687cb62d8"
+    },
+    {
+      "path": "docs/full-engine-spec/2026-02-27/ENGINE_API.md",
+      "sha256": "f5e65e2bf0bbece8bf7c7ad1cc0f2174f10bccd39322efabd659d79a59dfb6c7"
+    },
+    {
+      "path": "runs/engine-impl/20260301-092202Z_dotnet_coreengine-net-01_2026-02-27/inputs/PROMPT_INPUT.md",
+      "sha256": "2117cd81f773e49d049b1e1c42f37e920326b9eb2688fac56e7df38884324eb9"
+    },
+    {
+      "path": "runs/engine-impl/20260301-092202Z_dotnet_coreengine-net-01_2026-02-27/inputs/RUN_ADDITIONAL_REQUIREMENTS.md",
+      "sha256": "e069a890bbcad50f51e0d910a7f3c156b6651862259142234386b71e5651adf7"
+    },
+    {
+      "path": "runs/engine-impl/20260301-092202Z_dotnet_coreengine-net-01_2026-02-27/inputs/CONTEXT_POLICY.yaml",
+      "sha256": "29fa954108300c74eb666d5761eaed93f22e07e268ca6fd9855a1a296f06d592"
+    },
+    {
+      "path": "runs/engine-impl/20260301-092202Z_dotnet_coreengine-net-01_2026-02-27/inputs/ISSUE_ARTIFACTS.md",
+      "sha256": "ef7c0c4c6a0fb2d9ede35a136ba0f95cbf24ae01c87372e407427c020f995013"
+    }
+  ]
+}

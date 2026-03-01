@@ -1,0 +1,24 @@
+mode: managed-context
+allowed_read_paths:
+  - docs/full-engine-spec/2026-02-27
+  - runs/engine-impl/20260301-045055Z_ocaml_coreengine-ocaml-01_2026-02-27/inputs
+  - runs/engine-impl/20260301-043544Z_ocaml_coreengine-ocaml-01_2026-02-27/handoff/HANDOFF.md
+  - runs/engine-impl/20260301-043544Z_ocaml_coreengine-ocaml-01_2026-02-27/validation/CONFORMANCE_MATRIX.md
+  - docs/OPERATIONS.md
+  - engines/ocaml/coreengine-ocaml-01
+forbidden_read_paths:
+  - docs (except docs/full-engine-spec/2026-02-27 and docs/OPERATIONS.md)
+  - crates
+  - scripts
+  - src
+  - tests
+  - runs (except this run path and explicitly allowed previous-run handoff/matrix files)
+  - engines (except engines/ocaml/coreengine-ocaml-01)
+allowed_write_paths:
+  - engines/ocaml/coreengine-ocaml-01
+  - runs/engine-impl/20260301-045055Z_ocaml_coreengine-ocaml-01_2026-02-27
+api_boundary_exception_protocol:
+  - Before any exception read, record file path and reason in execution/SESSION_LOG.md.
+  - Tag corresponding TOOL_LOG.jsonl entry with policy=exception-approved.
+  - Increment api_boundary_exception_count in validation/SUMMARY.yaml.
+

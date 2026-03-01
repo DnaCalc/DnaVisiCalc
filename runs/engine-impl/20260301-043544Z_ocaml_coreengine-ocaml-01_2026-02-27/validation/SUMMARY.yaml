@@ -1,0 +1,13 @@
+status: blocked
+summary: Mandatory CT-ID conformance evidence was produced and all required CT cases passed, but full practical v0 conformance remains blocked by unresolved REQ-CALC/REQ-STR depth gaps.
+failures:
+  - "REQ-CALC-008: major function-surface gaps remain (unsupported required functions listed in handoff)."
+  - "REQ-CALC-004: cycle handling is limited to simple single-reference loop detection and does not implement general SCC iterative stabilization semantics."
+  - "REQ-STR-002/008/009 depth: structural rewrite is token-text based and not yet proven against full formula grammar coverage."
+blocked_reason: "Full v0 conformance cannot be claimed until remaining REQ-CALC/REQ-STR gaps are closed with executable evidence."
+validation_commands_total: 7
+validation_pass_count: 7
+validation_fail_count: 0
+forbidden_access_count: 0
+api_boundary_exception_count: 1
+clean_room_attested: true

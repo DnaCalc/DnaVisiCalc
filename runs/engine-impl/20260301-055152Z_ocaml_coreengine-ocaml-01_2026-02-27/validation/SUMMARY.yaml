@@ -1,0 +1,7 @@
+status: pass
+summary: Pinned conformance smoke harness now passes fully against rebuilt OCaml DLL; entity iterator undercount fixed via non-consuming length-probe semantics.
+failures: []
+blocked_reason: ""
+forbidden_access_count: 1
+api_boundary_exception_count: 0
+clean_room_attested: true

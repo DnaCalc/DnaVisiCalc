@@ -1,0 +1,12 @@
+runtime: ocaml
+implementation_id: coreengine-ocaml-01
+location:
+  type: in-tree
+  path: engines/ocaml/coreengine-ocaml-01
+artifacts:
+  dll: engines/ocaml/coreengine-ocaml-01/dist/dvc_coreengine_ocaml01.dll
+  api_smoke_exe: engines/ocaml/coreengine-ocaml-01/dist/api_smoke.exe
+git:
+  commit: abed5a68a7cc27152c5b0311a44d3df39db7a1c6
+  branch: <unknown>
+  dirty: true

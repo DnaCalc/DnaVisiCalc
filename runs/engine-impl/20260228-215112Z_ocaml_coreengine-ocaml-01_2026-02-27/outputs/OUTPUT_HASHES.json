@@ -1,0 +1,45 @@
+{
+  "hash_algorithm": "sha256",
+  "artifacts": [
+    {
+      "path": "runs/engine-impl/20260228-215112Z_ocaml_coreengine-ocaml-01_2026-02-27/outputs/CODEBASE_REF.yaml",
+      "sha256": "07bd1285ad82bb7276e3a22b4dec8e747f96141c28b3e00332089776e7316758"
+    },
+    {
+      "path": "runs/engine-impl/20260228-215112Z_ocaml_coreengine-ocaml-01_2026-02-27/validation/SUMMARY.yaml",
+      "sha256": "0c03a0c5a99e14d497ebcd8711e09af94db6f537cf925e5328e30ae466a17f90"
+    },
+    {
+      "path": "runs/engine-impl/20260228-215112Z_ocaml_coreengine-ocaml-01_2026-02-27/validation/COMMANDS.md",
+      "sha256": "980b408ba99a429b319ecacecafcef6016d4c154d7f06de3bda0351861610852"
+    },
+    {
+      "path": "runs/engine-impl/20260228-215112Z_ocaml_coreengine-ocaml-01_2026-02-27/validation/RESULTS.md",
+      "sha256": "393a9fddf98eb5c602fd748c0e65615c252867e56e9367e534e10a7c038a0c04"
+    },
+    {
+      "path": "runs/engine-impl/20260228-215112Z_ocaml_coreengine-ocaml-01_2026-02-27/handoff/HANDOFF.md",
+      "sha256": "2784bae417e39dff670720c522f8ae35e5d0e568da72c329aaa16bd424801622"
+    },
+    {
+      "path": "runs/engine-impl/20260228-215112Z_ocaml_coreengine-ocaml-01_2026-02-27/RUN_MANIFEST.yaml",
+      "sha256": "b040fe766586c50baa5ce64acce06e5da797854bc26274a459599c22fdaa3565"
+    },
+    {
+      "path": "engines/ocaml/coreengine-ocaml-01/dist/dvc_coreengine_ocaml01.dll",
+      "sha256": "82e428eefe9258209aa7edb910514f26223ce0341fa7d074d4c48e4c819b7bd9"
+    },
+    {
+      "path": "engines/ocaml/coreengine-ocaml-01/dist/api_smoke.exe",
+      "sha256": "7a13880314e5ebd0c991306cbd29d0acd9b249266cbfb8a294183eb3488638d8"
+    },
+    {
+      "path": "engines/ocaml/coreengine-ocaml-01/src/dvc_engine.c",
+      "sha256": "f142be95e6239a40d8a43e0436e31b7d7510622bca1152ff351d9a467f5017dc"
+    },
+    {
+      "path": "engines/ocaml/coreengine-ocaml-01/src/dvc_engine.h",
+      "sha256": "18f204d88d480fd6f7e608f32ede6589d32cbabc01f43842d438ce395ce13da2"
+    }
+  ]
+}

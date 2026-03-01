@@ -1,0 +1,29 @@
+{
+  "hash_algorithm": "sha256",
+  "inputs": [
+    {
+      "path": "docs/full-engine-spec/2026-02-27/SPEC_v0.md",
+      "sha256": "7d280601cd48bf4d1b69854f02a2938a46d1868ce43302145c9b573aeb4dce9b"
+    },
+    {
+      "path": "docs/full-engine-spec/2026-02-27/ENGINE_REQUIREMENTS.md",
+      "sha256": "36c986cb9422a86e1061e75fa39143eb4cca5b976617b8369201964687cb62d8"
+    },
+    {
+      "path": "docs/full-engine-spec/2026-02-27/ENGINE_API.md",
+      "sha256": "f5e65e2bf0bbece8bf7c7ad1cc0f2174f10bccd39322efabd659d79a59dfb6c7"
+    },
+    {
+      "path": "runs/engine-impl/20260228-222210Z_ocaml_coreengine-ocaml-01_2026-02-27/inputs/PROMPT_INPUT.md",
+      "sha256": "d36878526f91fbc2210804b8d86387b24f032715ed4bc33ea2cfc096642c4fe8"
+    },
+    {
+      "path": "runs/engine-impl/20260228-222210Z_ocaml_coreengine-ocaml-01_2026-02-27/inputs/RUN_ADDITIONAL_REQUIREMENTS.md",
+      "sha256": "9cfc4b0213b843a6a720489acac167ca1e0e1d2242ed86b390d7b0f4133b69cb"
+    },
+    {
+      "path": "runs/engine-impl/20260228-222210Z_ocaml_coreengine-ocaml-01_2026-02-27/inputs/CONTEXT_POLICY.yaml",
+      "sha256": "a7e01dd9e124095fc0a4e5914c6d0492065ba735c7e547af40d6557d7621b693"
+    }
+  ]
+}

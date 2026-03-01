@@ -1,0 +1,15 @@
+run_id: 20260301-075400Z_dotnet_coreengine-net-01_2026-02-27
+run_type: engine-implementation
+status: completed
+runtime: dotnet
+implementation_id: coreengine-net-01
+spec_pack_version: 2026-02-27
+spec_pack_path: docs/full-engine-spec/2026-02-27
+context_mode: managed-context
+context_policy_path: runs/engine-impl/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/inputs/CONTEXT_POLICY.yaml
+source_repo_commit: abed5a68a7cc27152c5b0311a44d3df39db7a1c6
+target_codebase_path: engines/dotnet/coreengine-net-01
+started_at_utc: 2026-03-01T07:54:00Z
+finished_at_utc: 2026-03-01T08:07:06Z
+owner: codex-gpt5
+

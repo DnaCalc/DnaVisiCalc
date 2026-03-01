@@ -1,0 +1,24 @@
+status: pass
+summary: >-
+  Internal recalc refactor for coreengine-net-01 completed with large speedup and no observed
+  conformance regression. Tiny-profile recalc mean improved from 48.96 ms to 0.04 ms (1224x).
+  Backend-pinned conformance smoke passed.
+failures: []
+blocked_reason: ""
+forbidden_access_count: 0
+api_boundary_exception_count: 1
+clean_room_attested: true
+native_artifact: engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/publish/Dvc.Native.dll
+perf:
+  tiny:
+    baseline_mean_ms: 48.96
+    after_mean_ms: 0.04
+    speedup_x: 1224.0
+    baseline_p95_ms: 49.50
+    after_p95_ms: 0.05
+  moderate:
+    baseline_mean_ms: 10244.81
+    after_mean_ms: 0.16
+    speedup_x: 64030.06
+    baseline_p95_ms: 10585.75
+    after_p95_ms: 0.21

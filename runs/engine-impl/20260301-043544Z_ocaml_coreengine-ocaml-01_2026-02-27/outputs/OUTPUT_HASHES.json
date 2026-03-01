@@ -1,0 +1,25 @@
+{
+  "hash_algorithm": "sha256",
+  "artifacts": [
+    {
+      "path": "outputs/CODEBASE_REF.yaml",
+      "sha256": "a5b186ae08da23c21cf1eaf7e6c46ce8285312a496f5d4e1ebc1b6751388f0b9"
+    },
+    {
+      "path": "validation/SUMMARY.yaml",
+      "sha256": "0713cdebb3b3c25e166f5ee3569bba7dde26c837fc9f8f175893e13c8e4a342e"
+    },
+    {
+      "path": "validation/CONFORMANCE_MATRIX.md",
+      "sha256": "922c32b4dc83ae782d0e986a9f9c71871146c79a2e5e193221903f8af4f5614d"
+    },
+    {
+      "path": "handoff/HANDOFF.md",
+      "sha256": "d2f85175c9a36617e0b21bee3d4a505c99cf3f8023a7e9d16ba24c31a805cb02"
+    },
+    {
+      "path": "RUN_MANIFEST.yaml",
+      "sha256": "d9b180b74781a971a7fe61c4fb4de6ac0a5915256a0aeb7cd62578ce96df5094"
+    }
+  ]
+}

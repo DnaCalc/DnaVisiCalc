@@ -1,0 +1,13 @@
+{
+  "hash_algorithm": "sha256",
+  "artifacts": [
+    {
+      "path": "outputs/CODEBASE_REF.yaml",
+      "sha256": "a5b186ae08da23c21cf1eaf7e6c46ce8285312a496f5d4e1ebc1b6751388f0b9"
+    },
+    {
+      "path": "validation/SUMMARY.yaml",
+      "sha256": "04806eade53d19e2d230b8ee84a0f22e31aefcda6594c00bb5a3f880ac829a3f"
+    }
+  ]
+}

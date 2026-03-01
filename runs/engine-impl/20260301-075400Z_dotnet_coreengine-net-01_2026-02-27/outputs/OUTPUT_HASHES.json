@@ -1,0 +1,33 @@
+{
+  "hash_algorithm": "sha256",
+  "artifacts": [
+    {
+      "path": "runs/engine-impl/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/outputs/CODEBASE_REF.yaml",
+      "sha256": "295806c53c4392ff491bd30fe61afe07d5e8def46e14aebd2cb99ad3400cc262"
+    },
+    {
+      "path": "runs/engine-impl/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/validation/SUMMARY.yaml",
+      "sha256": "0b4cf8bcfa5aca733b3c3cf62e46f8eee21db032a5713aa1078ebe43dd92c87e"
+    },
+    {
+      "path": "engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/publish/Dvc.Native.dll",
+      "sha256": "09ccb1ce02090d6bdc9fc92971051f1a4819d7005d3d6d5fcc90f66c62c810a8"
+    },
+    {
+      "path": ".tmp/runs/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/perf/before_tiny.txt",
+      "sha256": "23c7a45392c22f757de910f598ca1815031c9d4066f4d32036d5373439d4cf37"
+    },
+    {
+      "path": ".tmp/runs/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/perf/before_moderate.txt",
+      "sha256": "e449bdc7b86d5ff8635beba4e645927b12bdf5638afae449b3f80fd6fd3cad86"
+    },
+    {
+      "path": ".tmp/runs/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/perf/after_tiny.txt",
+      "sha256": "78ff18827e53801e89baff8d841be7f073cf6e5033d9cd3987f4524d1fde0cb9"
+    },
+    {
+      "path": ".tmp/runs/20260301-075400Z_dotnet_coreengine-net-01_2026-02-27/perf/after_moderate.txt",
+      "sha256": "68488e56bd5af7e152d66d1a5ceb880a2ebbcd0029d2c3bd369004b5d6706ea6"
+    }
+  ]
+}
