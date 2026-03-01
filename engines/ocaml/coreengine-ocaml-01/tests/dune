@@ -1,0 +1,4 @@
+(test
+ (name ocaml_core_test)
+ (modules ocaml_core_test)
+ (libraries coreengine_ocaml01))
