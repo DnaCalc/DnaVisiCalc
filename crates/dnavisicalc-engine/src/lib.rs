@@ -1,9 +1,14 @@
 pub mod config {
+    use serde::Deserialize;
     use std::fmt;
-    use std::path::PathBuf;
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     pub const COREENGINE_ENV: &str = "DNAVISICALC_COREENGINE";
     pub const COREENGINE_DLL_ENV: &str = "DNAVISICALC_COREENGINE_DLL";
+    pub const COREENGINE_TARGET_ENV: &str = "DNAVISICALC_COREENGINE_TARGET";
+    pub const COREENGINE_CATALOG_ENV: &str = "DNAVISICALC_COREENGINE_CATALOG";
+    pub const DEFAULT_COREENGINE_CATALOG_PATH: &str = "coreengines/catalog.json";
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum CoreEngineId {
@@ -46,26 +51,47 @@ pub mod config {
 
     impl EngineConfig {
         pub fn from_env_lossy() -> Self {
-            let coreengine = std::env::var_os(COREENGINE_ENV)
-                .and_then(|raw| CoreEngineId::parse(&raw.to_string_lossy()))
-                .unwrap_or(CoreEngineId::DotnetCore);
-            let coreengine_dll = std::env::var_os(COREENGINE_DLL_ENV).map(PathBuf::from);
-            Self {
-                coreengine,
-                coreengine_dll,
-            }
+            Self::from_env_strict().unwrap_or_else(|_| {
+                let coreengine = std::env::var_os(COREENGINE_ENV)
+                    .and_then(|raw| CoreEngineId::parse(&raw.to_string_lossy()))
+                    .unwrap_or(CoreEngineId::DotnetCore);
+                let coreengine_dll = env_path_non_empty(COREENGINE_DLL_ENV);
+                Self {
+                    coreengine,
+                    coreengine_dll,
+                }
+            })
+        }
+
+        pub fn default_catalog_path() -> PathBuf {
+            PathBuf::from(DEFAULT_COREENGINE_CATALOG_PATH)
         }
 
         pub fn from_env_strict() -> Result<Self, EngineConfigError> {
-            let coreengine = match std::env::var_os(COREENGINE_ENV) {
+            let mut coreengine = match std::env::var_os(COREENGINE_ENV) {
                 Some(raw) => {
                     let raw_text = raw.to_string_lossy().to_string();
-                    CoreEngineId::parse(&raw_text)
-                        .ok_or(EngineConfigError::UnknownCoreEngine(raw_text))?
+                    if raw_text.trim().is_empty() {
+                        CoreEngineId::DotnetCore
+                    } else {
+                        CoreEngineId::parse(&raw_text)
+                            .ok_or(EngineConfigError::UnknownCoreEngine(raw_text))?
+                    }
                 }
                 None => CoreEngineId::DotnetCore,
             };
-            let coreengine_dll = std::env::var_os(COREENGINE_DLL_ENV).map(PathBuf::from);
+            let mut coreengine_dll = env_path_non_empty(COREENGINE_DLL_ENV);
+
+            if coreengine_dll.is_none()
+                && let Some(target) = env_string_non_empty(COREENGINE_TARGET_ENV)
+            {
+                let catalog_path = env_path_non_empty(COREENGINE_CATALOG_ENV)
+                    .unwrap_or_else(Self::default_catalog_path);
+                let resolved = resolve_catalog_target(&catalog_path, &target)?;
+                coreengine = resolved.coreengine;
+                coreengine_dll = Some(resolved.coreengine_dll);
+            }
+
             Ok(Self {
                 coreengine,
                 coreengine_dll,
@@ -76,6 +102,11 @@ pub mod config {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum EngineConfigError {
         UnknownCoreEngine(String),
+        UnknownCoreEngineTarget(String),
+        UnknownCatalogBackend { target: String, backend: String },
+        DisabledCatalogTarget { target: String, reason: String },
+        CatalogRead { path: PathBuf, message: String },
+        CatalogParse { path: PathBuf, message: String },
     }
 
     impl fmt::Display for EngineConfigError {
@@ -85,11 +116,110 @@ pub mod config {
                     f,
                     "unknown coreengine '{value}' (supported: dotnet-core, rust-core)"
                 ),
+                Self::UnknownCoreEngineTarget(target) => {
+                    write!(f, "unknown coreengine catalog target '{target}'")
+                }
+                Self::UnknownCatalogBackend { target, backend } => write!(
+                    f,
+                    "catalog target '{target}' uses unknown backend '{backend}' (supported: dotnet-core, rust-core)"
+                ),
+                Self::DisabledCatalogTarget { target, reason } => {
+                    write!(f, "catalog target '{target}' is disabled: {reason}")
+                }
+                Self::CatalogRead { path, message } => {
+                    write!(f, "failed to read catalog '{}': {message}", path.display())
+                }
+                Self::CatalogParse { path, message } => {
+                    write!(f, "failed to parse catalog '{}': {message}", path.display())
+                }
             }
         }
     }
 
     impl std::error::Error for EngineConfigError {}
+
+    #[derive(Debug, Deserialize)]
+    struct CoreEngineCatalog {
+        engines: Vec<CoreEngineCatalogEntry>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CoreEngineCatalogEntry {
+        name: String,
+        backend: String,
+        dll: String,
+        enabled: Option<bool>,
+        disabled_reason: Option<String>,
+    }
+
+    struct ResolvedCatalogTarget {
+        coreengine: CoreEngineId,
+        coreengine_dll: PathBuf,
+    }
+
+    fn env_string_non_empty(key: &str) -> Option<String> {
+        std::env::var_os(key)
+            .map(|raw| raw.to_string_lossy().trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    fn env_path_non_empty(key: &str) -> Option<PathBuf> {
+        env_string_non_empty(key).map(PathBuf::from)
+    }
+
+    fn resolve_catalog_target(
+        catalog_path: &Path,
+        target: &str,
+    ) -> Result<ResolvedCatalogTarget, EngineConfigError> {
+        let raw =
+            fs::read_to_string(catalog_path).map_err(|err| EngineConfigError::CatalogRead {
+                path: catalog_path.to_path_buf(),
+                message: err.to_string(),
+            })?;
+        let catalog: CoreEngineCatalog =
+            serde_json::from_str(&raw).map_err(|err| EngineConfigError::CatalogParse {
+                path: catalog_path.to_path_buf(),
+                message: err.to_string(),
+            })?;
+        let Some(entry) = catalog
+            .engines
+            .iter()
+            .find(|item| item.name.eq_ignore_ascii_case(target))
+        else {
+            return Err(EngineConfigError::UnknownCoreEngineTarget(
+                target.to_string(),
+            ));
+        };
+
+        if !entry.enabled.unwrap_or(true) {
+            return Err(EngineConfigError::DisabledCatalogTarget {
+                target: target.to_string(),
+                reason: entry
+                    .disabled_reason
+                    .clone()
+                    .unwrap_or_else(|| "disabled in catalog".to_string()),
+            });
+        }
+
+        let coreengine = CoreEngineId::parse(&entry.backend).ok_or(
+            EngineConfigError::UnknownCatalogBackend {
+                target: target.to_string(),
+                backend: entry.backend.clone(),
+            },
+        )?;
+        let raw_dll = PathBuf::from(entry.dll.trim());
+        let dll = if raw_dll.is_absolute() {
+            raw_dll
+        } else {
+            let parent = catalog_path.parent().unwrap_or_else(|| Path::new("."));
+            parent.join(raw_dll)
+        };
+
+        Ok(ResolvedCatalogTarget {
+            coreengine,
+            coreengine_dll: dll,
+        })
+    }
 }
 
 use std::collections::HashSet;
@@ -100,7 +230,8 @@ use std::path::{Path, PathBuf};
 use libloading::{Library, Symbol};
 
 pub use config::{
-    COREENGINE_DLL_ENV, COREENGINE_ENV, CoreEngineId, EngineConfig, EngineConfigError,
+    COREENGINE_CATALOG_ENV, COREENGINE_DLL_ENV, COREENGINE_ENV, COREENGINE_TARGET_ENV,
+    CoreEngineId, EngineConfig, EngineConfigError,
 };
 pub use dnavisicalc_core::{
     AddressError, BinaryOp, CalcNode, CalcTree, CellError, CellFormat, CellInput, CellRange,

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "engines": [
+    {
+      "name": "rust/coreengine-rust/reference/debug",
+      "backend": "rust-core",
+      "dll": "../target/debug/dnavisicalc_coreengine_rust.dll"
+    },
+    {
+      "name": "dotnet/coreengine-net-01/native-aot/release",
+      "backend": "dotnet-core",
+      "dll": "../engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/publish/Dvc.Native.dll"
+    },
+    {
+      "name": "dotnet/coreengine-net-01/native-aot/x64-release",
+      "backend": "dotnet-core",
+      "dll": "../engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/x64/Release/net10.0/win-x64/publish/Dvc.Native.dll"
+    },
+    {
+      "name": "dotnet/coreengine-net-01/managed-jit/release",
+      "backend": "dotnet-core",
+      "dll": "../engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/Dvc.NativeNE.dll"
+    },
+    {
+      "name": "ocaml/coreengine-ocaml-01/native/release",
+      "backend": "dotnet-core",
+      "dll": "../engines/ocaml/coreengine-ocaml-01/dist/dvc_coreengine_ocaml01.dll"
+    }
+  ]
+}

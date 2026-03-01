@@ -26,6 +26,9 @@
 - Backend selection mechanism:
   - `DNAVISICALC_COREENGINE`,
   - `DNAVISICALC_COREENGINE_DLL` (explicit DLL path override).
+  - Optional catalog target selection:
+    - `DNAVISICALC_COREENGINE_TARGET` (hierarchical target name),
+    - `DNAVISICALC_COREENGINE_CATALOG` (catalog file path; default `coreengines/catalog.json`).
 - Conformance/performance execution should pin both backend id and explicit DLL path to avoid stale-binary candidate resolution.
 - Keeps file/TUI crates decoupled from direct engine construction, making C-API DLL backends pluggable behind one seam.
 

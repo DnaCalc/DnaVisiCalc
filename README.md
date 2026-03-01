@@ -198,6 +198,9 @@ Compatibility notes:
 This repository keeps explicit boundaries:
 - `dnavisicalc-core`: pure calculation engine.
 - `dnavisicalc-engine`: backend boundary/loader used by Rust adapters (`rust-core` and `dotnet-core` backends; configurable via `DNAVISICALC_COREENGINE`, pin DLL via `DNAVISICALC_COREENGINE_DLL`).
+  - Catalog target selection is also supported:
+    - `DNAVISICALC_COREENGINE_TARGET` (hierarchical catalog name),
+    - `DNAVISICALC_COREENGINE_CATALOG` (catalog file path; default `coreengines/catalog.json`).
 - `dnavisicalc-file`: serialization adapter.
 - `dnavisicalc-tui`: interaction layer + `dnavisicalc` binary.
 

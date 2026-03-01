@@ -314,6 +314,8 @@ version = "0.3.0"
 dependencies = [
  "dnavisicalc-core",
  "libloading",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
