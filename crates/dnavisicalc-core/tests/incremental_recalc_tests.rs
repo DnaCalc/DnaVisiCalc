@@ -220,3 +220,58 @@ fn incremental_recalc_handles_range_dependency() {
     assert_eq!(val(&engine, "C1"), Value::Number(10.0)); // unchanged
     assert_eq!(engine.last_eval_count(), 1); // only B1
 }
+
+#[test]
+fn incremental_recalc_dense_grid_multiple_passes_stays_stable() {
+    use dnavisicalc_core::RecalcMode;
+
+    let mut engine = Engine::new();
+    engine.set_recalc_mode(RecalcMode::Manual);
+
+    let cols: u16 = 20;
+    let rows: u16 = 90;
+
+    // Seed top row + left column as mutable inputs.
+    for col in 1..=cols {
+        engine
+            .set_number_a1(
+                &format!("{}1", dnavisicalc_core::col_index_to_label(col)),
+                col as f64,
+            )
+            .expect("seed top row");
+    }
+    for row in 1..=rows {
+        engine
+            .set_number_a1(&format!("A{row}"), row as f64)
+            .expect("seed left column");
+    }
+
+    // Dense triangular dependency pattern similar to perf workload.
+    for row in 2..=rows {
+        for col in 2..=cols {
+            let c = dnavisicalc_core::col_index_to_label(col);
+            let c_prev = dnavisicalc_core::col_index_to_label(col - 1);
+            let formula = format!("={}{}+{}{}+{}{}", c, row - 1, c_prev, row, c_prev, row - 1);
+            engine
+                .set_formula_a1(&format!("{c}{row}"), &formula)
+                .expect("set formula");
+        }
+    }
+    engine.recalculate().expect("initial recalc");
+
+    for i in 0..12usize {
+        let col = ((i * 7) % cols as usize) as u16 + 1;
+        let row = ((i * 11) % rows as usize) as u16 + 1;
+        let top = format!("{}1", dnavisicalc_core::col_index_to_label(col));
+        let side = format!("A{row}");
+        engine
+            .set_number_a1(&top, 1000.0 + i as f64)
+            .expect("mutate top");
+        engine
+            .set_number_a1(&side, 2000.0 + i as f64)
+            .expect("mutate side");
+        engine.recalculate().expect("incremental recalc");
+    }
+
+    assert!(matches!(val(&engine, "T90"), Value::Number(_)));
+}

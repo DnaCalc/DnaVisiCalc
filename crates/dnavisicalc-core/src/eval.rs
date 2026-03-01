@@ -343,6 +343,10 @@ pub struct EvalContext<'a> {
     iterating_prev: HashMap<CellRef, RuntimeValue>,
     /// True once a circular-reference path is observed during this evaluation.
     cycle_detected: bool,
+    /// Guardrails to avoid process-level stack overflow on pathological nesting.
+    cell_eval_depth: usize,
+    expr_eval_depth: usize,
+    max_eval_depth: usize,
     /// Registered user-defined functions.
     udfs: &'a HashMap<String, Box<dyn UdfHandler>>,
 }
@@ -391,6 +395,9 @@ impl<'a> EvalContext<'a> {
             stream_registrations: HashMap::new(),
             iterating_prev: HashMap::new(),
             cycle_detected: false,
+            cell_eval_depth: 0,
+            expr_eval_depth: 0,
+            max_eval_depth: 4096,
             udfs,
         }
     }
@@ -403,6 +410,32 @@ impl<'a> EvalContext<'a> {
         let detected = self.cycle_detected;
         self.cycle_detected = false;
         detected
+    }
+
+    /// Seeds the cell runtime cache with caller-provided values.
+    /// Used by incremental recalc so dependency reads can reuse committed
+    /// values without recursively walking deep formula chains.
+    pub(crate) fn seed_cell_cache(&mut self, seeds: &HashMap<CellRef, RuntimeValue>) {
+        for (cell, value) in seeds {
+            self.cache.insert(*cell, value.clone());
+        }
+    }
+
+    /// Removes a single cached cell value, forcing re-evaluation on next read.
+    pub(crate) fn evict_cell_cache(&mut self, cell: CellRef) {
+        self.cache.remove(&cell);
+    }
+
+    /// Seeds the name runtime cache with caller-provided values.
+    pub(crate) fn seed_name_cache(&mut self, seeds: &HashMap<String, RuntimeValue>) {
+        for (name, value) in seeds {
+            self.name_cache.insert(name.clone(), value.clone());
+        }
+    }
+
+    /// Removes a single cached name value, forcing re-evaluation on next read.
+    pub(crate) fn evict_name_cache(&mut self, name: &str) {
+        self.name_cache.remove(&name.to_ascii_uppercase());
     }
 
     /// Prepares for iterative evaluation of a cyclic SCC. Seeds the cache with
@@ -450,7 +483,17 @@ impl<'a> EvalContext<'a> {
     }
 
     pub(crate) fn evaluate_cell_runtime(&mut self, cell: CellRef) -> RuntimeValue {
+        self.cell_eval_depth += 1;
+        if self.cell_eval_depth > self.max_eval_depth {
+            self.cell_eval_depth -= 1;
+            return RuntimeValue::scalar(Value::Error(CellError::Value(format!(
+                "cell evaluation nesting exceeded {} frames",
+                self.max_eval_depth
+            ))));
+        }
+
         if let Some(value) = self.cache.get(&cell) {
+            self.cell_eval_depth -= 1;
             return value.clone();
         }
         if self
@@ -462,8 +505,10 @@ impl<'a> EvalContext<'a> {
             // During iterative SCC evaluation, return the previous iteration's
             // value instead of a cycle error.
             if let Some(prev) = self.iterating_prev.get(&cell) {
+                self.cell_eval_depth -= 1;
                 return prev.clone();
             }
+            self.cell_eval_depth -= 1;
             return RuntimeValue::scalar(Value::Number(0.0));
         }
 
@@ -472,20 +517,25 @@ impl<'a> EvalContext<'a> {
             let value = self.evaluate_expr(expr);
             self.stack.pop();
             self.cache.insert(cell, value.clone());
+            self.cell_eval_depth -= 1;
             return value;
         }
 
         if let Some(number) = self.literals.get(&cell) {
+            self.cell_eval_depth -= 1;
             return RuntimeValue::scalar(Value::Number(*number));
         }
         if let Some(text) = self.text_literals.get(&cell) {
+            self.cell_eval_depth -= 1;
             return RuntimeValue::scalar(Value::Text(text.clone()));
         }
 
         if let Some(value) = self.resolve_spilled_cell_value(cell) {
+            self.cell_eval_depth -= 1;
             return RuntimeValue::scalar(value);
         }
 
+        self.cell_eval_depth -= 1;
         RuntimeValue::scalar(Value::Blank)
     }
 
@@ -596,7 +646,16 @@ impl<'a> EvalContext<'a> {
     }
 
     pub(crate) fn evaluate_expr(&mut self, expr: &Expr) -> RuntimeValue {
-        match expr {
+        self.expr_eval_depth += 1;
+        if self.expr_eval_depth > self.max_eval_depth {
+            self.expr_eval_depth -= 1;
+            return RuntimeValue::scalar(Value::Error(CellError::Value(format!(
+                "expression evaluation nesting exceeded {} frames",
+                self.max_eval_depth
+            ))));
+        }
+
+        let value = match expr {
             Expr::Number(n) => RuntimeValue::scalar(Value::Number(*n)),
             Expr::Text(text) => RuntimeValue::scalar(Value::Text(text.clone())),
             Expr::Bool(b) => RuntimeValue::scalar(Value::Bool(*b)),
@@ -612,17 +671,22 @@ impl<'a> EvalContext<'a> {
             Expr::Binary { op, left, right } => {
                 let lval = self.evaluate_expr(left);
                 if let Value::Error(err) = lval.to_scalar() {
-                    return RuntimeValue::scalar(Value::Error(err));
+                    RuntimeValue::scalar(Value::Error(err))
+                } else {
+                    let rval = self.evaluate_expr(right);
+                    if let Value::Error(err) = rval.to_scalar() {
+                        RuntimeValue::scalar(Value::Error(err))
+                    } else {
+                        evaluate_binary_runtime(*op, &lval, &rval)
+                    }
                 }
-                let rval = self.evaluate_expr(right);
-                if let Value::Error(err) = rval.to_scalar() {
-                    return RuntimeValue::scalar(Value::Error(err));
-                }
-                evaluate_binary_runtime(*op, &lval, &rval)
             }
             Expr::FunctionCall { name, args } => evaluate_function(name, args, self),
             Expr::Invoke { callee, args } => eval_invoke(callee, args, self),
-        }
+        };
+
+        self.expr_eval_depth -= 1;
+        value
     }
 
     fn eval_unary(&mut self, op: UnaryOp, expr: &Expr) -> RuntimeValue {

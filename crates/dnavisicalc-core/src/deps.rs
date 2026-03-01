@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use crate::address::CellRef;
@@ -170,98 +170,183 @@ fn collect_dependencies(expr: &Expr, out: &mut BTreeSet<CellRef>) {
 }
 
 // ---------------------------------------------------------------------------
-// Tarjan's SCC algorithm
+// Iterative SCC algorithm (Kosaraju + condensation DAG ordering)
 // ---------------------------------------------------------------------------
-
-struct TarjanState {
-    index_counter: usize,
-    stack: Vec<CellRef>,
-    on_stack: BTreeSet<CellRef>,
-    indices: BTreeMap<CellRef, usize>,
-    lowlinks: BTreeMap<CellRef, usize>,
-    sccs: Vec<Scc>,
-}
 
 fn tarjan_sccs(
     nodes: &BTreeMap<CellRef, CalcNode>,
     edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
 ) -> Vec<Scc> {
-    let mut state = TarjanState {
-        index_counter: 0,
-        stack: Vec::new(),
-        on_stack: BTreeSet::new(),
-        indices: BTreeMap::new(),
-        lowlinks: BTreeMap::new(),
-        sccs: Vec::new(),
-    };
+    let node_list: Vec<CellRef> = nodes.keys().copied().collect();
+    let reverse_edges = build_reverse_edges(&node_list, edges);
+    let components = kosaraju_components_iterative(&node_list, edges, &reverse_edges);
 
-    for cell in nodes.keys() {
-        if !state.indices.contains_key(cell) {
-            tarjan_visit(*cell, edges, &mut state);
-        }
+    if components.is_empty() {
+        return Vec::new();
     }
 
-    // For our dependency graph convention (edges from dependents to
-    // dependencies), Tarjan naturally produces SCCs in evaluation order:
-    // dependencies before dependents. No reversal needed.
-    state.sccs
+    let comp_index = build_component_index(&components);
+    let ordered_component_ids = order_components_for_evaluation(&components, &comp_index, edges);
+
+    ordered_component_ids
+        .into_iter()
+        .map(|id| {
+            let cells = components[id].clone();
+            let is_cyclic = is_cyclic_component(&cells, edges);
+            Scc { cells, is_cyclic }
+        })
+        .collect()
 }
 
-fn tarjan_visit(
-    cell: CellRef,
+fn build_reverse_edges(
+    nodes: &[CellRef],
     edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
-    state: &mut TarjanState,
-) {
-    let idx = state.index_counter;
-    state.index_counter += 1;
-    state.indices.insert(cell, idx);
-    state.lowlinks.insert(cell, idx);
-    state.stack.push(cell);
-    state.on_stack.insert(cell);
-
-    if let Some(deps) = edges.get(&cell) {
+) -> BTreeMap<CellRef, BTreeSet<CellRef>> {
+    let mut reverse_edges: BTreeMap<CellRef, BTreeSet<CellRef>> = BTreeMap::new();
+    for node in nodes {
+        reverse_edges.entry(*node).or_default();
+    }
+    for (src, deps) in edges {
         for dep in deps {
-            if !state.indices.contains_key(dep) {
-                tarjan_visit(*dep, edges, state);
-                let dep_lowlink = state.lowlinks[dep];
-                let cell_lowlink = state.lowlinks.get_mut(&cell).unwrap();
-                if dep_lowlink < *cell_lowlink {
-                    *cell_lowlink = dep_lowlink;
-                }
-            } else if state.on_stack.contains(dep) {
-                let dep_index = state.indices[dep];
-                let cell_lowlink = state.lowlinks.get_mut(&cell).unwrap();
-                if dep_index < *cell_lowlink {
-                    *cell_lowlink = dep_index;
+            reverse_edges.entry(*dep).or_default().insert(*src);
+        }
+    }
+    reverse_edges
+}
+
+fn kosaraju_components_iterative(
+    nodes: &[CellRef],
+    edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
+    reverse_edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
+) -> Vec<Vec<CellRef>> {
+    // Pass 1: finish order on original graph.
+    let mut visited: HashSet<CellRef> = HashSet::new();
+    let mut finish_order: Vec<CellRef> = Vec::with_capacity(nodes.len());
+    for start in nodes {
+        if visited.contains(start) {
+            continue;
+        }
+        let mut stack: Vec<(CellRef, bool)> = vec![(*start, false)];
+        while let Some((cell, expanded)) = stack.pop() {
+            if expanded {
+                finish_order.push(cell);
+                continue;
+            }
+            if !visited.insert(cell) {
+                continue;
+            }
+            stack.push((cell, true));
+            if let Some(deps) = edges.get(&cell) {
+                for dep in deps.iter().rev() {
+                    if !visited.contains(dep) {
+                        stack.push((*dep, false));
+                    }
                 }
             }
         }
     }
 
-    if state.lowlinks[&cell] == state.indices[&cell] {
-        let mut scc_cells = Vec::new();
-        loop {
-            let w = state.stack.pop().unwrap();
-            state.on_stack.remove(&w);
-            scc_cells.push(w);
-            if w == cell {
-                break;
+    // Pass 2: DFS on transpose graph, following reverse finish order.
+    let mut assigned: HashSet<CellRef> = HashSet::new();
+    let mut components: Vec<Vec<CellRef>> = Vec::new();
+    for start in finish_order.iter().rev() {
+        if assigned.contains(start) {
+            continue;
+        }
+        let mut stack = vec![*start];
+        assigned.insert(*start);
+        let mut component: Vec<CellRef> = Vec::new();
+        while let Some(cell) = stack.pop() {
+            component.push(cell);
+            if let Some(preds) = reverse_edges.get(&cell) {
+                for pred in preds.iter().rev() {
+                    if assigned.insert(*pred) {
+                        stack.push(*pred);
+                    }
+                }
             }
         }
-        // Tarjan pops in reverse order; reverse for a more natural ordering.
-        scc_cells.reverse();
+        component.sort();
+        components.push(component);
+    }
 
-        let is_cyclic = if scc_cells.len() > 1 {
-            true
-        } else {
-            // Single-node SCC: cyclic only if it has a self-edge.
-            let c = scc_cells[0];
-            edges.get(&c).map_or(false, |deps| deps.contains(&c))
+    components
+}
+
+fn build_component_index(components: &[Vec<CellRef>]) -> HashMap<CellRef, usize> {
+    let mut index = HashMap::new();
+    for (component_id, cells) in components.iter().enumerate() {
+        for cell in cells {
+            index.insert(*cell, component_id);
+        }
+    }
+    index
+}
+
+fn order_components_for_evaluation(
+    components: &[Vec<CellRef>],
+    comp_index: &HashMap<CellRef, usize>,
+    edges: &BTreeMap<CellRef, BTreeSet<CellRef>>,
+) -> Vec<usize> {
+    // Condensation graph edges are component(dependent) -> component(dependency).
+    // For evaluation, we need dependencies first, so we topologically sort the
+    // reversed condensation edges: dependency -> dependent.
+    let count = components.len();
+    let mut dep_to_dependents: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); count];
+    let mut indegree: Vec<usize> = vec![0; count];
+
+    for (src, deps) in edges {
+        let Some(&src_comp) = comp_index.get(src) else {
+            continue;
         };
-
-        state.sccs.push(Scc {
-            cells: scc_cells,
-            is_cyclic,
-        });
+        for dep in deps {
+            let Some(&dep_comp) = comp_index.get(dep) else {
+                continue;
+            };
+            if src_comp == dep_comp {
+                continue;
+            }
+            if dep_to_dependents[dep_comp].insert(src_comp) {
+                indegree[src_comp] += 1;
+            }
+        }
     }
+
+    let mut ready: BTreeSet<usize> = BTreeSet::new();
+    for (id, degree) in indegree.iter().enumerate() {
+        if *degree == 0 {
+            ready.insert(id);
+        }
+    }
+
+    let mut ordered: Vec<usize> = Vec::with_capacity(count);
+    while let Some(&id) = ready.iter().next() {
+        ready.remove(&id);
+        ordered.push(id);
+        for dependent in dep_to_dependents[id].iter().copied() {
+            indegree[dependent] -= 1;
+            if indegree[dependent] == 0 {
+                ready.insert(dependent);
+            }
+        }
+    }
+
+    if ordered.len() != count {
+        // Should not happen for a DAG; keep deterministic fallback.
+        for id in 0..count {
+            if !ordered.contains(&id) {
+                ordered.push(id);
+            }
+        }
+    }
+
+    ordered
+}
+
+fn is_cyclic_component(cells: &[CellRef], edges: &BTreeMap<CellRef, BTreeSet<CellRef>>) -> bool {
+    if cells.len() > 1 {
+        return true;
+    }
+    let c = cells[0];
+    edges.get(&c).is_some_and(|deps| deps.contains(&c))
 }

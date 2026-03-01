@@ -1381,9 +1381,24 @@ impl Engine {
             &self.udfs,
         );
 
-        // Seed the evaluator's cache with existing (clean) values so that
-        // formulas referencing clean cells get the correct cached result.
-        // EvalContext's evaluate_cell_runtime will re-evaluate dirty cells.
+        // Seed evaluator caches with current committed values, then evict dirty
+        // entries before recomputing them. This keeps incremental recalc
+        // dependency reads iterative and prevents deep recursive walks.
+        let mut cell_cache_seed: HashMap<CellRef, RuntimeValue> = HashMap::new();
+        for (cell, stored) in &self.values {
+            if formulas.contains_key(cell) {
+                cell_cache_seed.insert(*cell, RuntimeValue::scalar(stored.value.clone()));
+            }
+        }
+        evaluator.seed_cell_cache(&cell_cache_seed);
+
+        let mut name_cache_seed: HashMap<String, RuntimeValue> = HashMap::new();
+        for (name, stored) in &self.name_values {
+            if name_formulas.contains_key(name) {
+                name_cache_seed.insert(name.clone(), RuntimeValue::scalar(stored.value.clone()));
+            }
+        }
+        evaluator.seed_name_cache(&name_cache_seed);
 
         let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
         let mut eval_count: usize = 0;
@@ -1393,6 +1408,7 @@ impl Engine {
             if !scc.is_cyclic {
                 for cell in &scc.cells {
                     if dirty_closure.contains(cell) {
+                        evaluator.evict_cell_cache(*cell);
                         let runtime = evaluator.evaluate_cell_runtime(*cell);
                         runtime_values.insert(*cell, runtime.clone());
                         let value = runtime.to_scalar();
@@ -1499,6 +1515,7 @@ impl Engine {
             let mut sorted_names: Vec<String> = self.names.keys().cloned().collect();
             sorted_names.sort();
             for name in sorted_names {
+                evaluator.evict_name_cache(&name);
                 let value = evaluator.evaluate_name_runtime(&name).to_scalar();
                 self.name_values.insert(
                     name,
@@ -1512,9 +1529,19 @@ impl Engine {
         let emit_cycle_diagnostic =
             !self.iteration_config.enabled && evaluator.take_cycle_detected();
 
-        // Spill handling: if any spill anchor is in the dirty closure, we need
-        // to redo spills. For simplicity, redo spills if anything was dirty.
-        if !dirty_closure.is_empty() {
+        // Spill handling can be skipped for pure scalar updates when no dirty
+        // cell affects existing spill state and no dirty formula produced a
+        // spilled array.
+        let dirty_touches_existing_spill_state = dirty_closure.iter().any(|cell| {
+            self.spill_ranges.contains_key(cell) || self.spill_owners.contains_key(cell)
+        });
+        let dirty_produced_spill_array = runtime_values
+            .values()
+            .any(|runtime| runtime.as_array().is_some_and(|array| array.is_spill()));
+
+        if !dirty_closure.is_empty()
+            && (dirty_touches_existing_spill_state || dirty_produced_spill_array)
+        {
             let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();
             let mut spill_ranges: HashMap<CellRef, CellRange> = HashMap::new();
             // Build a combined values map for spill processing.

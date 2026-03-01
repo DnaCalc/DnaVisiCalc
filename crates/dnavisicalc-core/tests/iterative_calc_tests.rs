@@ -213,6 +213,95 @@ fn calc_tree_no_cycles_for_dag() {
     assert!(!tree.has_cycles());
 }
 
+#[test]
+fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
+    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
+    use std::collections::HashMap;
+
+    let bounds = SheetBounds {
+        max_columns: 63,
+        max_rows: 254,
+    };
+    let total = 4000usize;
+
+    let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
+    let mut cells: Vec<CellRef> = Vec::with_capacity(total);
+
+    for i in 0..total {
+        let idx = i as u16 + 1;
+        let col = ((idx - 1) % bounds.max_columns) + 1;
+        let row = ((idx - 1) / bounds.max_columns) + 1;
+        cells.push(CellRef::new(col, row, bounds).expect("cell in bounds"));
+    }
+
+    formulas.insert(cells[0], Expr::Number(1.0));
+    for i in 1..total {
+        formulas.insert(cells[i], Expr::Cell(cells[i - 1], RefFlags::RELATIVE));
+    }
+
+    let tree = build_calc_tree_allow_cycles(&formulas);
+    assert!(!tree.has_cycles());
+    assert_eq!(tree.sccs.len(), total);
+    assert_eq!(tree.order.len(), total);
+    assert_eq!(tree.order.first().copied(), Some(cells[0]));
+    assert_eq!(tree.order.last().copied(), Some(cells[total - 1]));
+}
+
+#[test]
+fn calc_tree_order_respects_dependencies_on_dense_grid() {
+    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
+    use std::collections::HashMap;
+
+    let bounds = SheetBounds {
+        max_columns: 63,
+        max_rows: 254,
+    };
+    let cols: u16 = 20;
+    let rows: u16 = 90;
+    let mut formulas: HashMap<CellRef, Expr> = HashMap::new();
+
+    for row in 2..=rows {
+        for col in 2..=cols {
+            let cell = CellRef::new(col, row, bounds).expect("cell");
+            let up = CellRef::new(col, row - 1, bounds).expect("up");
+            let left = CellRef::new(col - 1, row, bounds).expect("left");
+            let diag = CellRef::new(col - 1, row - 1, bounds).expect("diag");
+            formulas.insert(
+                cell,
+                Expr::Binary {
+                    op: dnavisicalc_core::BinaryOp::Add,
+                    left: Box::new(Expr::Binary {
+                        op: dnavisicalc_core::BinaryOp::Add,
+                        left: Box::new(Expr::Cell(up, RefFlags::RELATIVE)),
+                        right: Box::new(Expr::Cell(left, RefFlags::RELATIVE)),
+                    }),
+                    right: Box::new(Expr::Cell(diag, RefFlags::RELATIVE)),
+                },
+            );
+        }
+    }
+
+    let tree = build_calc_tree_allow_cycles(&formulas);
+    assert!(!tree.has_cycles());
+
+    let mut pos: HashMap<CellRef, usize> = HashMap::new();
+    for (idx, cell) in tree.order.iter().copied().enumerate() {
+        pos.insert(cell, idx);
+    }
+
+    for (cell, node) in &tree.nodes {
+        let cell_pos = pos[cell];
+        for dep in &node.dependencies {
+            if let Some(dep_pos) = pos.get(dep).copied() {
+                assert!(
+                    dep_pos < cell_pos,
+                    "dependency order violation: {dep} (pos={dep_pos}) should come before {cell} (pos={cell_pos})"
+                );
+            }
+        }
+    }
+}
+
 // --- Convergence tolerance ---
 
 #[test]
