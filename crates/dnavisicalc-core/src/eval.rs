@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -6,6 +6,8 @@ use crate::address::CellRef;
 use crate::address::{AddressError, parse_cell_ref};
 use crate::address::{CellRange, SheetBounds};
 use crate::ast::{BinaryOp, Expr, UnaryOp};
+use crate::cell_grid::{CellBitset, CellGrid};
+use crate::engine::StoredValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -216,7 +218,7 @@ pub(crate) enum RuntimeValue {
 pub(crate) struct LambdaValue {
     params: Vec<String>,
     body: Expr,
-    captured: HashMap<String, RuntimeValue>,
+    captured: FxHashMap<String, RuntimeValue>,
 }
 
 impl RuntimeValue {
@@ -321,29 +323,40 @@ impl<F: Fn(&[Value]) -> Value> UdfHandler for FnUdfWithVolatility<F> {
 }
 
 pub struct EvalContext<'a> {
-    formulas: &'a HashMap<CellRef, Rc<Expr>>,
-    literals: &'a HashMap<CellRef, f64>,
-    text_literals: &'a HashMap<CellRef, String>,
-    name_formulas: &'a HashMap<String, Rc<Expr>>,
-    name_literals: &'a HashMap<String, f64>,
-    name_text_literals: &'a HashMap<String, String>,
+    formulas: &'a FxHashMap<CellRef, Rc<Expr>>,
+    literals: &'a FxHashMap<CellRef, f64>,
+    text_literals: &'a FxHashMap<CellRef, String>,
+    name_formulas: &'a FxHashMap<String, Rc<Expr>>,
+    name_literals: &'a FxHashMap<String, f64>,
+    name_text_literals: &'a FxHashMap<String, String>,
     bounds: SheetBounds,
-    cache: HashMap<CellRef, RuntimeValue>,
-    name_cache: HashMap<String, RuntimeValue>,
+    cache: CellGrid<RuntimeValue>,
+    name_cache: FxHashMap<String, RuntimeValue>,
+    /// Committed cell values for lazy cache lookup during incremental recalc.
+    /// When set, cache misses on formula cells fall through to this map
+    /// instead of triggering a full recursive evaluation.
+    committed_cell_values: Option<&'a CellGrid<StoredValue>>,
+    /// Committed name values for lazy cache lookup during incremental recalc.
+    committed_name_values: Option<&'a FxHashMap<String, StoredValue>>,
+    /// Cells evicted from the committed-value fallback (dirty cells that
+    /// must be re-evaluated rather than read from committed state).
+    committed_evicted_cells: CellBitset,
+    /// Names evicted from the committed-value fallback.
+    committed_evicted_names: FxHashSet<String>,
     stack: Vec<EvalStackNode>,
     /// O(1) lookup set for cell cycle detection — mirrors Cell entries in stack.
-    cell_stack_set: HashSet<CellRef>,
-    local_scopes: Vec<HashMap<String, RuntimeValue>>,
+    cell_stack_set: CellBitset,
+    local_scopes: Vec<FxHashMap<String, RuntimeValue>>,
     recalc_serial: u64,
     random_counter: u64,
     now_timestamp: f64,
-    stream_counters: &'a HashMap<CellRef, u64>,
-    stream_registrations: HashMap<CellRef, StreamRegistration>,
+    stream_counters: &'a FxHashMap<CellRef, u64>,
+    stream_registrations: FxHashMap<CellRef, StreamRegistration>,
     /// Previous iteration's cached values for cells in the currently
     /// iterating SCC. When a cycle is detected during evaluation and the
     /// cell is in this set, the previous value is returned instead of a
     /// cycle error.
-    iterating_prev: HashMap<CellRef, RuntimeValue>,
+    iterating_prev: FxHashMap<CellRef, RuntimeValue>,
     /// True once a circular-reference path is observed during this evaluation.
     cycle_detected: bool,
     /// Guardrails to avoid process-level stack overflow on pathological nesting.
@@ -351,7 +364,7 @@ pub struct EvalContext<'a> {
     expr_eval_depth: usize,
     max_eval_depth: usize,
     /// Registered user-defined functions.
-    udfs: &'a HashMap<String, Box<dyn UdfHandler>>,
+    udfs: &'a FxHashMap<String, Box<dyn UdfHandler>>,
 }
 
 #[derive(Debug, Clone)]
@@ -367,18 +380,19 @@ enum EvalStackNode {
 
 impl<'a> EvalContext<'a> {
     pub fn new(
-        formulas: &'a HashMap<CellRef, Rc<Expr>>,
-        literals: &'a HashMap<CellRef, f64>,
-        text_literals: &'a HashMap<CellRef, String>,
-        name_formulas: &'a HashMap<String, Rc<Expr>>,
-        name_literals: &'a HashMap<String, f64>,
-        name_text_literals: &'a HashMap<String, String>,
+        formulas: &'a FxHashMap<CellRef, Rc<Expr>>,
+        literals: &'a FxHashMap<CellRef, f64>,
+        text_literals: &'a FxHashMap<CellRef, String>,
+        name_formulas: &'a FxHashMap<String, Rc<Expr>>,
+        name_literals: &'a FxHashMap<String, f64>,
+        name_text_literals: &'a FxHashMap<String, String>,
         bounds: SheetBounds,
         recalc_serial: u64,
         now_timestamp: f64,
-        stream_counters: &'a HashMap<CellRef, u64>,
-        udfs: &'a HashMap<String, Box<dyn UdfHandler>>,
+        stream_counters: &'a FxHashMap<CellRef, u64>,
+        udfs: &'a FxHashMap<String, Box<dyn UdfHandler>>,
     ) -> Self {
+        let name_count = name_formulas.len() + name_literals.len() + name_text_literals.len();
         Self {
             formulas,
             literals,
@@ -387,17 +401,21 @@ impl<'a> EvalContext<'a> {
             name_literals,
             name_text_literals,
             bounds,
-            cache: HashMap::new(),
-            name_cache: HashMap::new(),
+            cache: CellGrid::new(bounds.max_columns, bounds.max_rows),
+            name_cache: FxHashMap::with_capacity_and_hasher(name_count, Default::default()),
+            committed_cell_values: None,
+            committed_name_values: None,
+            committed_evicted_cells: CellBitset::new(bounds.max_columns, bounds.max_rows),
+            committed_evicted_names: FxHashSet::default(),
             stack: Vec::new(),
-            cell_stack_set: HashSet::new(),
+            cell_stack_set: CellBitset::new(bounds.max_columns, bounds.max_rows),
             local_scopes: Vec::new(),
             recalc_serial,
             random_counter: 0,
             now_timestamp,
             stream_counters,
-            stream_registrations: HashMap::new(),
-            iterating_prev: HashMap::new(),
+            stream_registrations: FxHashMap::default(),
+            iterating_prev: FxHashMap::default(),
             cycle_detected: false,
             cell_eval_depth: 0,
             expr_eval_depth: 0,
@@ -406,7 +424,7 @@ impl<'a> EvalContext<'a> {
         }
     }
 
-    pub(crate) fn take_stream_registrations(&mut self) -> HashMap<CellRef, StreamRegistration> {
+    pub(crate) fn take_stream_registrations(&mut self) -> FxHashMap<CellRef, StreamRegistration> {
         std::mem::take(&mut self.stream_registrations)
     }
 
@@ -416,30 +434,38 @@ impl<'a> EvalContext<'a> {
         detected
     }
 
-    /// Seeds the cell runtime cache with caller-provided values.
-    /// Used by incremental recalc so dependency reads can reuse committed
-    /// values without recursively walking deep formula chains.
-    pub(crate) fn seed_cell_cache(&mut self, seeds: &HashMap<CellRef, RuntimeValue>) {
-        for (cell, value) in seeds {
-            self.cache.insert(*cell, value.clone());
-        }
+    /// Sets committed cell values for lazy cache lookup during incremental
+    /// recalc. Cache misses on formula cells will fall through to this map,
+    /// avoiding the need to pre-seed all ~8,800 formula values.
+    pub(crate) fn set_committed_cell_values(
+        &mut self,
+        values: &'a CellGrid<StoredValue>,
+    ) {
+        self.committed_cell_values = Some(values);
+    }
+
+    /// Sets committed name values for lazy cache lookup during incremental
+    /// recalc.
+    pub(crate) fn set_committed_name_values(
+        &mut self,
+        values: &'a FxHashMap<String, StoredValue>,
+    ) {
+        self.committed_name_values = Some(values);
     }
 
     /// Removes a single cached cell value, forcing re-evaluation on next read.
+    /// Also evicts from the committed-value fallback so stale values aren't used.
     pub(crate) fn evict_cell_cache(&mut self, cell: CellRef) {
         self.cache.remove(&cell);
-    }
-
-    /// Seeds the name runtime cache with caller-provided values.
-    pub(crate) fn seed_name_cache(&mut self, seeds: &HashMap<String, RuntimeValue>) {
-        for (name, value) in seeds {
-            self.name_cache.insert(name.clone(), value.clone());
-        }
+        self.committed_evicted_cells.insert(cell);
     }
 
     /// Removes a single cached name value, forcing re-evaluation on next read.
+    /// Also evicts from the committed-value fallback.
     pub(crate) fn evict_name_cache(&mut self, name: &str) {
-        self.name_cache.remove(&name.to_ascii_uppercase());
+        let upper = name.to_ascii_uppercase();
+        self.name_cache.remove(&upper);
+        self.committed_evicted_names.insert(upper);
     }
 
     /// Prepares for iterative evaluation of a cyclic SCC. Seeds the cache with
@@ -458,7 +484,7 @@ impl<'a> EvalContext<'a> {
     pub(crate) fn begin_iteration_seeded(
         &mut self,
         cells: &[CellRef],
-        seeds: &HashMap<CellRef, RuntimeValue>,
+        seeds: &FxHashMap<CellRef, RuntimeValue>,
     ) {
         let default_value = RuntimeValue::scalar(Value::Number(0.0));
         for cell in cells {
@@ -513,6 +539,18 @@ impl<'a> EvalContext<'a> {
         }
 
         if let Some(expr) = self.formulas.get(&cell) {
+            // During incremental recalc, clean formula cells have committed
+            // values that don't need re-evaluation. Check before recursing.
+            if let Some(committed) = self.committed_cell_values {
+                if !self.committed_evicted_cells.contains(&cell) {
+                    if let Some(stored) = committed.get(&cell) {
+                        let rv = RuntimeValue::scalar(stored.value.clone());
+                        self.cache.insert(cell, rv.clone());
+                        self.cell_eval_depth -= 1;
+                        return rv;
+                    }
+                }
+            }
             self.stack.push(EvalStackNode::Cell(cell));
             self.cell_stack_set.insert(cell);
             let value = self.evaluate_expr(expr);
@@ -559,6 +597,16 @@ impl<'a> EvalContext<'a> {
         }
 
         if let Some(expr) = self.name_formulas.get(&upper) {
+            // During incremental recalc, check committed name values first.
+            if let Some(committed) = self.committed_name_values {
+                if !self.committed_evicted_names.contains(&upper) {
+                    if let Some(stored) = committed.get(&upper) {
+                        let rv = RuntimeValue::scalar(stored.value.clone());
+                        self.name_cache.insert(upper, rv.clone());
+                        return rv;
+                    }
+                }
+            }
             self.stack.push(EvalStackNode::Name(upper.clone()));
             let value = self.evaluate_expr(expr);
             self.stack.pop();
@@ -586,7 +634,7 @@ impl<'a> EvalContext<'a> {
     }
 
     fn push_scope(&mut self) {
-        self.local_scopes.push(HashMap::new());
+        self.local_scopes.push(FxHashMap::default());
     }
 
     fn pop_scope(&mut self) {
@@ -600,8 +648,8 @@ impl<'a> EvalContext<'a> {
         }
     }
 
-    fn collect_visible_locals(&self) -> HashMap<String, RuntimeValue> {
-        let mut out = HashMap::new();
+    fn collect_visible_locals(&self) -> FxHashMap<String, RuntimeValue> {
+        let mut out = FxHashMap::default();
         for scope in &self.local_scopes {
             for (name, value) in scope {
                 out.insert(name.clone(), value.clone());
@@ -620,7 +668,7 @@ impl<'a> EvalContext<'a> {
     fn evaluate_expr_with_scope(
         &mut self,
         expr: &Expr,
-        scope: HashMap<String, RuntimeValue>,
+        scope: FxHashMap<String, RuntimeValue>,
     ) -> RuntimeValue {
         self.local_scopes.push(scope);
         let value = self.evaluate_expr(expr);

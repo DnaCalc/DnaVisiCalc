@@ -11,6 +11,7 @@ name = "dnavisicalc_core"
 path = "src/lib.rs"
 
 [dependencies]
+rustc-hash.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

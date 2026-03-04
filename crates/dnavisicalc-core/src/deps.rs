@@ -1,4 +1,5 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -9,7 +10,7 @@ use crate::ast::Expr;
 pub struct CalcNode {
     pub cell: CellRef,
     pub expr: Rc<Expr>,
-    pub dependencies: HashSet<CellRef>,
+    pub dependencies: FxHashSet<CellRef>,
 }
 
 /// A strongly connected component in the dependency graph.
@@ -23,12 +24,15 @@ pub struct Scc {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CalcTree {
-    pub nodes: HashMap<CellRef, CalcNode>,
+    pub nodes: FxHashMap<CellRef, CalcNode>,
     /// Flat topological evaluation order (only valid when there are no cycles).
     pub order: Vec<CellRef>,
     /// SCCs in reverse-topological order of the condensation DAG
     /// (dependencies come before dependents). Each SCC lists its member cells.
     pub sccs: Vec<Scc>,
+    /// Maps each cell to its SCC index in `sccs`, enabling O(1) lookup of
+    /// which SCC a given cell belongs to.
+    pub cell_to_scc: FxHashMap<CellRef, usize>,
 }
 
 impl CalcTree {
@@ -62,7 +66,7 @@ impl std::error::Error for DependencyError {}
 
 /// Builds the calculation tree with cycle detection. Returns an error if any
 /// circular dependency is found. This is the original strict-mode behaviour.
-pub fn build_calc_tree(formulas: &HashMap<CellRef, Rc<Expr>>) -> Result<CalcTree, DependencyError> {
+pub fn build_calc_tree(formulas: &FxHashMap<CellRef, Rc<Expr>>) -> Result<CalcTree, DependencyError> {
     let (nodes, formula_edges) = build_nodes_and_edges(formulas);
     let sccs = tarjan_sccs(&nodes, &formula_edges);
 
@@ -79,29 +83,52 @@ pub fn build_calc_tree(formulas: &HashMap<CellRef, Rc<Expr>>) -> Result<CalcTree
         .iter()
         .flat_map(|scc| scc.cells.iter().copied())
         .collect();
-    Ok(CalcTree { nodes, order, sccs })
+    let cell_to_scc = build_cell_to_scc_index(&sccs);
+    Ok(CalcTree {
+        nodes,
+        order,
+        sccs,
+        cell_to_scc,
+    })
 }
 
 /// Builds the calculation tree allowing circular dependencies. Cycles are
 /// captured as cyclic SCCs rather than producing errors. The Engine can then
 /// choose to iterate cyclic SCCs or report errors.
-pub fn build_calc_tree_allow_cycles(formulas: &HashMap<CellRef, Rc<Expr>>) -> CalcTree {
+pub fn build_calc_tree_allow_cycles(formulas: &FxHashMap<CellRef, Rc<Expr>>) -> CalcTree {
     let (nodes, formula_edges) = build_nodes_and_edges(formulas);
     let sccs = tarjan_sccs(&nodes, &formula_edges);
     let order: Vec<CellRef> = sccs
         .iter()
         .flat_map(|scc| scc.cells.iter().copied())
         .collect();
-    CalcTree { nodes, order, sccs }
+    let cell_to_scc = build_cell_to_scc_index(&sccs);
+    CalcTree {
+        nodes,
+        order,
+        sccs,
+        cell_to_scc,
+    }
+}
+
+fn build_cell_to_scc_index(sccs: &[Scc]) -> FxHashMap<CellRef, usize> {
+    let total_cells: usize = sccs.iter().map(|scc| scc.cells.len()).sum();
+    let mut index = FxHashMap::with_capacity_and_hasher(total_cells, Default::default());
+    for (scc_idx, scc) in sccs.iter().enumerate() {
+        for cell in &scc.cells {
+            index.insert(*cell, scc_idx);
+        }
+    }
+    index
 }
 
 fn build_nodes_and_edges(
-    formulas: &HashMap<CellRef, Rc<Expr>>,
+    formulas: &FxHashMap<CellRef, Rc<Expr>>,
 ) -> (
-    HashMap<CellRef, CalcNode>,
-    HashMap<CellRef, HashSet<CellRef>>,
+    FxHashMap<CellRef, CalcNode>,
+    FxHashMap<CellRef, FxHashSet<CellRef>>,
 ) {
-    let mut nodes: HashMap<CellRef, CalcNode> = HashMap::new();
+    let mut nodes: FxHashMap<CellRef, CalcNode> = FxHashMap::with_capacity_and_hasher(formulas.len(), Default::default());
     for (cell, expr) in formulas {
         let dependencies = dependencies_for_expr(expr);
         nodes.insert(
@@ -114,12 +141,12 @@ fn build_nodes_and_edges(
         );
     }
 
-    let formula_cells: HashSet<CellRef> = nodes.keys().copied().collect();
-    let mut formula_edges: HashMap<CellRef, HashSet<CellRef>> = HashMap::new();
+    let mut formula_edges: FxHashMap<CellRef, FxHashSet<CellRef>> =
+        FxHashMap::with_capacity_and_hasher(formulas.len(), Default::default());
     for (cell, node) in &nodes {
-        let mut deps = HashSet::new();
+        let mut deps = FxHashSet::default();
         for dep in &node.dependencies {
-            if formula_cells.contains(dep) {
+            if nodes.contains_key(dep) {
                 deps.insert(*dep);
             }
         }
@@ -129,13 +156,13 @@ fn build_nodes_and_edges(
     (nodes, formula_edges)
 }
 
-pub fn dependencies_for_expr(expr: &Expr) -> HashSet<CellRef> {
-    let mut out = HashSet::new();
+pub fn dependencies_for_expr(expr: &Expr) -> FxHashSet<CellRef> {
+    let mut out = FxHashSet::default();
     collect_dependencies(expr, &mut out);
     out
 }
 
-fn collect_dependencies(expr: &Expr, out: &mut HashSet<CellRef>) {
+fn collect_dependencies(expr: &Expr, out: &mut FxHashSet<CellRef>) {
     match expr {
         Expr::Cell(cell, _) => {
             out.insert(*cell);
@@ -175,8 +202,8 @@ fn collect_dependencies(expr: &Expr, out: &mut HashSet<CellRef>) {
 // ---------------------------------------------------------------------------
 
 fn tarjan_sccs(
-    nodes: &HashMap<CellRef, CalcNode>,
-    edges: &HashMap<CellRef, HashSet<CellRef>>,
+    nodes: &FxHashMap<CellRef, CalcNode>,
+    edges: &FxHashMap<CellRef, FxHashSet<CellRef>>,
 ) -> Vec<Scc> {
     // Sort node keys for deterministic iteration order.
     let mut node_list: Vec<CellRef> = nodes.keys().copied().collect();
@@ -203,9 +230,9 @@ fn tarjan_sccs(
 
 fn build_reverse_edges(
     nodes: &[CellRef],
-    edges: &HashMap<CellRef, HashSet<CellRef>>,
-) -> HashMap<CellRef, HashSet<CellRef>> {
-    let mut reverse_edges: HashMap<CellRef, HashSet<CellRef>> = HashMap::new();
+    edges: &FxHashMap<CellRef, FxHashSet<CellRef>>,
+) -> FxHashMap<CellRef, FxHashSet<CellRef>> {
+    let mut reverse_edges: FxHashMap<CellRef, FxHashSet<CellRef>> = FxHashMap::with_capacity_and_hasher(nodes.len(), Default::default());
     for node in nodes {
         reverse_edges.entry(*node).or_default();
     }
@@ -219,11 +246,11 @@ fn build_reverse_edges(
 
 fn kosaraju_components_iterative(
     nodes: &[CellRef],
-    edges: &HashMap<CellRef, HashSet<CellRef>>,
-    reverse_edges: &HashMap<CellRef, HashSet<CellRef>>,
+    edges: &FxHashMap<CellRef, FxHashSet<CellRef>>,
+    reverse_edges: &FxHashMap<CellRef, FxHashSet<CellRef>>,
 ) -> Vec<Vec<CellRef>> {
     // Pass 1: finish order on original graph.
-    let mut visited: HashSet<CellRef> = HashSet::new();
+    let mut visited: FxHashSet<CellRef> = FxHashSet::with_capacity_and_hasher(nodes.len(), Default::default());
     let mut finish_order: Vec<CellRef> = Vec::with_capacity(nodes.len());
     for start in nodes {
         if visited.contains(start) {
@@ -253,7 +280,7 @@ fn kosaraju_components_iterative(
     }
 
     // Pass 2: DFS on transpose graph, following reverse finish order.
-    let mut assigned: HashSet<CellRef> = HashSet::new();
+    let mut assigned: FxHashSet<CellRef> = FxHashSet::with_capacity_and_hasher(nodes.len(), Default::default());
     let mut components: Vec<Vec<CellRef>> = Vec::new();
     for start in finish_order.iter().rev() {
         if assigned.contains(start) {
@@ -281,8 +308,9 @@ fn kosaraju_components_iterative(
     components
 }
 
-fn build_component_index(components: &[Vec<CellRef>]) -> HashMap<CellRef, usize> {
-    let mut index = HashMap::new();
+fn build_component_index(components: &[Vec<CellRef>]) -> FxHashMap<CellRef, usize> {
+    let total_cells: usize = components.iter().map(|c| c.len()).sum();
+    let mut index = FxHashMap::with_capacity_and_hasher(total_cells, Default::default());
     for (component_id, cells) in components.iter().enumerate() {
         for cell in cells {
             index.insert(*cell, component_id);
@@ -293,8 +321,8 @@ fn build_component_index(components: &[Vec<CellRef>]) -> HashMap<CellRef, usize>
 
 fn order_components_for_evaluation(
     components: &[Vec<CellRef>],
-    comp_index: &HashMap<CellRef, usize>,
-    edges: &HashMap<CellRef, HashSet<CellRef>>,
+    comp_index: &FxHashMap<CellRef, usize>,
+    edges: &FxHashMap<CellRef, FxHashSet<CellRef>>,
 ) -> Vec<usize> {
     // Condensation graph edges are component(dependent) -> component(dependency).
     // For evaluation, we need dependencies first, so we topologically sort the
@@ -351,7 +379,7 @@ fn order_components_for_evaluation(
     ordered
 }
 
-fn is_cyclic_component(cells: &[CellRef], edges: &HashMap<CellRef, HashSet<CellRef>>) -> bool {
+fn is_cyclic_component(cells: &[CellRef], edges: &FxHashMap<CellRef, FxHashSet<CellRef>>) -> bool {
     if cells.len() > 1 {
         return true;
     }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -7,6 +7,7 @@ use crate::address::{
     is_cell_reference_token, parse_cell_ref,
 };
 use crate::ast::{Expr, StructuralOp, expr_to_formula, rewrite_expr};
+use crate::cell_grid::{CellBitset, CellGrid};
 use crate::deps::{CalcTree, DependencyError, build_calc_tree_allow_cycles};
 use crate::eval::{
     CellError, EvalContext, RuntimeValue, SUPPORTED_FUNCTIONS, UdfHandler, Value, Volatility,
@@ -298,9 +299,9 @@ struct FormulaEntry {
 }
 
 #[derive(Debug, Clone)]
-struct StoredValue {
-    value: Value,
-    value_epoch: u64,
+pub(crate) struct StoredValue {
+    pub(crate) value: Value,
+    pub(crate) value_epoch: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -312,10 +313,10 @@ struct StreamState {
 
 #[derive(Debug, Clone)]
 struct ChangeBaseline {
-    values: HashMap<CellRef, Value>,
-    name_values: HashMap<String, Value>,
-    spill_ranges: HashMap<CellRef, CellRange>,
-    chart_outputs: HashMap<String, ChartOutput>,
+    values: FxHashMap<CellRef, Value>,
+    name_values: FxHashMap<String, Value>,
+    spill_ranges: FxHashMap<CellRef, CellRange>,
+    chart_outputs: FxHashMap<String, ChartOutput>,
 }
 
 #[derive(Debug)]
@@ -324,49 +325,49 @@ pub struct Engine {
     mode: RecalcMode,
     committed_epoch: u64,
     stabilized_epoch: u64,
-    cells: HashMap<CellRef, CellEntry>,
-    formats: HashMap<CellRef, CellFormat>,
-    names: HashMap<String, NameEntry>,
-    values: HashMap<CellRef, StoredValue>,
-    name_values: HashMap<String, StoredValue>,
-    spill_owners: HashMap<CellRef, CellRef>,
-    spill_ranges: HashMap<CellRef, CellRange>,
+    cells: FxHashMap<CellRef, CellEntry>,
+    formats: FxHashMap<CellRef, CellFormat>,
+    names: FxHashMap<String, NameEntry>,
+    values: CellGrid<StoredValue>,
+    name_values: FxHashMap<String, StoredValue>,
+    spill_owners: FxHashMap<CellRef, CellRef>,
+    spill_ranges: FxHashMap<CellRef, CellRange>,
     calc_tree: Option<CalcTree>,
     recalc_serial: u64,
     dynamic_array_strategy: DynamicArrayStrategy,
-    stream_cells: HashMap<CellRef, StreamState>,
+    stream_cells: FxHashMap<CellRef, StreamState>,
     iteration_config: IterationConfig,
     /// Cells directly modified since the last recalculation.
-    dirty_cells: HashSet<CellRef>,
+    dirty_cells: FxHashSet<CellRef>,
     /// Names directly modified since the last recalculation.
-    dirty_names: HashSet<String>,
+    dirty_names: FxHashSet<String>,
     /// When true, forces a full recalculation (e.g. after formula structure changes).
     full_recalc_needed: bool,
     /// Reverse dependency map: maps a cell to the set of formula cells that reference it.
     /// Maintained incrementally as formulas are added/removed.
-    reverse_deps: HashMap<CellRef, HashSet<CellRef>>,
+    reverse_deps: FxHashMap<CellRef, FxHashSet<CellRef>>,
     /// Number of formula cells evaluated in the last recalculation.
     last_eval_count: usize,
     /// Registered user-defined functions.
-    udfs: HashMap<String, Box<dyn UdfHandler>>,
+    udfs: FxHashMap<String, Box<dyn UdfHandler>>,
     /// Controls are named values with metadata.
-    controls: HashMap<String, ControlDefinition>,
+    controls: FxHashMap<String, ControlDefinition>,
     /// Charts are engine-owned sink entities.
-    charts: HashMap<String, ChartDefinition>,
+    charts: FxHashMap<String, ChartDefinition>,
     /// Latest computed chart outputs.
-    chart_outputs: HashMap<String, ChartOutput>,
+    chart_outputs: FxHashMap<String, ChartOutput>,
     /// Optional calc-delta capture.
     change_tracking_enabled: bool,
     /// Accumulated change entries since last drain.
     change_journal: Vec<ChangeEntry>,
     /// Pre-split eval maps, kept in sync with cells/names for zero-copy
-    /// borrowing by EvalContext. Avoids rebuilding 6 HashMaps on every recalc.
-    eval_formulas: HashMap<CellRef, Rc<Expr>>,
-    eval_literals: HashMap<CellRef, f64>,
-    eval_text_literals: HashMap<CellRef, String>,
-    eval_name_formulas: HashMap<String, Rc<Expr>>,
-    eval_name_literals: HashMap<String, f64>,
-    eval_name_text_literals: HashMap<String, String>,
+    /// borrowing by EvalContext. Avoids rebuilding 6 FxHashMaps on every recalc.
+    eval_formulas: FxHashMap<CellRef, Rc<Expr>>,
+    eval_literals: FxHashMap<CellRef, f64>,
+    eval_text_literals: FxHashMap<CellRef, String>,
+    eval_name_formulas: FxHashMap<String, Rc<Expr>>,
+    eval_name_literals: FxHashMap<String, f64>,
+    eval_name_text_literals: FxHashMap<String, String>,
 }
 
 impl Default for Engine {
@@ -386,35 +387,35 @@ impl Engine {
             mode: RecalcMode::Automatic,
             committed_epoch: 0,
             stabilized_epoch: 0,
-            cells: HashMap::new(),
-            formats: HashMap::new(),
-            names: HashMap::new(),
-            values: HashMap::new(),
-            name_values: HashMap::new(),
-            spill_owners: HashMap::new(),
-            spill_ranges: HashMap::new(),
+            cells: FxHashMap::default(),
+            formats: FxHashMap::default(),
+            names: FxHashMap::default(),
+            values: CellGrid::new(bounds.max_columns, bounds.max_rows),
+            name_values: FxHashMap::default(),
+            spill_owners: FxHashMap::default(),
+            spill_ranges: FxHashMap::default(),
             calc_tree: None,
             recalc_serial: 0,
             dynamic_array_strategy: DynamicArrayStrategy::OverlayInline,
-            stream_cells: HashMap::new(),
+            stream_cells: FxHashMap::default(),
             iteration_config: IterationConfig::default(),
-            dirty_cells: HashSet::new(),
-            dirty_names: HashSet::new(),
+            dirty_cells: FxHashSet::default(),
+            dirty_names: FxHashSet::default(),
             full_recalc_needed: true,
-            reverse_deps: HashMap::new(),
+            reverse_deps: FxHashMap::default(),
             last_eval_count: 0,
-            udfs: HashMap::new(),
-            controls: HashMap::new(),
-            charts: HashMap::new(),
-            chart_outputs: HashMap::new(),
+            udfs: FxHashMap::default(),
+            controls: FxHashMap::default(),
+            charts: FxHashMap::default(),
+            chart_outputs: FxHashMap::default(),
             change_tracking_enabled: false,
             change_journal: Vec::new(),
-            eval_formulas: HashMap::new(),
-            eval_literals: HashMap::new(),
-            eval_text_literals: HashMap::new(),
-            eval_name_formulas: HashMap::new(),
-            eval_name_literals: HashMap::new(),
-            eval_name_text_literals: HashMap::new(),
+            eval_formulas: FxHashMap::default(),
+            eval_literals: FxHashMap::default(),
+            eval_text_literals: FxHashMap::default(),
+            eval_name_formulas: FxHashMap::default(),
+            eval_name_literals: FxHashMap::default(),
+            eval_name_text_literals: FxHashMap::default(),
         }
     }
 
@@ -1099,7 +1100,7 @@ impl Engine {
 
         self.recalc_serial = self.recalc_serial.wrapping_add(1);
         let now_timestamp = excel_now_timestamp();
-        let stream_counters: HashMap<CellRef, u64> = self
+        let stream_counters: FxHashMap<CellRef, u64> = self
             .stream_cells
             .iter()
             .map(|(cell, state)| (*cell, state.counter))
@@ -1117,9 +1118,10 @@ impl Engine {
             &stream_counters,
             &self.udfs,
         );
-        let mut new_values: HashMap<CellRef, StoredValue> = HashMap::new();
-        let mut new_name_values: HashMap<String, StoredValue> = HashMap::new();
-        let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
+        let total_names = name_formulas.len() + name_literals.len() + name_text_literals.len();
+        let mut new_values: CellGrid<StoredValue> = CellGrid::new(self.bounds.max_columns, self.bounds.max_rows);
+        let mut new_name_values: FxHashMap<String, StoredValue> = FxHashMap::with_capacity_and_hasher(total_names, Default::default());
+        let mut runtime_values: FxHashMap<CellRef, RuntimeValue> = FxHashMap::with_capacity_and_hasher(formulas.len(), Default::default());
         let mut eval_count: usize = 0;
 
         for (cell, number) in &literals {
@@ -1167,7 +1169,7 @@ impl Engine {
                     evaluator.begin_iteration(&scc.cells);
                     None
                 } else {
-                    let mut seeds: HashMap<CellRef, RuntimeValue> = HashMap::new();
+                    let mut seeds: FxHashMap<CellRef, RuntimeValue> = FxHashMap::default();
                     for cell in &scc.cells {
                         let seed = self
                             .values
@@ -1253,8 +1255,8 @@ impl Engine {
         let emit_cycle_diagnostic =
             !self.iteration_config.enabled && evaluator.take_cycle_detected();
 
-        let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();
-        let mut spill_ranges: HashMap<CellRef, CellRange> = HashMap::new();
+        let mut spill_owners: FxHashMap<CellRef, CellRef> = FxHashMap::default();
+        let mut spill_ranges: FxHashMap<CellRef, CellRange> = FxHashMap::default();
         match self.dynamic_array_strategy {
             DynamicArrayStrategy::OverlayInline => {
                 self.apply_spills_overlay_inline(
@@ -1293,36 +1295,39 @@ impl Engine {
                 epoch: self.committed_epoch,
             });
         }
-        let mut new_stream_cells: HashMap<CellRef, StreamState> = HashMap::new();
-        for (cell, reg) in registrations {
-            if let Some(existing) = self.stream_cells.get(&cell) {
-                new_stream_cells.insert(
-                    cell,
-                    StreamState {
-                        period_secs: reg.period_secs,
-                        counter: existing.counter,
-                        elapsed_accumulator: existing.elapsed_accumulator,
-                    },
-                );
-            } else {
-                new_stream_cells.insert(
-                    cell,
-                    StreamState {
-                        period_secs: reg.period_secs,
-                        counter: 0,
-                        elapsed_accumulator: 0.0,
-                    },
-                );
+        if !registrations.is_empty() || !self.stream_cells.is_empty() {
+            let mut new_stream_cells: FxHashMap<CellRef, StreamState> = FxHashMap::default();
+            for (cell, reg) in registrations {
+                if let Some(existing) = self.stream_cells.get(&cell) {
+                    new_stream_cells.insert(
+                        cell,
+                        StreamState {
+                            period_secs: reg.period_secs,
+                            counter: existing.counter,
+                            elapsed_accumulator: existing.elapsed_accumulator,
+                        },
+                    );
+                } else {
+                    new_stream_cells.insert(
+                        cell,
+                        StreamState {
+                            period_secs: reg.period_secs,
+                            counter: 0,
+                            elapsed_accumulator: 0.0,
+                        },
+                    );
+                }
             }
+            self.stream_cells = new_stream_cells;
         }
-        self.stream_cells = new_stream_cells;
-        let new_chart_outputs = self.compute_chart_outputs_from_values(&new_values);
+        if !self.charts.is_empty() {
+            self.chart_outputs = self.compute_chart_outputs_from_values(&new_values);
+        }
 
         self.values = new_values;
         self.name_values = new_name_values;
         self.spill_owners = spill_owners;
         self.spill_ranges = spill_ranges;
-        self.chart_outputs = new_chart_outputs;
         self.stabilized_epoch = self.committed_epoch;
         self.last_eval_count = eval_count;
 
@@ -1356,7 +1361,7 @@ impl Engine {
     fn recalculate_incremental(&mut self) -> Result<(), EngineError> {
         let baseline = self.capture_change_baseline();
         // Compute dirty closure: all formula cells transitively dependent on dirty cells.
-        let dirty_closure = self.compute_dirty_closure();
+        let (dirty_bitset, dirty_vec) = self.compute_dirty_closure();
 
         // Take cached eval maps (O(1) pointer swaps) instead of rebuilding them.
         let formulas = std::mem::take(&mut self.eval_formulas);
@@ -1372,7 +1377,7 @@ impl Engine {
 
         self.recalc_serial = self.recalc_serial.wrapping_add(1);
         let now_timestamp = excel_now_timestamp();
-        let stream_counters: HashMap<CellRef, u64> = self
+        let stream_counters: FxHashMap<CellRef, u64> = self
             .stream_cells
             .iter()
             .map(|(cell, state)| (*cell, state.counter))
@@ -1391,52 +1396,71 @@ impl Engine {
             &self.udfs,
         );
 
-        // Seed evaluator caches with current committed values, then evict dirty
-        // entries before recomputing them. This keeps incremental recalc
-        // dependency reads iterative and prevents deep recursive walks.
-        let mut cell_cache_seed: HashMap<CellRef, RuntimeValue> = HashMap::new();
-        for (cell, stored) in &self.values {
-            if formulas.contains_key(cell) {
-                cell_cache_seed.insert(*cell, RuntimeValue::scalar(stored.value.clone()));
-            }
-        }
-        evaluator.seed_cell_cache(&cell_cache_seed);
+        // Take committed values out so evaluator can hold an immutable reference
+        // while we collect updated values separately.
+        let mut values = std::mem::take(&mut self.values);
+        let mut name_values_map = std::mem::take(&mut self.name_values);
 
-        let mut name_cache_seed: HashMap<String, RuntimeValue> = HashMap::new();
-        for (name, stored) in &self.name_values {
-            if name_formulas.contains_key(name) {
-                name_cache_seed.insert(name.clone(), RuntimeValue::scalar(stored.value.clone()));
-            }
-        }
-        evaluator.seed_name_cache(&name_cache_seed);
+        // Set committed values for lazy cache lookup. Clean formula cells will
+        // read their values on demand instead of pre-cloning all ~8,800 values.
+        evaluator.set_committed_cell_values(&values);
+        evaluator.set_committed_name_values(&name_values_map);
 
-        let mut runtime_values: HashMap<CellRef, RuntimeValue> = HashMap::new();
+        // Evict all dirty closure cells upfront so they won't use stale
+        // committed values.
+        for cell in &dirty_vec {
+            evaluator.evict_cell_cache(*cell);
+        }
+
+        let mut runtime_values: FxHashMap<CellRef, RuntimeValue> = FxHashMap::default();
+        let mut any_spill_array = false;
+        let mut updated_cells: Vec<(CellRef, StoredValue)> = Vec::with_capacity(dirty_vec.len());
         let mut eval_count: usize = 0;
 
-        // Re-evaluate only cells in the dirty closure, in dependency order.
-        for scc in &tree.sccs {
+        // Pre-compute which SCC indices contain dirty cells. This lets us skip
+        // entire clean SCCs without iterating their members (~8,600 skips on
+        // a typical 8,800-cell grid with ~200 dirty cells).
+        let mut dirty_scc_flags: Vec<bool> = vec![false; tree.sccs.len()];
+        for cell in &dirty_vec {
+            if let Some(&scc_idx) = tree.cell_to_scc.get(cell) {
+                dirty_scc_flags[scc_idx] = true;
+            }
+        }
+
+        // Re-evaluate only cells in dirty SCCs, in dependency order.
+        for (scc_idx, scc) in tree.sccs.iter().enumerate() {
+            if !dirty_scc_flags[scc_idx] {
+                continue;
+            }
             if !scc.is_cyclic {
                 for cell in &scc.cells {
-                    if dirty_closure.contains(cell) {
-                        evaluator.evict_cell_cache(*cell);
+                    if dirty_bitset.contains(cell) {
                         let runtime = evaluator.evaluate_cell_runtime(*cell);
-                        runtime_values.insert(*cell, runtime.clone());
+                        let is_spill = runtime
+                            .as_array()
+                            .is_some_and(|array| array.is_spill());
+                        if is_spill {
+                            any_spill_array = true;
+                        }
+                        // Only store runtime value if spill processing may be needed.
+                        if is_spill || any_spill_array || !self.spill_ranges.is_empty() {
+                            runtime_values.insert(*cell, runtime.clone());
+                        }
                         let value = runtime.to_scalar();
-                        self.values.insert(
+                        updated_cells.push((
                             *cell,
                             StoredValue {
                                 value,
                                 value_epoch: self.committed_epoch,
                             },
-                        );
+                        ));
                         eval_count += 1;
                     }
-                    // Clean cells keep their existing value in self.values.
+                    // Clean cells keep their existing value.
                 }
             } else {
-                // For cyclic SCCs, if any member is dirty, re-evaluate the entire SCC.
-                let scc_has_dirty = scc.cells.iter().any(|c| dirty_closure.contains(c));
-                if scc_has_dirty {
+                // For cyclic SCCs, re-evaluate the entire SCC.
+                {
                     let max_iter = if self.iteration_config.enabled {
                         self.iteration_config.max_iterations
                     } else {
@@ -1447,10 +1471,9 @@ impl Engine {
                         evaluator.begin_iteration(&scc.cells);
                         None
                     } else {
-                        let mut seeds: HashMap<CellRef, RuntimeValue> = HashMap::new();
+                        let mut seeds: FxHashMap<CellRef, RuntimeValue> = FxHashMap::default();
                         for cell in &scc.cells {
-                            let seed = self
-                                .values
+                            let seed = values
                                 .get(cell)
                                 .map(|stored| RuntimeValue::scalar(stored.value.clone()))
                                 .unwrap_or_else(|| RuntimeValue::scalar(Value::Number(0.0)));
@@ -1460,19 +1483,15 @@ impl Engine {
                         Some(seeds)
                     };
 
+                    // Track per-iteration values for convergence checking.
+                    let mut iter_values: FxHashMap<CellRef, Value> = FxHashMap::default();
                     for cell in &scc.cells {
                         let seed_value = seeded_prev
                             .as_ref()
                             .and_then(|seeds| seeds.get(cell))
                             .map(RuntimeValue::to_scalar)
                             .unwrap_or(Value::Number(0.0));
-                        self.values.insert(
-                            *cell,
-                            StoredValue {
-                                value: seed_value,
-                                value_epoch: self.committed_epoch,
-                            },
-                        );
+                        iter_values.insert(*cell, seed_value);
                     }
 
                     for _iteration in 0..max_iter {
@@ -1480,14 +1499,20 @@ impl Engine {
 
                         let mut converged = true;
                         for cell in &scc.cells {
-                            let old_value = self
-                                .values
+                            let old_value = iter_values
                                 .get(cell)
-                                .map(|sv| &sv.value)
                                 .cloned()
                                 .unwrap_or(Value::Number(0.0));
                             let runtime = evaluator.evaluate_cell_runtime(*cell);
-                            runtime_values.insert(*cell, runtime.clone());
+                            let is_spill = runtime
+                                .as_array()
+                                .is_some_and(|array| array.is_spill());
+                            if is_spill {
+                                any_spill_array = true;
+                            }
+                            if is_spill || any_spill_array || !self.spill_ranges.is_empty() {
+                                runtime_values.insert(*cell, runtime.clone());
+                            }
                             let new_value = runtime.to_scalar();
 
                             if let (Value::Number(old_n), Value::Number(new_n)) =
@@ -1500,13 +1525,7 @@ impl Engine {
                                 converged = false;
                             }
 
-                            self.values.insert(
-                                *cell,
-                                StoredValue {
-                                    value: new_value,
-                                    value_epoch: self.committed_epoch,
-                                },
-                            );
+                            iter_values.insert(*cell, new_value);
                             eval_count += 1;
                         }
 
@@ -1515,45 +1534,79 @@ impl Engine {
                         }
                     }
 
+                    // Write final iteration values to updated_cells.
+                    for (cell, value) in iter_values {
+                        updated_cells.push((
+                            cell,
+                            StoredValue {
+                                value,
+                                value_epoch: self.committed_epoch,
+                            },
+                        ));
+                    }
+
                     evaluator.end_iteration();
                 }
             }
         }
 
         // Re-evaluate names if any are dirty.
+        let mut updated_names: Vec<(String, StoredValue)> = Vec::new();
         if !self.dirty_names.is_empty() {
             let mut sorted_names: Vec<String> = self.names.keys().cloned().collect();
             sorted_names.sort();
             for name in sorted_names {
                 evaluator.evict_name_cache(&name);
                 let value = evaluator.evaluate_name_runtime(&name).to_scalar();
-                self.name_values.insert(
+                updated_names.push((
                     name,
                     StoredValue {
                         value,
                         value_epoch: self.committed_epoch,
                     },
-                );
+                ));
             }
         }
         let emit_cycle_diagnostic =
             !self.iteration_config.enabled && evaluator.take_cycle_detected();
 
+        // Extract registrations and diagnostics, then drop evaluator to
+        // release borrows on `values` and `name_values_map`.
+        let registrations = evaluator.take_stream_registrations();
+        drop(evaluator);
+
+        // Merge updated cell and name values back into the taken maps.
+        for (cell, stored) in updated_cells {
+            values.insert(cell, stored);
+        }
+        for (name, stored) in updated_names {
+            name_values_map.insert(name, stored);
+        }
+
+        // Restore values into self for use by spill/stream/chart processing.
+        self.values = values;
+        self.name_values = name_values_map;
+
         // Spill handling can be skipped for pure scalar updates when no dirty
         // cell affects existing spill state and no dirty formula produced a
-        // spilled array.
-        let dirty_touches_existing_spill_state = dirty_closure.iter().any(|cell| {
-            self.spill_ranges.contains_key(cell) || self.spill_owners.contains_key(cell)
-        });
+        // spilled array. Skip immediately if no spill state exists at all.
+        let dirty_touches_existing_spill_state =
+            if self.spill_ranges.is_empty() && self.spill_owners.is_empty() {
+                false
+            } else {
+                dirty_vec.iter().any(|cell| {
+                    self.spill_ranges.contains_key(cell) || self.spill_owners.contains_key(cell)
+                })
+            };
         let dirty_produced_spill_array = runtime_values
             .values()
             .any(|runtime| runtime.as_array().is_some_and(|array| array.is_spill()));
 
-        if !dirty_closure.is_empty()
+        if !dirty_vec.is_empty()
             && (dirty_touches_existing_spill_state || dirty_produced_spill_array)
         {
-            let mut spill_owners: HashMap<CellRef, CellRef> = HashMap::new();
-            let mut spill_ranges: HashMap<CellRef, CellRange> = HashMap::new();
+            let mut spill_owners: FxHashMap<CellRef, CellRef> = FxHashMap::default();
+            let mut spill_ranges: FxHashMap<CellRef, CellRange> = FxHashMap::default();
             // Build a combined values map for spill processing.
             let mut combined_values = self.values.clone();
             match self.dynamic_array_strategy {
@@ -1591,7 +1644,6 @@ impl Engine {
         }
 
         // Handle stream registrations.
-        let registrations = evaluator.take_stream_registrations();
         if emit_cycle_diagnostic {
             self.push_change(ChangeEntry::Diagnostic {
                 code: DiagnosticCode::CircularReferenceDetected,
@@ -1599,37 +1651,48 @@ impl Engine {
                 epoch: self.committed_epoch,
             });
         }
-        if !dirty_closure.is_empty() {
-            let old_stream_cells = self.stream_cells.clone();
-            let mut merged = old_stream_cells.clone();
-            for cell in &dirty_closure {
-                merged.remove(cell);
-            }
-            for (cell, reg) in registrations {
-                if let Some(existing) = old_stream_cells.get(&cell) {
-                    merged.insert(
-                        cell,
-                        StreamState {
-                            period_secs: reg.period_secs,
-                            counter: existing.counter,
-                            elapsed_accumulator: existing.elapsed_accumulator,
-                        },
-                    );
-                } else {
-                    merged.insert(
-                        cell,
-                        StreamState {
-                            period_secs: reg.period_secs,
-                            counter: 0,
-                            elapsed_accumulator: 0.0,
-                        },
-                    );
+        if !registrations.is_empty() || !self.stream_cells.is_empty() {
+            if !dirty_vec.is_empty() {
+                // Only clone when dirty_vec actually intersects stream cells.
+                let dirty_intersects_streams = self
+                    .stream_cells
+                    .keys()
+                    .any(|cell| dirty_bitset.contains(cell));
+                if dirty_intersects_streams || !registrations.is_empty() {
+                    let old_stream_cells = self.stream_cells.clone();
+                    let mut merged = old_stream_cells.clone();
+                    for cell in &dirty_vec {
+                        merged.remove(cell);
+                    }
+                    for (cell, reg) in registrations {
+                        if let Some(existing) = old_stream_cells.get(&cell) {
+                            merged.insert(
+                                cell,
+                                StreamState {
+                                    period_secs: reg.period_secs,
+                                    counter: existing.counter,
+                                    elapsed_accumulator: existing.elapsed_accumulator,
+                                },
+                            );
+                        } else {
+                            merged.insert(
+                                cell,
+                                StreamState {
+                                    period_secs: reg.period_secs,
+                                    counter: 0,
+                                    elapsed_accumulator: 0.0,
+                                },
+                            );
+                        }
+                    }
+                    self.stream_cells = merged;
                 }
             }
-            self.stream_cells = merged;
         }
 
-        self.chart_outputs = self.compute_chart_outputs_from_values(&self.values);
+        if !self.charts.is_empty() {
+            self.chart_outputs = self.compute_chart_outputs_from_values(&self.values);
+        }
         self.stabilized_epoch = self.committed_epoch;
         self.calc_tree = Some(tree);
         self.last_eval_count = eval_count;
@@ -2064,7 +2127,7 @@ impl Engine {
             values: self
                 .values
                 .iter()
-                .map(|(cell, stored)| (*cell, stored.value.clone()))
+                .map(|(cell, stored)| (cell, stored.value.clone()))
                 .collect(),
             name_values: self
                 .name_values
@@ -2079,8 +2142,8 @@ impl Engine {
     fn record_changes_from_baseline(&mut self, baseline: ChangeBaseline) {
         let epoch = self.committed_epoch;
 
-        let mut cell_keys: HashSet<CellRef> = baseline.values.keys().copied().collect();
-        cell_keys.extend(self.values.keys().copied());
+        let mut cell_keys: FxHashSet<CellRef> = baseline.values.keys().copied().collect();
+        cell_keys.extend(self.values.keys());
         let mut cell_keys: Vec<CellRef> = cell_keys.into_iter().collect();
         cell_keys.sort();
         for cell in cell_keys {
@@ -2100,7 +2163,7 @@ impl Engine {
             }
         }
 
-        let mut name_keys: HashSet<String> = baseline.name_values.keys().cloned().collect();
+        let mut name_keys: FxHashSet<String> = baseline.name_values.keys().cloned().collect();
         name_keys.extend(self.name_values.keys().cloned());
         let mut name_keys: Vec<String> = name_keys.into_iter().collect();
         name_keys.sort();
@@ -2125,7 +2188,7 @@ impl Engine {
             }
         }
 
-        let mut spill_anchors: HashSet<CellRef> = baseline.spill_ranges.keys().copied().collect();
+        let mut spill_anchors: FxHashSet<CellRef> = baseline.spill_ranges.keys().copied().collect();
         spill_anchors.extend(self.spill_ranges.keys().copied());
         let mut spill_anchors: Vec<CellRef> = spill_anchors.into_iter().collect();
         spill_anchors.sort();
@@ -2142,7 +2205,7 @@ impl Engine {
             }
         }
 
-        let mut chart_names: HashSet<String> = baseline.chart_outputs.keys().cloned().collect();
+        let mut chart_names: FxHashSet<String> = baseline.chart_outputs.keys().cloned().collect();
         chart_names.extend(self.chart_outputs.keys().cloned());
         let mut chart_names: Vec<String> = chart_names.into_iter().collect();
         chart_names.sort();
@@ -2163,11 +2226,11 @@ impl Engine {
 
     fn compute_chart_outputs_from_values(
         &self,
-        values: &HashMap<CellRef, StoredValue>,
-    ) -> HashMap<String, ChartOutput> {
+        values: &CellGrid<StoredValue>,
+    ) -> FxHashMap<String, ChartOutput> {
         let mut chart_names: Vec<String> = self.charts.keys().cloned().collect();
         chart_names.sort();
-        let mut outputs = HashMap::with_capacity(chart_names.len());
+        let mut outputs = FxHashMap::with_capacity_and_hasher(chart_names.len(), Default::default());
         for name in chart_names {
             if let Some(def) = self.charts.get(&name) {
                 outputs.insert(name, self.compute_chart_output_from_values(def, values));
@@ -2179,7 +2242,7 @@ impl Engine {
     fn compute_chart_output_from_values(
         &self,
         def: &ChartDefinition,
-        values: &HashMap<CellRef, StoredValue>,
+        values: &CellGrid<StoredValue>,
     ) -> ChartOutput {
         let range = def.source_range;
         let num_cols = range.end.col - range.start.col + 1;
@@ -2359,14 +2422,17 @@ impl Engine {
     }
 
     /// Compute the transitive closure of dirty cells through reverse dependencies.
-    /// Returns the set of all formula cells that need re-evaluation.
-    fn compute_dirty_closure(&self) -> HashSet<CellRef> {
-        let mut dirty = HashSet::new();
+    /// Returns a bitset for O(1) contains checks and a vec for iteration.
+    fn compute_dirty_closure(&self) -> (CellBitset, Vec<CellRef>) {
+        let mut dirty = CellBitset::new(self.bounds.max_columns, self.bounds.max_rows);
+        let mut dirty_vec: Vec<CellRef> = Vec::new();
         let mut stack: Vec<CellRef> = Vec::new();
 
         for source in self.dirty_cells.iter().copied() {
             if matches!(self.cells.get(&source), Some(CellEntry::Formula(_))) {
-                dirty.insert(source);
+                if dirty.insert(source) {
+                    dirty_vec.push(source);
+                }
             }
             stack.push(source);
         }
@@ -2375,12 +2441,13 @@ impl Engine {
             if let Some(dependents) = self.reverse_deps.get(&cell) {
                 for dep in dependents {
                     if dirty.insert(*dep) {
+                        dirty_vec.push(*dep);
                         stack.push(*dep);
                     }
                 }
             }
         }
-        dirty
+        (dirty, dirty_vec)
     }
 
     /// Returns the number of formula cells that were evaluated in the last
@@ -2473,10 +2540,10 @@ impl Engine {
     fn apply_spills_overlay_inline(
         &self,
         order: &[CellRef],
-        runtime_values: &HashMap<CellRef, RuntimeValue>,
-        values: &mut HashMap<CellRef, StoredValue>,
-        spill_owners: &mut HashMap<CellRef, CellRef>,
-        spill_ranges: &mut HashMap<CellRef, CellRange>,
+        runtime_values: &FxHashMap<CellRef, RuntimeValue>,
+        values: &mut CellGrid<StoredValue>,
+        spill_owners: &mut FxHashMap<CellRef, CellRef>,
+        spill_ranges: &mut FxHashMap<CellRef, CellRange>,
     ) {
         for cell in order {
             let Some(runtime) = runtime_values.get(cell) else {
@@ -2555,10 +2622,10 @@ impl Engine {
     fn apply_spills_overlay_planner(
         &self,
         order: &[CellRef],
-        runtime_values: &HashMap<CellRef, RuntimeValue>,
-        values: &mut HashMap<CellRef, StoredValue>,
-        spill_owners: &mut HashMap<CellRef, CellRef>,
-        spill_ranges: &mut HashMap<CellRef, CellRange>,
+        runtime_values: &FxHashMap<CellRef, RuntimeValue>,
+        values: &mut CellGrid<StoredValue>,
+        spill_owners: &mut FxHashMap<CellRef, CellRef>,
+        spill_ranges: &mut FxHashMap<CellRef, CellRange>,
     ) {
         let mut planner = SpillOverlayPlanner::with_inputs(self.cells.keys().copied());
         for cell in order {
@@ -2593,10 +2660,10 @@ impl Engine {
     fn apply_spills_rewrite_materialize(
         &self,
         order: &[CellRef],
-        runtime_values: &HashMap<CellRef, RuntimeValue>,
-        values: &mut HashMap<CellRef, StoredValue>,
-        spill_owners: &mut HashMap<CellRef, CellRef>,
-        spill_ranges: &mut HashMap<CellRef, CellRange>,
+        runtime_values: &FxHashMap<CellRef, RuntimeValue>,
+        values: &mut CellGrid<StoredValue>,
+        spill_owners: &mut FxHashMap<CellRef, CellRef>,
+        spill_ranges: &mut FxHashMap<CellRef, CellRange>,
     ) {
         for cell in order {
             let Some(runtime) = runtime_values.get(cell) else {
@@ -2714,9 +2781,9 @@ impl Engine {
         anchor: CellRef,
         array: &crate::eval::ArrayValue,
         spill_range: CellRange,
-        values: &mut HashMap<CellRef, StoredValue>,
-        spill_owners: &mut HashMap<CellRef, CellRef>,
-        spill_ranges: &mut HashMap<CellRef, CellRange>,
+        values: &mut CellGrid<StoredValue>,
+        spill_owners: &mut FxHashMap<CellRef, CellRef>,
+        spill_ranges: &mut FxHashMap<CellRef, CellRange>,
     ) {
         spill_ranges.insert(anchor, spill_range.clone());
         for target in spill_range.iter() {
@@ -2779,7 +2846,7 @@ fn builtin_function_volatility(name: &str) -> Option<Volatility> {
 
 fn expr_contains_volatility(
     expr: &Expr,
-    udfs: &HashMap<String, Box<dyn UdfHandler>>,
+    udfs: &FxHashMap<String, Box<dyn UdfHandler>>,
     target: Volatility,
 ) -> bool {
     match expr {

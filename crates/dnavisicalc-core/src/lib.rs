@@ -1,5 +1,6 @@
 pub mod address;
 pub mod ast;
+pub mod cell_grid;
 pub mod deps;
 pub mod engine;
 pub mod eval;
@@ -23,3 +24,4 @@ pub use eval::{
     CellError, FnUdf, FnUdfWithVolatility, SUPPORTED_FUNCTIONS, UdfHandler, Value, Volatility,
 };
 pub use parser::{ParseError, parse_formula};
+pub use rustc_hash::{FxHashMap, FxHashSet};

@@ -173,7 +173,7 @@ fn mixed_acyclic_and_cyclic_cells() {
 #[test]
 fn calc_tree_reports_cycles() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
-    use std::collections::HashMap;
+    use dnavisicalc_core::FxHashMap;
     use std::rc::Rc;
 
     let bounds = SheetBounds {
@@ -183,7 +183,7 @@ fn calc_tree_reports_cycles() {
     let a1 = CellRef::new(1, 1, bounds).unwrap();
     let b1 = CellRef::new(2, 1, bounds).unwrap();
 
-    let mut formulas = HashMap::new();
+    let mut formulas = FxHashMap::default();
     formulas.insert(a1, Rc::new(Expr::Cell(b1, RefFlags::RELATIVE)));
     formulas.insert(b1, Rc::new(Expr::Cell(a1, RefFlags::RELATIVE)));
 
@@ -197,7 +197,7 @@ fn calc_tree_reports_cycles() {
 #[test]
 fn calc_tree_no_cycles_for_dag() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
-    use std::collections::HashMap;
+    use dnavisicalc_core::FxHashMap;
     use std::rc::Rc;
 
     let bounds = SheetBounds {
@@ -207,7 +207,7 @@ fn calc_tree_no_cycles_for_dag() {
     let a1 = CellRef::new(1, 1, bounds).unwrap();
     let b1 = CellRef::new(2, 1, bounds).unwrap();
 
-    let mut formulas = HashMap::new();
+    let mut formulas = FxHashMap::default();
     formulas.insert(b1, Rc::new(Expr::Cell(a1, RefFlags::RELATIVE)));
     // a1 is not a formula cell, so b1 has no formula-dependency edge
 
@@ -218,7 +218,7 @@ fn calc_tree_no_cycles_for_dag() {
 #[test]
 fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
-    use std::collections::HashMap;
+    use dnavisicalc_core::FxHashMap;
     use std::rc::Rc;
 
     let bounds = SheetBounds {
@@ -227,7 +227,7 @@ fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
     };
     let total = 4000usize;
 
-    let mut formulas: HashMap<CellRef, Rc<Expr>> = HashMap::new();
+    let mut formulas: FxHashMap<CellRef, Rc<Expr>> = FxHashMap::default();
     let mut cells: Vec<CellRef> = Vec::with_capacity(total);
 
     for i in 0..total {
@@ -253,7 +253,7 @@ fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
 #[test]
 fn calc_tree_order_respects_dependencies_on_dense_grid() {
     use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
-    use std::collections::HashMap;
+    use dnavisicalc_core::FxHashMap;
     use std::rc::Rc;
 
     let bounds = SheetBounds {
@@ -262,7 +262,7 @@ fn calc_tree_order_respects_dependencies_on_dense_grid() {
     };
     let cols: u16 = 20;
     let rows: u16 = 90;
-    let mut formulas: HashMap<CellRef, Rc<Expr>> = HashMap::new();
+    let mut formulas: FxHashMap<CellRef, Rc<Expr>> = FxHashMap::default();
 
     for row in 2..=rows {
         for col in 2..=cols {
@@ -288,7 +288,7 @@ fn calc_tree_order_respects_dependencies_on_dense_grid() {
     let tree = build_calc_tree_allow_cycles(&formulas);
     assert!(!tree.has_cycles());
 
-    let mut pos: HashMap<CellRef, usize> = HashMap::new();
+    let mut pos: FxHashMap<CellRef, usize> = FxHashMap::default();
     for (idx, cell) in tree.order.iter().copied().enumerate() {
         pos.insert(cell, idx);
     }
