@@ -1,0 +1,14 @@
+[package]
+name = "dnavisicalc-coreengine-rust-fml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "dnavisicalc_coreengine_rust_fml"
+crate-type = ["cdylib"]
+
+[dependencies]
+dnavisicalc-core.workspace = true

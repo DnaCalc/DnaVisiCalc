@@ -2,6 +2,7 @@
 members = [
     "crates/dnavisicalc-core",
     "crates/dnavisicalc-coreengine-rust",
+    "crates/dnavisicalc-coreengine-rust-fml",
     "crates/dnavisicalc-engine",
     "crates/dnavisicalc-file",
     "crates/dnavisicalc-tui",

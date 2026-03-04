@@ -86,6 +86,10 @@ $engines = @(
         args = @('--backend', 'rust-core', '--rust-dll', $manifest.rust_release_dll)
     },
     @{
+        name = 'rust-fml'
+        args = @('--backend', 'rust-core', '--rust-dll', $manifest.rust_fml_release_dll)
+    },
+    @{
         name = 'dotnet-managed-jit'
         args = @('--backend', 'dotnet-core', '--dotnet-dll', $manifest.dotnet_managed_jit_dll)
     },

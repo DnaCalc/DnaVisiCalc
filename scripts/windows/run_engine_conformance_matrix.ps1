@@ -25,6 +25,11 @@ $engines = @(
         dll = $manifest.rust_release_dll
     },
     @{
+        name = 'rust-fml'
+        env_engine = 'rust-core'
+        dll = $manifest.rust_fml_release_dll
+    },
+    @{
         name = 'dotnet-managed-jit'
         env_engine = 'dotnet-core'
         dll = $manifest.dotnet_managed_jit_dll

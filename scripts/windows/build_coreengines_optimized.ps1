@@ -107,6 +107,9 @@ Write-Host "Using VS 18 toolchain bootstrap: $vcvarsPath"
 Invoke-Checked -Title 'Rust release core engine' -Action {
     cargo build -p dnavisicalc-coreengine-rust --release
 }
+Invoke-Checked -Title 'Rust-FML release core engine' -Action {
+    cargo build -p dnavisicalc-coreengine-rust-fml --release
+}
 Invoke-Checked -Title 'Rust release perf harness' -Action {
     cargo build -p dnavisicalc-engine --bin engine_perf_compare --release
 }
@@ -163,6 +166,7 @@ Invoke-Checked -Title 'C ABI conformance executables' -Action {
 
 $artifacts = [ordered]@{
     rust_release_dll = (Resolve-Path 'target/release/dnavisicalc_coreengine_rust.dll').Path
+    rust_fml_release_dll = (Resolve-Path 'target/release/dnavisicalc_coreengine_rust_fml.dll').Path
     dotnet_managed_jit_dll = (Resolve-Path $managedExportDll).Path
     dotnet_native_aot_dll = (Resolve-Path (Join-Path $nativeStableDir 'Dvc.Native.dll')).Path
     ocaml_release_dll = (Resolve-Path 'engines/ocaml/coreengine-ocaml-01/dist/dvc_coreengine_ocaml01.dll').Path
