@@ -39,6 +39,9 @@ See `TESTING_ROUNDS.md`.
 - File-format contract: `../FILE_FORMAT.md`.
 - TUI automation contract: `../TUI_TESTABILITY.md`.
 - Engine conformance/performance execution contract: `CONFORMANCE_PERFORMANCE_PLAN.md`.
+- Windows cross-engine optimized build hardening: `ENGINE_BUILD_HARDENING.md`.
+- Engine performance profile taxonomy and fit guidance: `ENGINE_PERFORMANCE_PROFILES.md`.
+- Cross-engine profile matrix runner: `../../scripts/windows/run_engine_profile_matrix.ps1`.
 
 ## Next planned rounds (verification against implemented expanded scope)
 1. TUI capture contract tests:

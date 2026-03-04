@@ -73,11 +73,17 @@ type t = {
   mutable last_reject_context : Types.reject_context;
   dep_graph : Incremental_runtime.dep_graph;
   incr_rt : Incremental_runtime.runtime;
+  mutable incremental_runtime_available : bool;
   mutable dep_graph_dirty : bool;
+  mutable feature_flags_dirty : bool;
+  mutable has_dynamic_array_features_cache : bool;
+  mutable has_volatile_or_stream_features_cache : bool;
   mutable cycle_nodes_cache : bool array option;
   mutable has_cycles_cache : bool;
   mutable stream_layout_dirty : bool;
   mutable dirty_input_cells_rev : int list;
+  mutable compiled_formula_src : string option array;
+  mutable compiled_formula_prog : Eval.compiled_expr option array;
   rand_counter : int ref;
 }
 
@@ -99,11 +105,17 @@ let create_default () =
     last_reject_kind = 0; last_reject_context = Types.empty_reject_context;
     dep_graph = Incremental_runtime.create_graph n;
     incr_rt = Incremental_runtime.create_runtime n;
+    incremental_runtime_available = true;
     dep_graph_dirty = true;
+    feature_flags_dirty = true;
+    has_dynamic_array_features_cache = false;
+    has_volatile_or_stream_features_cache = false;
     cycle_nodes_cache = None;
     has_cycles_cache = false;
     stream_layout_dirty = true;
     dirty_input_cells_rev = [];
+    compiled_formula_src = Array.make n None;
+    compiled_formula_prog = Array.make n None;
     rand_counter = ref 0;
   }
 
@@ -125,11 +137,17 @@ let create_with_bounds ~max_columns ~max_rows =
       last_reject_kind = 0; last_reject_context = Types.empty_reject_context;
       dep_graph = Incremental_runtime.create_graph n;
       incr_rt = Incremental_runtime.create_runtime n;
+      incremental_runtime_available = true;
       dep_graph_dirty = true;
+      feature_flags_dirty = true;
+      has_dynamic_array_features_cache = false;
+      has_volatile_or_stream_features_cache = false;
       cycle_nodes_cache = None;
       has_cycles_cache = false;
       stream_layout_dirty = true;
       dirty_input_cells_rev = [];
+      compiled_formula_src = Array.make n None;
+      compiled_formula_prog = Array.make n None;
       rand_counter = ref 0;
     }
   end
@@ -213,7 +231,20 @@ let eval_cell e i names_for_eval udfs_for_eval =
     comp.error_message <- ""
   | Sheet.Cell_formula formula ->
     let ctx = make_eval_ctx e col row names_for_eval udfs_for_eval in
-    let result = Eval.eval_expr ctx formula 0 in
+    let cache_fresh =
+      match e.compiled_formula_src.(i) with
+      | Some cached -> String.equal cached formula
+      | None -> false
+    in
+    if not cache_fresh then begin
+      e.compiled_formula_src.(i) <- Some formula;
+      e.compiled_formula_prog.(i) <- Eval.try_compile formula
+    end;
+    let result =
+      match e.compiled_formula_prog.(i) with
+      | Some compiled -> Eval.eval_compiled ctx compiled 0
+      | None -> Eval.eval_expr ctx formula 0
+    in
     match result with
     | Eval.Arr arr ->
       (* Dynamic array - spill *)
@@ -311,6 +342,7 @@ let setup_streams e =
 
 let mark_dependency_layout_dirty e =
   e.dep_graph_dirty <- true;
+  e.feature_flags_dirty <- true;
   e.cycle_nodes_cache <- None;
   e.has_cycles_cache <- false
 
@@ -320,6 +352,12 @@ let mark_stream_layout_dirty e =
 let mark_input_cell_dirty e i =
   e.dirty_input_cells_rev <- i :: e.dirty_input_cells_rev;
   Incremental_runtime.touch_cell e.incr_rt i
+
+let clear_compiled_formula_cache_cell e i =
+  if i >= 0 && i < Array.length e.compiled_formula_src then begin
+    e.compiled_formula_src.(i) <- None;
+    e.compiled_formula_prog.(i) <- None
+  end
 
 let apply_literal_cell_compute e i =
   let c = e.sheet.computed.(i) in
@@ -389,13 +427,21 @@ let has_volatile_or_stream_features e =
   done;
   !found
 
+let refresh_feature_flags_if_needed e =
+  if e.feature_flags_dirty then begin
+    e.has_dynamic_array_features_cache <- has_dynamic_array_features e;
+    e.has_volatile_or_stream_features_cache <- has_volatile_or_stream_features e;
+    e.feature_flags_dirty <- false
+  end
+
 let incremental_happy_path_allowed e has_cycles =
+  e.incremental_runtime_available &&
   not has_cycles &&
   not e.iter_config.enabled &&
   e.names = [] &&
   e.udfs = [] &&
-  not (has_volatile_or_stream_features e) &&
-  not (has_dynamic_array_features e)
+  not e.has_volatile_or_stream_features_cache &&
+  not e.has_dynamic_array_features_cache
 
 (* Full recalculation *)
 let do_recalculate e =
@@ -426,15 +472,18 @@ let do_recalculate e =
         (cycle_nodes, has_cycles)
   in
   if !graph_rebuilt then begin
-    Incremental_runtime.rebuild_runtime e.incr_rt e.dep_graph e.sheet;
-    Incremental_runtime.touch_global e.incr_rt
+    try
+      Incremental_runtime.rebuild_runtime e.incr_rt e.dep_graph e.sheet;
+      Incremental_runtime.touch_global e.incr_rt;
+      e.incremental_runtime_available <- true
+    with exn ->
+      e.incremental_runtime_available <- false;
+      mark_dependency_layout_dirty e;
+      push_diagnostic e 0 ("Incremental runtime disabled: " ^ Printexc.to_string exn)
   end;
+  refresh_feature_flags_if_needed e;
 
-  if incremental_happy_path_allowed e has_cycles then begin
-    flush_literal_dirty_cells e;
-    let changed_formulas = Incremental_runtime.stabilize_and_take_changed_formulas e.incr_rt in
-    List.iter (fun i -> eval_cell e i names_for_eval udfs_for_eval) changed_formulas
-  end else begin
+  let run_full_recompute_path () =
     e.dirty_input_cells_rev <- [];
     let prior_values =
       if has_cycles then Some (Array.init n (fun i -> e.sheet.computed.(i).value))
@@ -509,6 +558,20 @@ let do_recalculate e =
           ()
       done
     end
+  in
+
+  if incremental_happy_path_allowed e has_cycles then begin
+    flush_literal_dirty_cells e;
+    try
+      let changed_formulas = Incremental_runtime.stabilize_and_take_changed_formulas e.incr_rt in
+      List.iter (fun i -> eval_cell e i names_for_eval udfs_for_eval) changed_formulas
+    with exn ->
+      e.incremental_runtime_available <- false;
+      mark_dependency_layout_dirty e;
+      push_diagnostic e 0 ("Incremental stabilize fallback: " ^ Printexc.to_string exn);
+      run_full_recompute_path ()
+  end else begin
+    run_full_recompute_path ()
   end;
   (* Setup stream state *)
   if e.stream_layout_dirty then begin
@@ -563,6 +626,7 @@ let set_number e addr value =
        mark_stream_layout_dirty e
      | _ -> ());
     e.sheet.cells.(i) <- Sheet.Cell_number value;
+    clear_compiled_formula_cache_cell e i;
     mark_input_cell_dirty e i;
     bump_epoch e;
     push_cell_change e addr.col addr.row;
@@ -582,6 +646,7 @@ let set_text e addr text =
        mark_stream_layout_dirty e
      | _ -> ());
     e.sheet.cells.(i) <- Sheet.Cell_text text;
+    clear_compiled_formula_cache_cell e i;
     mark_input_cell_dirty e i;
     bump_epoch e;
     push_cell_change e addr.col addr.row;
@@ -600,6 +665,8 @@ let set_formula e addr formula =
     mark_dependency_layout_dirty e;
     mark_stream_layout_dirty e;
     e.sheet.cells.(i) <- Sheet.Cell_formula formula;
+    e.compiled_formula_src.(i) <- Some formula;
+    e.compiled_formula_prog.(i) <- Eval.try_compile formula;
     mark_input_cell_dirty e i;
     bump_epoch e;
     auto_recalc e;
@@ -618,6 +685,7 @@ let cell_clear e addr =
        mark_stream_layout_dirty e
      | _ -> ());
     Sheet.clear_cell e.sheet i;
+    clear_compiled_formula_cache_cell e i;
     mark_input_cell_dirty e i;
     bump_epoch e;
     push_cell_change e addr.col addr.row;
@@ -1513,6 +1581,8 @@ let clear e =
   e.udfs <- [];
   e.changes <- [];
   e.dirty_input_cells_rev <- [];
+  Array.fill e.compiled_formula_src 0 (Array.length e.compiled_formula_src) None;
+  Array.fill e.compiled_formula_prog 0 (Array.length e.compiled_formula_prog) None;
   mark_dependency_layout_dirty e;
   mark_stream_layout_dirty e;
   bump_epoch e;

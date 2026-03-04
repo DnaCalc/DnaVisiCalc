@@ -56,8 +56,15 @@ Each report includes backend identity (engine id, exact DLL path, DLL hash) and 
   - `--formula-cols <n>`
   - `--formula-rows <n>`
   - `--full-data <true|false>`
+  - `--fixed-mutation-col <n>` / `--fixed-mutation-row <n>` (localized update profiles)
+  - `--simple-formula` (cheap-formula profile)
 
 This harness is intended to stress engine recalc behavior under dense formula dependency regions, while keeping API-call overhead out of the timed recalc loop.
+
+Profile-matrix runner:
+- `scripts/windows/run_engine_profile_matrix.ps1`
+- Emits per-profile cross-engine CSV/JSON artifacts under `.tmp/engine_profile_matrix_<label>_<run-id>/`.
+- Canonical profile definitions and interpretation guidance are maintained in `ENGINE_PERFORMANCE_PROFILES.md`.
 
 ## 8. Command Baseline (backend-pinned)
 

@@ -24,6 +24,26 @@ type eval_result =
   | Err of Types.error_kind * string
   | Arr of eval_result array array  (* rows x cols *)
 
+type cmp_op =
+  | Cmp_le
+  | Cmp_ge
+  | Cmp_ne
+  | Cmp_lt
+  | Cmp_gt
+  | Cmp_eq
+
+type compiled_expr =
+  | CNum of float
+  | CBool of bool
+  | CRef of int * int * bool  (* col, row, spill-ref *)
+  | CNeg of compiled_expr
+  | CAdd of compiled_expr * compiled_expr
+  | CSub of compiled_expr * compiled_expr
+  | CMul of compiled_expr * compiled_expr
+  | CDiv of compiled_expr * compiled_expr
+  | CCompare of cmp_op * compiled_expr * compiled_expr
+  | CRound of compiled_expr * compiled_expr
+
 let result_to_value = function
   | Num n -> Types.Number n
   | Txt s -> Types.Text s
@@ -52,6 +72,16 @@ let strip_eq s =
   let s = String.trim s in
   if String.length s > 0 && s.[0] = '=' then String.sub s 1 (String.length s - 1)
   else s
+
+let is_space = function
+  | ' ' | '\t' | '\r' | '\n' -> true
+  | _ -> false
+
+let skip_ws s pos =
+  let len = String.length s in
+  let i = ref pos in
+  while !i < len && is_space s.[!i] do incr i done;
+  !i
 
 (* Golden ratio hash for deterministic pseudo-random *)
 let golden_hash seed =
@@ -83,6 +113,215 @@ let parse_number s pos =
     | None -> None
   else if neg then None
   else None
+
+let compile_cmp_of_token = function
+  | "<=" -> Some Cmp_le
+  | ">=" -> Some Cmp_ge
+  | "<>" -> Some Cmp_ne
+  | "<" -> Some Cmp_lt
+  | ">" -> Some Cmp_gt
+  | "=" -> Some Cmp_eq
+  | _ -> None
+
+let try_compile formula =
+  let s = strip_eq formula in
+  let len = String.length s in
+
+  let rec parse_expr pos = parse_comparison pos
+
+  and parse_comparison pos =
+    match parse_additive pos with
+    | None -> None
+    | Some (lhs, after_lhs) ->
+      let i = skip_ws s after_lhs in
+      let token, consumed =
+        if i + 1 < len && s.[i] = '<' && s.[i + 1] = '=' then ("<=", 2)
+        else if i + 1 < len && s.[i] = '>' && s.[i + 1] = '=' then (">=", 2)
+        else if i + 1 < len && s.[i] = '<' && s.[i + 1] = '>' then ("<>", 2)
+        else if i < len && (s.[i] = '<' || s.[i] = '>' || s.[i] = '=') then (String.make 1 s.[i], 1)
+        else ("", 0)
+      in
+      if consumed = 0 then Some (lhs, after_lhs)
+      else
+        match compile_cmp_of_token token, parse_additive (i + consumed) with
+        | Some op, Some (rhs, after_rhs) -> Some (CCompare (op, lhs, rhs), after_rhs)
+        | _ -> None
+
+  and parse_additive pos =
+    match parse_multiplicative pos with
+    | None -> None
+    | Some (lhs0, after_lhs0) ->
+      let rec loop lhs after_lhs =
+        let i = skip_ws s after_lhs in
+        if i < len && (s.[i] = '+' || s.[i] = '-') then
+          match parse_multiplicative (i + 1) with
+          | Some (rhs, after_rhs) ->
+            let lhs' = if s.[i] = '+' then CAdd (lhs, rhs) else CSub (lhs, rhs) in
+            loop lhs' after_rhs
+          | None -> None
+        else
+          Some (lhs, after_lhs)
+      in
+      loop lhs0 after_lhs0
+
+  and parse_multiplicative pos =
+    match parse_unary pos with
+    | None -> None
+    | Some (lhs0, after_lhs0) ->
+      let rec loop lhs after_lhs =
+        let i = skip_ws s after_lhs in
+        if i < len && (s.[i] = '*' || s.[i] = '/') then
+          match parse_unary (i + 1) with
+          | Some (rhs, after_rhs) ->
+            let lhs' = if s.[i] = '*' then CMul (lhs, rhs) else CDiv (lhs, rhs) in
+            loop lhs' after_rhs
+          | None -> None
+        else
+          Some (lhs, after_lhs)
+      in
+      loop lhs0 after_lhs0
+
+  and parse_unary pos =
+    let i = skip_ws s pos in
+    if i < len && s.[i] = '-' then
+      match parse_unary (i + 1) with
+      | Some (expr, after_expr) -> Some (CNeg expr, after_expr)
+      | None -> None
+    else
+      parse_primary i
+
+  and parse_primary pos =
+    let i = skip_ws s pos in
+    if i >= len then None
+    else if s.[i] = '(' then
+      match parse_expr (i + 1) with
+      | Some (inner, after_inner) ->
+        let j = skip_ws s after_inner in
+        if j < len && s.[j] = ')' then Some (inner, j + 1) else None
+      | None -> None
+    else
+      match parse_number s i with
+      | Some (n, consumed) when consumed > i -> Some (CNum n, consumed)
+      | _ ->
+        (* Cell refs are valid primary terms and should win over plain identifiers. *)
+        (match Address.parse_a1 s i with
+         | Some (col, row, consumed, _, _) when consumed > 0 ->
+           let j = i + consumed in
+           if j < len && s.[j] = '#' then Some (CRef (col, row, true), j + 1)
+           else Some (CRef (col, row, false), j)
+         | _ ->
+           let j = ref i in
+           while !j < len &&
+                 (((s.[!j] >= 'A' && s.[!j] <= 'Z') || (s.[!j] >= 'a' && s.[!j] <= 'z')) ||
+                  (s.[!j] >= '0' && s.[!j] <= '9') || s.[!j] = '_' || s.[!j] = '.') do
+             incr j
+           done;
+           if !j = i then None
+           else
+             let ident = String.uppercase_ascii (String.sub s i (!j - i)) in
+             let k = skip_ws s !j in
+             if ident = "TRUE" && k = !j then Some (CBool true, !j)
+             else if ident = "FALSE" && k = !j then Some (CBool false, !j)
+             else if k < len && s.[k] = '(' then
+               let rec parse_args pos_acc acc =
+                 let p = skip_ws s pos_acc in
+                 if p < len && s.[p] = ')' then Some (List.rev acc, p + 1)
+                 else
+                   match parse_expr p with
+                   | None -> None
+                   | Some (arg_expr, after_arg) ->
+                     let q = skip_ws s after_arg in
+                     if q < len && s.[q] = ',' then parse_args (q + 1) (arg_expr :: acc)
+                     else if q < len && s.[q] = ')' then Some (List.rev (arg_expr :: acc), q + 1)
+                     else None
+               in
+               match ident, parse_args (k + 1) [] with
+               | "ROUND", Some ([x; d], after_call) -> Some (CRound (x, d), after_call)
+               | _ -> None
+             else
+               None)
+  in
+
+  match parse_expr 0 with
+  | Some (expr, after_expr) ->
+    if skip_ws s after_expr = len then Some expr else None
+  | None -> None
+
+let eval_cmp op a b =
+  match op with
+  | Cmp_le -> a <= b
+  | Cmp_ge -> a >= b
+  | Cmp_ne -> a <> b
+  | Cmp_lt -> a < b
+  | Cmp_gt -> a > b
+  | Cmp_eq -> a = b
+
+let eval_compiled ctx compiled depth =
+  let rec eval expr level =
+    if level > 16 then Err (Types.Err_value, "recursion depth exceeded")
+    else
+      match expr with
+      | CNum n -> Num n
+      | CBool b -> Bln b
+      | CRef (col, row, spill) ->
+        if not (Sheet.in_bounds ctx.sheet col row) then
+          Err (Types.Err_ref, "#REF!")
+        else
+          let i = Sheet.idx ctx.sheet col row in
+          let c = ctx.sheet.computed.(i) in
+          if spill then
+            if c.spill_role = 1 then Num (Types.value_number c.value)
+            else value_to_result c.value
+          else
+            value_to_result c.value
+      | CNeg inner ->
+        (match eval inner (level + 1) with
+         | Num n -> Num (-.n)
+         | Bln true -> Num (-1.0)
+         | Bln false -> Num 0.0
+         | Blk -> Num 0.0
+         | other -> other)
+      | CAdd (l, r) ->
+        let lv = eval l (level + 1) in
+        let rv = eval r (level + 1) in
+        (match result_to_num lv, result_to_num rv with
+         | Some a, Some b -> Num (a +. b)
+         | _ -> if is_error lv then lv else if is_error rv then rv else Err (Types.Err_value, "#VALUE!"))
+      | CSub (l, r) ->
+        let lv = eval l (level + 1) in
+        let rv = eval r (level + 1) in
+        (match result_to_num lv, result_to_num rv with
+         | Some a, Some b -> Num (a -. b)
+         | _ -> if is_error lv then lv else if is_error rv then rv else Err (Types.Err_value, "#VALUE!"))
+      | CMul (l, r) ->
+        let lv = eval l (level + 1) in
+        let rv = eval r (level + 1) in
+        (match result_to_num lv, result_to_num rv with
+         | Some a, Some b -> Num (a *. b)
+         | _ -> if is_error lv then lv else if is_error rv then rv else Err (Types.Err_value, "#VALUE!"))
+      | CDiv (l, r) ->
+        let lv = eval l (level + 1) in
+        let rv = eval r (level + 1) in
+        (match result_to_num lv, result_to_num rv with
+         | Some _, Some 0.0 -> Err (Types.Div_zero, "#DIV/0!")
+         | Some a, Some b -> Num (a /. b)
+         | _ -> if is_error lv then lv else if is_error rv then rv else Err (Types.Err_value, "#VALUE!"))
+      | CCompare (op, l, r) ->
+        let lv = eval l (level + 1) in
+        let rv = eval r (level + 1) in
+        (match result_to_num lv, result_to_num rv with
+         | Some a, Some b -> Bln (eval_cmp op a b)
+         | _ -> if is_error lv then lv else if is_error rv then rv else Err (Types.Err_value, "#VALUE!"))
+      | CRound (x, d) ->
+        let xv = eval x (level + 1) in
+        let dv = eval d (level + 1) in
+        (match result_to_num xv, result_to_num dv with
+         | Some n, Some digits ->
+           let mult = 10.0 ** (floor digits) in
+           Num (Float.round (n *. mult) /. mult)
+         | _ -> if is_error xv then xv else if is_error dv then dv else Err (Types.Err_value, "#VALUE!"))
+  in
+  eval compiled depth
 
 (* Find matching closing paren *)
 let find_close_paren s pos =

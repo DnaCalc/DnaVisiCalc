@@ -3,7 +3,9 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use dnavisicalc_engine::{CoreEngineId, Engine, EngineConfig, RecalcMode, col_index_to_label};
+use dnavisicalc_engine::{
+    CoreEngineId, Engine, EngineConfig, IterationConfig, RecalcMode, col_index_to_label,
+};
 
 const DEFAULT_ITERATIONS: usize = 40;
 const DEFAULT_FORMULA_COLS: u16 = 40;
@@ -27,6 +29,10 @@ struct WorkloadConfig {
     fill_full_grid_with_data: bool,
     formula_cols: u16,
     formula_rows: u16,
+    fixed_mutation_col: Option<u16>,
+    fixed_mutation_row: Option<u16>,
+    force_iteration_enabled: bool,
+    simple_formula: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +48,10 @@ fn main() {
     let mut fill_full_grid_with_data = true;
     let mut formula_cols = DEFAULT_FORMULA_COLS;
     let mut formula_rows = DEFAULT_FORMULA_ROWS;
+    let mut fixed_mutation_col: Option<u16> = None;
+    let mut fixed_mutation_row: Option<u16> = None;
+    let mut force_iteration_enabled = false;
+    let mut simple_formula = false;
     let mut include_ocaml = false;
     let mut dotnet_dll: Option<PathBuf> = None;
     let mut rust_dll: Option<PathBuf> = None;
@@ -80,11 +90,33 @@ fn main() {
                     formula_rows = value;
                 }
             }
+            "--fixed-mutation-col" => {
+                if let Some(raw) = args.next()
+                    && let Ok(value) = raw.parse::<u16>()
+                    && value > 0
+                {
+                    fixed_mutation_col = Some(value);
+                }
+            }
+            "--fixed-mutation-row" => {
+                if let Some(raw) = args.next()
+                    && let Ok(value) = raw.parse::<u16>()
+                    && value > 0
+                {
+                    fixed_mutation_row = Some(value);
+                }
+            }
             "--full-data" => {
                 if let Some(raw) = args.next() {
                     let normalized = raw.to_ascii_lowercase();
                     fill_full_grid_with_data = matches!(normalized.as_str(), "1" | "true" | "yes");
                 }
+            }
+            "--force-iteration-enabled" => {
+                force_iteration_enabled = true;
+            }
+            "--simple-formula" => {
+                simple_formula = true;
             }
             "--include-ocaml" => {
                 include_ocaml = true;
@@ -116,6 +148,16 @@ fn main() {
         fill_full_grid_with_data,
         formula_cols,
         formula_rows,
+        fixed_mutation_col,
+        fixed_mutation_row,
+        force_iteration_enabled,
+        simple_formula,
+    };
+    let mutation_mode = match (workload.fixed_mutation_col, workload.fixed_mutation_row) {
+        (Some(c), Some(r)) => format!("fixed(col={c},row={r})"),
+        (Some(c), None) => format!("fixed(col={c}), sweep(row)"),
+        (None, Some(r)) => format!("sweep(col), fixed(row={r})"),
+        (None, None) => "sweep(col,row)".to_string(),
     };
 
     let mut targets = vec![
@@ -148,9 +190,15 @@ fn main() {
     let mut lines = String::new();
     let _ = writeln!(
         lines,
-        "Engine recalc benchmark (63x254 bounds), iterations={iterations}, full_data={}, formula_region={}x{}",
+        "Engine recalc benchmark (63x254 bounds), iterations={iterations}, full_data={}, formula_region={}x{}, mutation={mutation_mode}",
         workload.fill_full_grid_with_data, workload.formula_cols, workload.formula_rows
     );
+    if workload.force_iteration_enabled {
+        let _ = writeln!(lines, "Iteration config override: enabled=true (benchmark probe mode).");
+    }
+    if workload.simple_formula {
+        let _ = writeln!(lines, "Formula override: simple (=up+left+diag).");
+    }
     let _ = writeln!(
         lines,
         "Timing includes recalc after per-iteration input mutations (manual recalc mode)."
@@ -214,11 +262,25 @@ fn run_backend(
     })
     .map_err(|err| err.to_string())?;
 
+    if workload.force_iteration_enabled {
+        engine.set_iteration_config(IterationConfig {
+            enabled: true,
+            max_iterations: 100,
+            convergence_tolerance: 0.001,
+        });
+    }
+
     engine.set_recalc_mode(RecalcMode::Manual);
     let bounds = engine.bounds();
 
     let formula_rows = bounds.max_rows.min(workload.formula_rows);
     let formula_cols = bounds.max_columns.min(workload.formula_cols);
+    let fixed_mutation_col = workload
+        .fixed_mutation_col
+        .map(|c| c.min(formula_cols).max(1));
+    let fixed_mutation_row = workload
+        .fixed_mutation_row
+        .map(|r| r.min(formula_rows).max(1));
 
     let setup_start = Instant::now();
     if workload.fill_full_grid_with_data {
@@ -253,10 +315,14 @@ fn run_backend(
             let up = to_a1(col, row - 1);
             let left = to_a1(col - 1, row);
             let diag = to_a1(col - 1, row - 1);
-            let formula = format!(
-                "=ROUND((({}*1.0001+{}*0.9999+{}*0.5)+({}-{})*0.1+({}+{})*0.05+({}+{}+{})*0.01)/2,6)",
-                up, left, diag, up, left, diag, left, up, left, diag
-            );
+            let formula = if workload.simple_formula {
+                format!("={}+{}+{}", up, left, diag)
+            } else {
+                format!(
+                    "=ROUND((({}*1.0001+{}*0.9999+{}*0.5)+({}-{})*0.1+({}+{})*0.05+({}+{}+{})*0.01)/2,6)",
+                    up, left, diag, up, left, diag, left, up, left, diag
+                )
+            };
             let cell = to_a1(col, row);
             engine
                 .set_formula_a1(&cell, &formula)
@@ -271,8 +337,8 @@ fn run_backend(
 
     let mut recalc_times_ms: Vec<f64> = Vec::with_capacity(iterations);
     for i in 0..iterations {
-        let col = ((i * 17) % formula_cols as usize) as u16 + 1;
-        let row = ((i * 29) % formula_rows as usize) as u16 + 1;
+        let col = fixed_mutation_col.unwrap_or(((i * 17) % formula_cols as usize) as u16 + 1);
+        let row = fixed_mutation_row.unwrap_or(((i * 29) % formula_rows as usize) as u16 + 1);
         let top_input = to_a1(col, 1);
         let side_input = to_a1(1, row);
 

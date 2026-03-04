@@ -16,6 +16,13 @@ type dep_graph = {
 
 module Incr = Incremental.Make ()
 
+let default_max_height_allowed = 8192
+
+let ensure_height_budget () =
+  let current = Incr.State.max_height_allowed Incr.State.t in
+  if current < default_max_height_allowed then
+    Incr.State.set_max_height_allowed Incr.State.t default_max_height_allowed
+
 type runtime = {
   mutable vars : int Incr.Var.t array;
   mutable nodes : int Incr.t array;
@@ -33,6 +40,7 @@ let create_graph n = {
 }
 
 let create_runtime n =
+  ensure_height_budget ();
   let vars = Array.init n (fun _ -> Incr.Var.create 0) in
   {
     vars;
@@ -66,16 +74,22 @@ let rebuild_deps graph (sheet : Sheet.t) =
     | _ -> ()
   done
 
-let dep_signature_node nodes deps =
-  match deps with
-  | [] -> Incr.const 0
-  | d0 :: rest ->
-    let init = Incr.map nodes.(d0) ~f:(fun x -> x) in
-    List.fold_left (fun acc di ->
-      Incr.map2 acc nodes.(di) ~f:( + )
-    ) init rest
+let dep_signature_node nodes tick_watch deps =
+  let dep_count = List.length deps in
+  let inputs = Array.make (dep_count + 1) tick_watch in
+  let rec fill pos = function
+    | [] -> ()
+    | di :: tl ->
+      inputs.(pos) <- nodes.(di);
+      fill (pos + 1) tl
+  in
+  fill 1 deps;
+  match Incr.reduce_balanced inputs ~f:(fun x -> x) ~reduce:( + ) with
+  | Some node -> node
+  | None -> tick_watch
 
 let rebuild_runtime rt graph (sheet : Sheet.t) =
+  ensure_height_budget ();
   let n = graph.n in
   Array.iter (function
     | Some obs -> Incr.Observer.disallow_future_use obs
@@ -93,8 +107,7 @@ let rebuild_runtime rt graph (sheet : Sheet.t) =
   for i = 0 to n - 1 do
     match sheet.cells.(i) with
     | Sheet.Cell_formula _ ->
-      let dep_sig = dep_signature_node rt.nodes graph.forward.(i) in
-      let node = Incr.map2 dep_sig tick_watch ~f:( + ) in
+      let node = dep_signature_node rt.nodes tick_watch graph.forward.(i) in
       rt.nodes.(i) <- node
     | _ -> ()
   done;
