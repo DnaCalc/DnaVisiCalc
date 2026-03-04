@@ -1,0 +1,4 @@
+_build/
+dist/
+*.obj
+dist_ref/
