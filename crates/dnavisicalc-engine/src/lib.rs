@@ -226,6 +226,8 @@ use std::collections::HashSet;
 use std::ffi::c_void;
 use std::fmt;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::{ffi::CStr, os::raw::c_char};
 
 use libloading::{Library, Symbol};
 
@@ -733,6 +735,8 @@ struct ApiFns {
 
 struct LoadedApi {
     _library: Library,
+    #[cfg(windows)]
+    _bridge_library: Option<Library>,
     fns: ApiFns,
     loaded_from: PathBuf,
 }
@@ -922,6 +926,88 @@ fn default_candidates(coreengine: CoreEngineId) -> Vec<PathBuf> {
         .collect()
 }
 
+#[cfg(windows)]
+type FnFlexdllPrepareSelf = unsafe extern "C" fn() -> i32;
+#[cfg(windows)]
+type FnFlexdllDlError = unsafe extern "C" fn() -> *const c_char;
+
+#[cfg(windows)]
+fn should_try_ocaml_bridge(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase().contains("ocaml"))
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn ocaml_bridge_candidates(target_dll: &Path) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = target_dll.parent() {
+        candidates.push(dir.join("dvc_flexdll_bridge.dll"));
+        candidates.push(dir.join("flexdll_relocator.dll"));
+    }
+    for root in candidate_roots() {
+        candidates.push(root.join("engines/ocaml/coreengine-ocaml-01/dist/dvc_flexdll_bridge.dll"));
+        candidates.push(root.join("engines/ocaml/coreengine-ocaml-01/dist/flexdll_relocator.dll"));
+    }
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .filter(|path| path.exists())
+        .collect()
+}
+
+#[cfg(windows)]
+fn prepare_ocaml_bridge(target_dll: &Path) -> Result<Library, String> {
+    let mut errors: Vec<String> = Vec::new();
+    for bridge_path in ocaml_bridge_candidates(target_dll) {
+        let bridge = match unsafe { Library::new(&bridge_path) } {
+            Ok(lib) => lib,
+            Err(err) => {
+                errors.push(format!("{}: {err}", bridge_path.display()));
+                continue;
+            }
+        };
+
+        let prepare = unsafe { bridge.get::<FnFlexdllPrepareSelf>(b"dvc_flexdll_prepare_self\0") };
+        let prepare = match prepare {
+            Ok(sym) => sym,
+            Err(err) => {
+                errors.push(format!(
+                    "{}: missing dvc_flexdll_prepare_self ({err})",
+                    bridge_path.display()
+                ));
+                continue;
+            }
+        };
+
+        let ok = unsafe { (*prepare)() };
+        if ok != 0 {
+            return Ok(bridge);
+        }
+
+        let detail = match unsafe { bridge.get::<FnFlexdllDlError>(b"flexdll_dlerror\0") } {
+            Ok(dlerror) => {
+                let ptr = unsafe { (*dlerror)() };
+                if ptr.is_null() {
+                    "prepare returned 0".to_string()
+                } else {
+                    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string()
+                }
+            }
+            Err(_) => "prepare returned 0".to_string(),
+        };
+        errors.push(format!("{}: {detail}", bridge_path.display()));
+    }
+
+    if errors.is_empty() {
+        Err("no OCaml bridge DLL candidate found".to_string())
+    } else {
+        Err(errors.join(" | "))
+    }
+}
+
 fn load_api(config: &EngineConfig) -> Result<LoadedApi, EngineError> {
     let candidates = if let Some(path) = &config.coreengine_dll {
         vec![path.clone()]
@@ -934,12 +1020,47 @@ fn load_api(config: &EngineConfig) -> Result<LoadedApi, EngineError> {
         if !path.exists() {
             continue;
         }
-        let library = unsafe { Library::new(&path) };
-        let library = match library {
+        #[cfg(windows)]
+        let mut bridge_library: Option<Library> = None;
+
+        let library = match unsafe { Library::new(&path) } {
             Ok(lib) => lib,
             Err(err) => {
-                errors.push(format!("{}: {err}", path.display()));
-                continue;
+                #[cfg(windows)]
+                {
+                    if should_try_ocaml_bridge(&path) {
+                        match prepare_ocaml_bridge(&path) {
+                            Ok(bridge) => {
+                                bridge_library = Some(bridge);
+                                match unsafe { Library::new(&path) } {
+                                    Ok(lib) => lib,
+                                    Err(retry_err) => {
+                                        errors.push(format!(
+                                            "{}: initial load error: {err}; retry after OCaml bridge failed: {retry_err}",
+                                            path.display()
+                                        ));
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(bridge_err) => {
+                                errors.push(format!(
+                                    "{}: initial load error: {err}; OCaml bridge prep failed: {bridge_err}",
+                                    path.display()
+                                ));
+                                continue;
+                            }
+                        }
+                    } else {
+                        errors.push(format!("{}: {err}", path.display()));
+                        continue;
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    errors.push(format!("{}: {err}", path.display()));
+                    continue;
+                }
             }
         };
         let fns = match load_fns(&library) {
@@ -951,6 +1072,8 @@ fn load_api(config: &EngineConfig) -> Result<LoadedApi, EngineError> {
         };
         return Ok(LoadedApi {
             _library: library,
+            #[cfg(windows)]
+            _bridge_library: bridge_library,
             fns,
             loaded_from: path,
         });

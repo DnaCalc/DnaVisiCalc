@@ -1,4 +1,5 @@
 (test
  (name ocaml_core_test)
+ (modes native)
  (modules ocaml_core_test)
  (libraries coreengine_ocaml01))

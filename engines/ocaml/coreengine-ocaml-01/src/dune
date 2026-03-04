@@ -1,3 +1,16 @@
 (library
  (name coreengine_ocaml01)
- (modules ocaml_core))
+ (libraries incremental core)
+ (foreign_stubs
+  (language c)
+  (names memmem_compat))
+ (modules
+  types
+  address
+  ast
+  parser
+  sheet
+  incremental_runtime
+  eval
+  engine
+  c_api_bridge))
