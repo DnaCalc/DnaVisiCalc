@@ -1,0 +1,17 @@
+[package]
+name = "dnavisicalc-core-fml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "dnavisicalc_core"
+path = "src/lib.rs"
+
+[dependencies]
+rustc-hash.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

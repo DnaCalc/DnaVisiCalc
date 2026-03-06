@@ -11,4 +11,4 @@ name = "dnavisicalc_coreengine_rust_fml"
 crate-type = ["cdylib"]
 
 [dependencies]
-dnavisicalc-core.workspace = true
+dnavisicalc-core = { package = "dnavisicalc-core-fml", path = "../../../crates/dnavisicalc-core-fml" }

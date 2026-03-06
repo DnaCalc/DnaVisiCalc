@@ -21,7 +21,7 @@
   - `dotnet-core`,
   - `rust-core` (when rust C API DLL is present).
 - Backend implementation roots:
-  - reference Rust C API backend crate in workspace: `crates/dnavisicalc-coreengine-rust`,
+  - Rust C API backend crates: `engines/rust/coreengine-rust-original` and `engines/rust/coreengine-rust-fml`,
   - spec-derived engine implementation trees: `engines/<runtime>/<implementation-id>/`.
 - Backend selection mechanism:
   - `DNAVISICALC_COREENGINE`,

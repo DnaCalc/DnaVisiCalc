@@ -211,12 +211,14 @@ No reverse dependency from core to adapters or UI.
 ```text
 crates/
   dnavisicalc-core/  # formulas, dependency graph, evaluation, epochs
+  dnavisicalc-core-fml/ # exploratory FML variant of core semantics
   dnavisicalc-engine/ # engine backend boundary + config/loader
-  dnavisicalc-coreengine-rust/ # in-workspace Rust C API backend DLL
   dnavisicalc-file/  # DVISICALC file format parser/writer
   dnavisicalc-tui/   # ratatui app, key mapping, command layer, binary
 engines/
-  rust/              # spec-derived Rust engine implementations (run outputs)
+  rust/
+    coreengine-rust-original/ # baseline Rust C API backend DLL crate
+    coreengine-rust-fml/      # exploratory Rust FML C API backend DLL crate
   dotnet/            # spec-derived .NET engine implementations
 docs/
   ARCHITECTURE.md

@@ -1,11 +1,12 @@
 [workspace]
 members = [
     "crates/dnavisicalc-core",
-    "crates/dnavisicalc-coreengine-rust",
-    "crates/dnavisicalc-coreengine-rust-fml",
+    "crates/dnavisicalc-core-fml",
     "crates/dnavisicalc-engine",
     "crates/dnavisicalc-file",
     "crates/dnavisicalc-tui",
+    "engines/rust/coreengine-rust-original",
+    "engines/rust/coreengine-rust-fml",
 ]
 resolver = "2"
 
@@ -18,6 +19,7 @@ repository = "https://github.com/DnaCalc/DnaVisiCalc"
 
 [workspace.dependencies]
 dnavisicalc-core = { path = "crates/dnavisicalc-core" }
+dnavisicalc-core-fml = { path = "crates/dnavisicalc-core-fml" }
 dnavisicalc-engine = { path = "crates/dnavisicalc-engine" }
 dnavisicalc-file = { path = "crates/dnavisicalc-file" }
 anyhow = "1.0.100"

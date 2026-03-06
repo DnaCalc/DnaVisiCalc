@@ -3,9 +3,10 @@
 This directory is for spec-derived Rust core engine implementations:
 - `engines/rust/<implementation-id>/`
 
-The in-workspace Rust reference backend used by app crates is:
-- `crates/dnavisicalc-coreengine-rust/`
+Current Rust engine implementation crates in this repository:
+- `engines/rust/coreengine-rust-original/`
+- `engines/rust/coreengine-rust-fml/`
 
-Do not mix the two roles:
-- reference backend crate supports day-to-day repository integration,
-- spec-derived implementations under `engines/rust/` are run-managed artifacts governed by `docs/OPERATIONS.md`.
+Operational rule:
+- Keep each implementation in its own `engines/rust/<implementation-id>/` directory.
+- Treat implementation directories as run-managed artifacts governed by `docs/OPERATIONS.md`.

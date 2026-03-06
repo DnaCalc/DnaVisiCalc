@@ -7,6 +7,31 @@
       "dll": "../target/debug/dnavisicalc_coreengine_rust.dll"
     },
     {
+      "name": "rust/coreengine-rust/reference/release",
+      "backend": "rust-core",
+      "dll": "../target/release/dnavisicalc_coreengine_rust.dll"
+    },
+    {
+      "name": "rust/coreengine-rust-original/reference/debug",
+      "backend": "rust-core",
+      "dll": "../target/debug/dnavisicalc_coreengine_rust.dll"
+    },
+    {
+      "name": "rust/coreengine-rust-original/reference/release",
+      "backend": "rust-core",
+      "dll": "../target/release/dnavisicalc_coreengine_rust.dll"
+    },
+    {
+      "name": "rust/coreengine-rust-fml/reference/debug",
+      "backend": "rust-core",
+      "dll": "../target/debug/dnavisicalc_coreengine_rust_fml.dll"
+    },
+    {
+      "name": "rust/coreengine-rust-fml/reference/release",
+      "backend": "rust-core",
+      "dll": "../target/release/dnavisicalc_coreengine_rust_fml.dll"
+    },
+    {
       "name": "dotnet/coreengine-net-01/native-aot/release",
       "backend": "dotnet-core",
       "dll": "../engines/dotnet/coreengine-net-01/src/Dvc.Native/bin/Release/net10.0/win-x64/publish/Dvc.Native.dll"

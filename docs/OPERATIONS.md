@@ -34,7 +34,8 @@ Examples:
 - `engines/ocaml/coreengine-ocaml-01/`
 
 Repository reference backend note:
-- `crates/dnavisicalc-coreengine-rust/` is the in-workspace Rust reference backend used by current app crates.
+- `engines/rust/coreengine-rust-original/` is the baseline Rust backend used by current app crates.
+- `engines/rust/coreengine-rust-fml/` is the exploratory Rust backend variant.
 - Additional spec-derived Rust implementations still live under `engines/rust/<implementation-id>/`.
 
 ### 3.2 Run bundles
@@ -171,6 +172,12 @@ For conformance/perf/test runs, always pin both:
 Catalog-based selection is also supported when backend variants are pre-registered:
 - `DNAVISICALC_COREENGINE_TARGET=<hierarchical-catalog-name>`
 - optional `DNAVISICALC_COREENGINE_CATALOG=<catalog-path>` (default `coreengines/catalog.json`)
+
+Current Rust catalog targets include:
+- `rust/coreengine-rust-original/reference/debug`
+- `rust/coreengine-rust-original/reference/release`
+- `rust/coreengine-rust-fml/reference/debug`
+- `rust/coreengine-rust-fml/reference/release`
 
 Precedence:
 1. `DNAVISICALC_COREENGINE_DLL` (explicit DLL path)
