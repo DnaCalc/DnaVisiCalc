@@ -5,6 +5,10 @@ use super::contracts::{
     FecCapabilityTag, FecFormulaId, FecHost, FecPublishedResult, ScopedCapabilityView,
 };
 use super::spec::FEC_F3E_INTERFACE_VERSION;
+use super::trace::{
+    boundary_duration_us, boundary_trace_event, boundary_trace_start, format_capabilities,
+    format_formula_id, runtime_result_kind,
+};
 
 #[derive(Debug, Clone)]
 struct FecDependencyRegistration {
@@ -48,6 +52,7 @@ impl DefaultFecHost {
         }
     }
 
+    #[allow(dead_code)]
     pub fn interface_version(&self) -> &'static str {
         FEC_F3E_INTERFACE_VERSION
     }
@@ -70,7 +75,22 @@ impl DefaultFecHost {
 
 impl FecHost for DefaultFecHost {
     fn capability_view(&self, required: &[FecCapabilityTag]) -> ScopedCapabilityView {
-        ScopedCapabilityView::new(required.to_vec(), self.provided_capabilities.clone())
+        let trace_start = boundary_trace_start();
+        let view = ScopedCapabilityView::new(required.to_vec(), self.provided_capabilities.clone());
+        boundary_trace_event(
+            "fec.capability_view",
+            &[
+                ("required_caps", format_capabilities(required)),
+                ("required_caps_count", required.len().to_string()),
+                (
+                    "provided_caps_count",
+                    self.provided_capabilities.len().to_string(),
+                ),
+                ("supports_required", view.supports_required().to_string()),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
+        view
     }
 
     fn register_dependencies(
@@ -78,8 +98,10 @@ impl FecHost for DefaultFecHost {
         formula_id: FecFormulaId,
         deps: &F3eDeclaredDependencies,
     ) -> DependencyToken {
+        let trace_start = boundary_trace_start();
         self.next_token = self.next_token.wrapping_add(1);
         let token = self.next_token;
+        let formula_id_text = format_formula_id(&formula_id);
         self.registrations.insert(
             formula_id,
             FecDependencyRegistration {
@@ -88,19 +110,49 @@ impl FecHost for DefaultFecHost {
                 dependency_profile: deps.dependency_profile,
             },
         );
+        boundary_trace_event(
+            "fec.register_dependencies",
+            &[
+                ("formula_id", formula_id_text),
+                ("dep_count", deps.static_dependencies.len().to_string()),
+                (
+                    "required_caps",
+                    format_capabilities(&deps.required_capabilities),
+                ),
+                (
+                    "dependency_profile",
+                    format!("{:?}", deps.dependency_profile),
+                ),
+                ("token", token.to_string()),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
         token
     }
 
     fn publish_result(
         &self,
-        _formula_id: &FecFormulaId,
+        formula_id: &FecFormulaId,
         result: &F3eEvalResult,
     ) -> FecPublishedResult {
+        let trace_start = boundary_trace_start();
         // TODO(FEC/F3E): route format overlays and extended-value metadata once
         // profile contracts are finalized.
-        FecPublishedResult {
+        let published = FecPublishedResult {
             value: result.runtime.to_scalar(),
-        }
+        };
+        boundary_trace_event(
+            "fec.publish_result",
+            &[
+                ("formula_id", format_formula_id(formula_id)),
+                (
+                    "result_kind",
+                    runtime_result_kind(&result.runtime).to_string(),
+                ),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
+        published
     }
 }
 

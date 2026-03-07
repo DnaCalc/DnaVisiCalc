@@ -100,3 +100,39 @@ This first pass does not enforce capability denial yet; behavior remains compati
   - `crates/dnavisicalc-core-fml/tests/fec_f3e_split_regression_tests.rs`
 - New internal engine tests:
   - FEC registration profile classification (`none`, `ref_only`) and structural-refresh behavior in `engine.rs`.
+
+## Second-Pass Seam Instrumentation Update (2026-03-07)
+This first-pass split now has opt-in boundary tracing and a focused seam matrix test lane.
+
+### Opt-in Trace Surface
+- Enable tracing with:
+  - `DNAVISICALC_FEC_F3E_TRACE=1`
+- Trace utility module:
+  - `crates/dnavisicalc-core-fml/src/fec_f3e/trace.rs`
+- One-line event emission is now wired for:
+  - Engine boundary hooks:
+    - `Engine::set_formula`
+    - `Engine::set_name_formula`
+    - `Engine::recalculate_full`
+    - `Engine::recalculate_incremental`
+    - `Engine::evaluate_cell_via_f3e`
+    - `Engine::evaluate_name_via_f3e`
+  - F3E hooks:
+    - `F3eEngine::compile`
+    - `F3eEngine::declare_dependencies`
+    - `F3eEngine::evaluate`
+  - FEC hooks:
+    - `FecHost::capability_view`
+    - `FecHost::register_dependencies`
+    - `FecHost::publish_result`
+
+### Targeted Seam Scenarios
+- Added matrix-focused scenario tests:
+  - `crates/dnavisicalc-core-fml/tests/fec_f3e_seam_scenarios_tests.rs`
+- Scenarios cover static/no-dependency, static/ref-only, name chains, branch flips, `INDIRECT`/`OFFSET`, spill `#` shape changes, volatile/external signals, structural edits, manual/automatic recalc modes, and incremental dirty-closure behavior.
+
+### Captured Evidence Artifact
+- Trace run artifact:
+  - `artifacts/fec_f3e/seam_trace.log`
+- Current capture contains 301 boundary events from the seam scenario lane and is used by the API vNext pressure analysis in:
+  - `docs/ENGINE_FEC_F3E_API_EXAMINATION_PLAN.md`

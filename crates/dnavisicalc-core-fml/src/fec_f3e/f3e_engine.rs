@@ -12,6 +12,10 @@ use super::contracts::{
     F3eCompiledFormula, F3eDeclaredDependencies, F3eDependencyDeclContext, F3eDependencyProfile,
     F3eEngine, F3eEvalContext, F3eEvalResult, F3eEvalTarget, FecCapabilityTag,
 };
+use super::trace::{
+    boundary_duration_us, boundary_trace_event, boundary_trace_start, format_capabilities,
+    format_eval_target, runtime_result_kind,
+};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CoreF3eEngine;
@@ -37,20 +41,74 @@ impl F3eEngine for CoreF3eEngine {
         bounds: SheetBounds,
         _ctx: &super::contracts::F3eCompileContext,
     ) -> Result<F3eCompiledFormula, crate::ParseError> {
-        let expr = Rc::new(parse_formula(formula_text, bounds)?);
-        Ok(self.compile_bound_expr(expr))
+        let trace_start = boundary_trace_start();
+        let expr = match parse_formula(formula_text, bounds) {
+            Ok(expr) => expr,
+            Err(err) => {
+                boundary_trace_event(
+                    "f3e.compile",
+                    &[
+                        ("dep_count", "0".to_string()),
+                        ("required_caps", "none".to_string()),
+                        ("dependency_profile", "parse_error".to_string()),
+                        ("duration_us", boundary_duration_us(trace_start).to_string()),
+                    ],
+                );
+                return Err(err);
+            }
+        };
+        let compiled = self.compile_bound_expr(Rc::new(expr));
+        boundary_trace_event(
+            "f3e.compile",
+            &[
+                ("dep_count", compiled.static_dependencies.len().to_string()),
+                (
+                    "required_caps",
+                    format_capabilities(&compiled.required_capabilities),
+                ),
+                (
+                    "dependency_profile",
+                    format!("{:?}", compiled.dependency_profile),
+                ),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
+        Ok(compiled)
     }
 
     fn declare_dependencies(
         &self,
         compiled: &F3eCompiledFormula,
-        _ctx: &F3eDependencyDeclContext,
+        ctx: &F3eDependencyDeclContext,
     ) -> F3eDeclaredDependencies {
-        F3eDeclaredDependencies {
+        let trace_start = boundary_trace_start();
+        let declared = F3eDeclaredDependencies {
             static_dependencies: compiled.static_dependencies.clone(),
             required_capabilities: compiled.required_capabilities.clone(),
             dependency_profile: compiled.dependency_profile,
-        }
+        };
+        boundary_trace_event(
+            "f3e.declare_dependencies",
+            &[
+                ("dep_count", declared.static_dependencies.len().to_string()),
+                (
+                    "required_caps",
+                    format_capabilities(&declared.required_capabilities),
+                ),
+                (
+                    "dependency_profile",
+                    format!("{:?}", declared.dependency_profile),
+                ),
+                (
+                    "prior_token",
+                    ctx.prior_token
+                        .map(|token| token.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
+        declared
     }
 
     fn evaluate(
@@ -59,13 +117,39 @@ impl F3eEngine for CoreF3eEngine {
         target: F3eEvalTarget<'_>,
         ctx: &F3eEvalContext,
     ) -> F3eEvalResult {
+        let trace_start = boundary_trace_start();
+        let target_text = format_eval_target(&target);
         // TODO(FEC/F3E): enforce capability denials with deterministic error
         // mapping once profile gating is finalized.
-        let _capability_contract_satisfied = ctx.capabilities.supports_required();
-        let runtime = match target {
-            F3eEvalTarget::Cell(cell) => evaluator.evaluate_cell_runtime(cell),
+        let capability_contract_satisfied = ctx.capabilities.supports_required();
+        let runtime = match &target {
+            F3eEvalTarget::Cell(cell) => evaluator.evaluate_cell_runtime(*cell),
             F3eEvalTarget::Name(name) => evaluator.evaluate_name_runtime(name),
         };
+        boundary_trace_event(
+            "f3e.evaluate",
+            &[
+                ("target", target_text),
+                (
+                    "required_caps",
+                    format_capabilities(ctx.capabilities.required_capabilities()),
+                ),
+                (
+                    "required_caps_count",
+                    ctx.capabilities.required_capabilities().len().to_string(),
+                ),
+                (
+                    "provided_caps_count",
+                    ctx.capabilities.provided_capability_count().to_string(),
+                ),
+                (
+                    "supports_required",
+                    capability_contract_satisfied.to_string(),
+                ),
+                ("result_kind", runtime_result_kind(&runtime).to_string()),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
         F3eEvalResult { runtime }
     }
 }

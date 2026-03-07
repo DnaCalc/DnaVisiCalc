@@ -417,3 +417,30 @@
   - Improved screenshot renderer theming and per-line/per-column color treatment for richer README visuals.
 - Open questions:
   - Whether to add multi-dimensional map combinators (`BYROW`/`BYCOL`/`REDUCE`/`SCAN`) in a dedicated follow-on pass.
+
+## Round 26
+- Status: completed
+- Scope: FEC/F3E seam instrumentation and targeted seam scenario matrix for API pressure analysis in `dnavisicalc-core-fml`.
+- Suites:
+  - `cargo test -p dnavisicalc-core-fml`
+  - `cargo test -p dnavisicalc-core-fml --test fec_f3e_seam_scenarios_tests`
+  - `DNAVISICALC_FEC_F3E_TRACE=1 cargo test -p dnavisicalc-core-fml --test fec_f3e_seam_scenarios_tests -- --nocapture`
+- Result:
+  - Added opt-in one-line boundary tracing for engine/F3E/FEC seam hooks (`DNAVISICALC_FEC_F3E_TRACE=1`).
+  - Added focused seam scenario coverage for static/ref-only dependencies, name chains, branch flips, dynamic-intent refs (`INDIRECT`/`OFFSET`), spill shape consumers, volatile/external paths, structural edits, recalc modes, and incremental dirty closure.
+  - Captured seam trace artifact with 301 boundary events:
+    - `artifacts/fec_f3e/seam_trace.log`
+  - Derived explicit API pressure evidence:
+    - branch declarations can be broader than runtime path,
+    - `INDIRECT` path can be narrower than runtime-observed dependencies,
+    - spill shape changes are not explicitly represented as seam metadata,
+    - `prior_token` remained `none` in traced declaration calls.
+- Fixes:
+  - Added seam trace utility and hook wiring in `crates/dnavisicalc-core-fml/src/fec_f3e/` and `engine.rs`.
+  - Added seam scenario integration tests:
+    - `crates/dnavisicalc-core-fml/tests/fec_f3e_seam_scenarios_tests.rs`.
+  - Updated seam docs with evidence-backed API vNext recommendations:
+    - `docs/ENGINE_FEC_F3E_FIRST_PASS.md`
+    - `docs/ENGINE_FEC_F3E_API_EXAMINATION_PLAN.md`
+- Open questions:
+  - What is the minimal, stable vNext payload for runtime dependency deltas and spill-shape change signals on the internal seam.

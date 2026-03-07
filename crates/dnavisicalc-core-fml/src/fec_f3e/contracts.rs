@@ -99,6 +99,14 @@ impl ScopedCapabilityView {
         Self { required, provided }
     }
 
+    pub fn required_capabilities(&self) -> &[FecCapabilityTag] {
+        &self.required
+    }
+
+    pub fn provided_capability_count(&self) -> usize {
+        self.provided.len()
+    }
+
     pub fn supports(&self, tag: FecCapabilityTag) -> bool {
         self.provided.contains(&tag)
     }

@@ -17,7 +17,8 @@ use crate::experiments::spill_rewrite::{RewriteError, materialize_array_values};
 use crate::fec_f3e::{
     CoreF3eEngine, DefaultFecHost, F3eCompileContext, F3eDeclaredDependencies,
     F3eDependencyDeclContext, F3eEngine, F3eEvalContext as F3eRuntimeContext, F3eEvalTarget,
-    FecCapabilityTag, FecFormulaId, FecHost,
+    FecCapabilityTag, FecFormulaId, FecHost, boundary_duration_us, boundary_trace_event,
+    boundary_trace_start, format_capabilities, format_formula_id, runtime_result_kind,
 };
 use crate::parser::ParseError;
 
@@ -450,8 +451,10 @@ impl Engine {
         evaluator: &mut EvalContext<'_>,
         cell: CellRef,
     ) -> (RuntimeValue, Value) {
+        let trace_start = boundary_trace_start();
         let formula_id = FecFormulaId::Cell(cell);
         let required = self.fec_host.required_capabilities_for(&formula_id);
+        let required_caps = format_capabilities(required);
         let eval_ctx = F3eRuntimeContext {
             capabilities: self.fec_host.capability_view(required),
         };
@@ -460,21 +463,44 @@ impl Engine {
             .evaluate(evaluator, F3eEvalTarget::Cell(cell), &eval_ctx);
         let runtime = eval_result.runtime.clone();
         let published = self.fec_host.publish_result(&formula_id, &eval_result);
+        boundary_trace_event(
+            "engine.evaluate_cell_via_f3e",
+            &[
+                ("formula_id", format_formula_id(&formula_id)),
+                ("required_caps", required_caps),
+                ("result_kind", runtime_result_kind(&runtime).to_string()),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
         (runtime, published.value)
     }
 
     fn evaluate_name_via_f3e(&self, evaluator: &mut EvalContext<'_>, name: &str) -> Value {
+        let trace_start = boundary_trace_start();
         let formula_id = FecFormulaId::Name(name.to_string());
         let required = self.fec_host.required_capabilities_for(&formula_id);
+        let required_caps = format_capabilities(required);
         let eval_ctx = F3eRuntimeContext {
             capabilities: self.fec_host.capability_view(required),
         };
         let eval_result = self
             .f3e
             .evaluate(evaluator, F3eEvalTarget::Name(name), &eval_ctx);
-        self.fec_host
+        let result_kind = runtime_result_kind(&eval_result.runtime).to_string();
+        let published = self
+            .fec_host
             .publish_result(&formula_id, &eval_result)
-            .value
+            .value;
+        boundary_trace_event(
+            "engine.evaluate_name_via_f3e",
+            &[
+                ("formula_id", format_formula_id(&formula_id)),
+                ("required_caps", required_caps),
+                ("result_kind", result_kind),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
+        published
     }
 
     fn refresh_fec_dependency_registrations(&mut self) {
@@ -808,6 +834,7 @@ impl Engine {
     }
 
     pub fn set_formula(&mut self, cell: CellRef, formula: &str) -> Result<(), EngineError> {
+        let trace_start = boundary_trace_start();
         self.ensure_in_bounds(cell)?;
         let compiled = self
             .f3e
@@ -815,6 +842,9 @@ impl Engine {
         let declared = self
             .f3e
             .declare_dependencies(&compiled, &F3eDependencyDeclContext::default());
+        let dep_count = declared.static_dependencies.len();
+        let required_caps = format_capabilities(&declared.required_capabilities);
+        let dependency_profile = format!("{:?}", declared.dependency_profile);
         // Remove old reverse deps if this cell had a formula.
         if matches!(self.cells.get(&cell), Some(CellEntry::Formula(_))) {
             self.remove_reverse_deps_for(cell);
@@ -822,7 +852,9 @@ impl Engine {
         self.eval_literals.remove(&cell);
         self.eval_text_literals.remove(&cell);
         let expr = compiled.expr;
-        self.fec_host
+        let formula_id = FecFormulaId::Cell(cell);
+        let token = self
+            .fec_host
             .register_dependencies(FecFormulaId::Cell(cell), &declared);
         self.eval_formulas.insert(cell, Rc::clone(&expr));
         self.cells.insert(
@@ -836,7 +868,28 @@ impl Engine {
         self.dirty_cells.insert(cell);
         self.full_recalc_needed = true; // graph structure changed
         self.committed_epoch += 1;
-        self.maybe_recalculate()
+        let result = self.maybe_recalculate();
+        boundary_trace_event(
+            "engine.set_formula",
+            &[
+                ("formula_id", format_formula_id(&formula_id)),
+                ("dep_count", dep_count.to_string()),
+                ("required_caps", required_caps),
+                ("dependency_profile", dependency_profile),
+                ("token", token.to_string()),
+                ("engine_mode", recalc_mode_name(self.mode).to_string()),
+                (
+                    "status",
+                    if result.is_ok() {
+                        "ok".to_string()
+                    } else {
+                        "error".to_string()
+                    },
+                ),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
+        result
     }
 
     pub fn clear_cell(&mut self, cell: CellRef) -> Result<(), EngineError> {
@@ -952,6 +1005,7 @@ impl Engine {
     }
 
     pub fn set_name_formula(&mut self, name: &str, formula: &str) -> Result<(), EngineError> {
+        let trace_start = boundary_trace_start();
         let key = self.normalize_name(name)?;
         self.dirty_names.insert(key.clone());
         self.full_recalc_needed = true;
@@ -961,10 +1015,15 @@ impl Engine {
         let declared = self
             .f3e
             .declare_dependencies(&compiled, &F3eDependencyDeclContext::default());
+        let dep_count = declared.static_dependencies.len();
+        let required_caps = format_capabilities(&declared.required_capabilities);
+        let dependency_profile = format!("{:?}", declared.dependency_profile);
         let expr = compiled.expr;
         self.eval_name_literals.remove(&key);
         self.eval_name_text_literals.remove(&key);
-        self.fec_host
+        let formula_id = FecFormulaId::Name(key.clone());
+        let token = self
+            .fec_host
             .register_dependencies(FecFormulaId::Name(key.clone()), &declared);
         self.eval_name_formulas
             .insert(key.clone(), Rc::clone(&expr));
@@ -977,7 +1036,28 @@ impl Engine {
             }),
         );
         self.committed_epoch += 1;
-        self.maybe_recalculate()
+        let result = self.maybe_recalculate();
+        boundary_trace_event(
+            "engine.set_name_formula",
+            &[
+                ("formula_id", format_formula_id(&formula_id)),
+                ("dep_count", dep_count.to_string()),
+                ("required_caps", required_caps),
+                ("dependency_profile", dependency_profile),
+                ("token", token.to_string()),
+                ("engine_mode", recalc_mode_name(self.mode).to_string()),
+                (
+                    "status",
+                    if result.is_ok() {
+                        "ok".to_string()
+                    } else {
+                        "error".to_string()
+                    },
+                ),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
+        result
     }
 
     pub fn set_name_input(&mut self, name: &str, input: NameInput) -> Result<(), EngineError> {
@@ -1220,6 +1300,7 @@ impl Engine {
 
     /// Full recalculation: rebuild dependency graph, evaluate all formulas.
     fn recalculate_full(&mut self) -> Result<(), EngineError> {
+        let trace_start = boundary_trace_start();
         let baseline = self.capture_change_baseline();
         // Take cached eval maps (O(1) pointer swaps) instead of rebuilding them.
         let formulas = std::mem::take(&mut self.eval_formulas);
@@ -1228,6 +1309,8 @@ impl Engine {
         let name_formulas = std::mem::take(&mut self.eval_name_formulas);
         let name_literals = std::mem::take(&mut self.eval_name_literals);
         let name_text_literals = std::mem::take(&mut self.eval_name_text_literals);
+        let formula_count = formulas.len();
+        let name_formula_count = name_formulas.len();
 
         let tree = build_calc_tree_allow_cycles(&formulas);
 
@@ -1488,12 +1571,23 @@ impl Engine {
         if let Some(baseline) = baseline {
             self.record_changes_from_baseline(baseline);
         }
+        boundary_trace_event(
+            "engine.recalculate_full",
+            &[
+                ("recalc_mode", "full".to_string()),
+                ("formula_count", formula_count.to_string()),
+                ("name_formula_count", name_formula_count.to_string()),
+                ("eval_count", eval_count.to_string()),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
 
         Ok(())
     }
 
     /// Incremental recalculation: only re-evaluate cells in the dirty closure.
     fn recalculate_incremental(&mut self) -> Result<(), EngineError> {
+        let trace_start = boundary_trace_start();
         let baseline = self.capture_change_baseline();
         // Compute dirty closure: all formula cells transitively dependent on dirty cells.
         let (dirty_bitset, dirty_vec) = self.compute_dirty_closure();
@@ -1835,6 +1929,16 @@ impl Engine {
         if let Some(baseline) = baseline {
             self.record_changes_from_baseline(baseline);
         }
+        boundary_trace_event(
+            "engine.recalculate_incremental",
+            &[
+                ("recalc_mode", "incremental".to_string()),
+                ("dirty_closure_count", dirty_vec.len().to_string()),
+                ("dirty_name_count", self.dirty_names.len().to_string()),
+                ("eval_count", eval_count.to_string()),
+                ("duration_us", boundary_duration_us(trace_start).to_string()),
+            ],
+        );
 
         Ok(())
     }
@@ -2961,6 +3065,13 @@ fn excel_now_timestamp() -> f64 {
     match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
         Ok(duration) => duration.as_secs_f64() / 86400.0 + 25569.0,
         Err(_) => 0.0,
+    }
+}
+
+fn recalc_mode_name(mode: RecalcMode) -> &'static str {
+    match mode {
+        RecalcMode::Automatic => "automatic",
+        RecalcMode::Manual => "manual",
     }
 }
 
