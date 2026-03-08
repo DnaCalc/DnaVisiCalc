@@ -4,3 +4,4 @@ This directory contains the superseded FEC/F3E seam docs that were active before
 
 Active spec:
 - `docs/ENGINE_FEC_F3E_REDESIGN_SPEC.md`
+- `docs/ENGINE_FEC_F3E_FOUNDATION_UPDATED_SPEC_POINTERS_PROMPT.md`

@@ -19,7 +19,8 @@ pub use deps::{
 pub use engine::{
     CellFormat, CellInput, CellState, ChangeEntry, ChartDefinition, ChartOutput, ChartSeriesOutput,
     ControlDefinition, ControlKind, DiagnosticCode, DynamicArrayStrategy, Engine, EngineError,
-    IterationConfig, NameInput, PaletteColor, RecalcMode,
+    FecSeamPerfSnapshot, IterationConfig, NameInput, PaletteColor, RecalcMode,
+    SpillOptimizationHint, SpillOptimizationPolicy,
 };
 pub use eval::{
     CellError, FnUdf, FnUdfWithVolatility, SUPPORTED_FUNCTIONS, UdfHandler, Value, Volatility,

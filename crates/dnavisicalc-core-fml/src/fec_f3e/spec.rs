@@ -6,7 +6,7 @@ pub struct SpecClause {
     pub summary: &'static str,
 }
 
-pub const FEC_F3E_INTERFACE_VERSION: &str = "fec-f3e-redesign/b1";
+pub const FEC_F3E_INTERFACE_VERSION: &str = "fec-f3e-redesign/b4";
 
 pub const FEC_F3E_CLAUSES: &[SpecClause] = &[
     SpecClause {
@@ -19,15 +19,39 @@ pub const FEC_F3E_CLAUSES: &[SpecClause] = &[
     },
     SpecClause {
         id: "FEC-F3E-TXN-003",
-        summary: "Commit status is explicit: applied/token/capability/snapshot outcomes.",
+        summary: "Commit status/reject-codes are explicit and machine-classifiable.",
     },
     SpecClause {
         id: "FEC-F3E-TXN-004",
-        summary: "Observed dependency deltas are first-class commit metadata.",
+        summary: "Stable identity contract uses formula/name/range IDs; names are metadata only.",
     },
     SpecClause {
         id: "FEC-F3E-TXN-005",
-        summary: "Spill shape transitions are first-class commit metadata.",
+        summary: "CommitResult separates value/shape/topology deltas.",
+    },
+    SpecClause {
+        id: "FEC-F3E-TXN-006",
+        summary: "Spill handling is represented as explicit SpillTakeover/SpillClearance/SpillBlocked events.",
+    },
+    SpecClause {
+        id: "FEC-F3E-TXN-007",
+        summary: "Commit enforces coordinator snapshot fence in addition to session snapshot equality.",
+    },
+    SpecClause {
+        id: "FEC-F3E-TXN-008",
+        summary: "Capability decisions are session-bound and commit-validated against bound authority.",
+    },
+    SpecClause {
+        id: "FEC-F3E-TXN-009",
+        summary: "Trace payload is schema-versioned and validates required field integrity.",
+    },
+    SpecClause {
+        id: "FEC-F3E-TXN-010",
+        summary: "Seam emits perf scaffolding counters for commit/reject/delta/spill telemetry.",
+    },
+    SpecClause {
+        id: "FEC-F3E-TXN-011",
+        summary: "Incremental name invalidation uses runtime name-id dependency routing; FEC does not force full-recalc policy.",
     },
 ];
 

@@ -1,28 +1,29 @@
-# FEC/F3E Redesign Observations and Suggestions
+# FEC/F3E Redesign Observations (b4)
 
-## Current Observations (Round 27)
-1. Runtime dependency deltas now materially improve dynamic-reference invalidation.
-   - `INDIRECT`/`OFFSET` target flips are reflected in observed `dep_delta_cells`.
-2. Spill transitions are now explicit seam metadata.
-   - `spill_shape_delta=created` and `spill_shape_delta=cleared` are visible in commit traces.
-3. Transaction status handling is deterministic in exercised flows.
-   - observed commits were `Applied`; rejection branches are implemented but not yet stress-tested.
-4. Call-graph shape is cleaner and phase-oriented.
-   - `open_session -> capability_view -> execute -> commit` is consistent across scenarios.
+## Current Observations
+1. Seam identity is now ID-first.
+   - `FecNameId`/`FecRangeId`/formula stable IDs are emitted and consumed in contracts/traces.
+2. Delta typing is materially clearer.
+   - `value_delta`, `shape_delta`, and `topology_delta` separate value vs structure vs invalidation/topology concerns.
+3. Spill flows are explicit objects.
+   - takeover, clearance, and blocked states are represented as contract events instead of coarse shape labels.
+4. Trace schema is now versioned.
+   - trace lines emit `trace_version=fec-f3e-trace/b4` and schema field validation status.
+5. Name-delta incremental routing is active.
+   - name-only dirty edits can run incremental lane; FEC evidence no longer implies forced full-recalc policy.
+6. Snapshot/capability guards from b3 remain stable.
+   - coordinator snapshot fence and session-bound capability authority continue to hold.
+7. End-to-end spill invalidation behavior is now explicitly exercised.
+   - scenario covers blocked spill, shrink recovery, and re-block on re-expand with dependent observer updates.
 
-## Suggestions
-1. Add a small adversarial test lane for `RejectedTokenMismatch` and `RejectedSnapshotConflict` paths.
-2. Add a host policy knob to choose token rotation policy:
-   - rotate on any delta (current behavior), or
-   - rotate only on structural dependency delta.
-3. Add typed trace fields for dependency delta sizes by category:
-   - `dep_delta_cells`
-   - `dep_delta_names`
-   - `dep_delta_spill_children`
-4. Extend name-path incremental policy to consume observed name dependency deltas (currently captured, not scheduled).
-5. Add replay fixtures for transaction envelopes to enable deterministic seam-level minimization outside full engine tests.
+## Remaining Gaps
+1. Coordinator storage/execution is still single-thread oriented.
+2. Contention/replay stress harness for interleaved commits is still missing.
+3. Callgraph extraction is still adjacency-based; causal attribution remains a follow-up.
 
 ## Evidence References
-- `artifacts/fec_f3e/exams_20260308_redesign/EXAM_SUMMARY.md`
+- `artifacts/fec_f3e/seam_trace.log`
 - `artifacts/fec_f3e/seam_trace.event_counts.tsv`
+- `artifacts/fec_f3e/seam_trace.callgraph.edges.csv`
+- `artifacts/fec_f3e/seam_trace.callgraph.dot`
 - `docs/ENGINE_FEC_F3E_REDESIGN_SPEC.md`

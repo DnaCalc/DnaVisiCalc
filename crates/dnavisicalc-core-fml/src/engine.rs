@@ -16,8 +16,8 @@ use crate::experiments::spill_overlay::{SpillOverlayError, SpillOverlayPlanner};
 use crate::experiments::spill_rewrite::{RewriteError, materialize_array_values};
 use crate::fec_f3e::{
     CommitStatus, CoreF3eEngine, DefaultFecHost, EvalRequest, F3eEvalTarget, F3eKernel,
-    F3ePrepareContext, FecCapabilityTag, FecCoordinator, FecFormulaId, FormulaToken,
-    SpillShapeDelta, boundary_duration_us, boundary_trace_event, boundary_trace_start,
+    F3ePrepareContext, FecCapabilityTag, FecCoordinator, FecFormulaId, FecNameId, FormulaToken,
+    SpillDeltaEvent, boundary_duration_us, boundary_trace_event, boundary_trace_start,
     format_capabilities, format_formula_id, result_kind_name, spill_shape_name,
 };
 use crate::parser::ParseError;
@@ -158,6 +158,51 @@ pub enum DynamicArrayStrategy {
     OverlayInline,
     OverlayPlanner,
     RewriteMaterialize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillOptimizationPolicy {
+    ConservativeFullRecalc,
+    ExternalScheduler,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpillOptimizationHint {
+    pub anchor: CellRef,
+    pub old_range: Option<CellRange>,
+    pub new_range: Option<CellRange>,
+    pub entered_cells: Vec<CellRef>,
+    pub exited_cells: Vec<CellRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FecSeamPerfSnapshot {
+    pub install_plan_count: u64,
+    pub open_session_count: u64,
+    pub capability_view_count: u64,
+    pub commit_count: u64,
+    pub commit_applied_count: u64,
+    pub commit_rejected_count: u64,
+    pub token_rotation_count: u64,
+    pub dep_delta_cells_total: u64,
+    pub dep_delta_names_total: u64,
+    pub dep_delta_spill_children_total: u64,
+    pub spill_hint_count: u64,
+    pub spill_entered_total: u64,
+    pub spill_exited_total: u64,
+    pub spill_takeover_count: u64,
+    pub spill_clearance_count: u64,
+    pub spill_blocked_count: u64,
+    pub reject_session_not_found_count: u64,
+    pub reject_formula_not_registered_count: u64,
+    pub reject_formula_mismatch_count: u64,
+    pub reject_expected_token_mismatch_count: u64,
+    pub reject_transaction_token_mismatch_count: u64,
+    pub reject_capability_not_bound_count: u64,
+    pub reject_capability_decision_mismatch_count: u64,
+    pub reject_capability_denied_count: u64,
+    pub reject_snapshot_mismatch_count: u64,
+    pub reject_coordinator_snapshot_mismatch_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -356,6 +401,8 @@ pub struct Engine {
     reverse_deps: FxHashMap<CellRef, FxHashSet<CellRef>>,
     /// Runtime-observed reverse dependency map from transactional FEC commits.
     runtime_reverse_deps: FxHashMap<CellRef, FxHashSet<CellRef>>,
+    /// Runtime-observed reverse dependency map for name ids.
+    runtime_name_reverse_deps: FxHashMap<FecNameId, FxHashSet<CellRef>>,
     /// Number of formula cells evaluated in the last recalculation.
     last_eval_count: usize,
     /// Registered user-defined functions.
@@ -380,7 +427,8 @@ pub struct Engine {
     eval_name_text_literals: FxHashMap<String, String>,
     f3e: CoreF3eEngine,
     fec_host: DefaultFecHost,
-    recalc_spill_shape_changed: bool,
+    recalc_spill_scheduler_hints: Vec<SpillOptimizationHint>,
+    spill_optimization_policy: SpillOptimizationPolicy,
 }
 
 impl Default for Engine {
@@ -417,6 +465,7 @@ impl Engine {
             full_recalc_needed: true,
             reverse_deps: FxHashMap::default(),
             runtime_reverse_deps: FxHashMap::default(),
+            runtime_name_reverse_deps: FxHashMap::default(),
             last_eval_count: 0,
             udfs: FxHashMap::default(),
             controls: FxHashMap::default(),
@@ -432,7 +481,8 @@ impl Engine {
             eval_name_text_literals: FxHashMap::default(),
             f3e: CoreF3eEngine,
             fec_host: DefaultFecHost::default(),
-            recalc_spill_shape_changed: false,
+            recalc_spill_scheduler_hints: Vec::new(),
+            spill_optimization_policy: SpillOptimizationPolicy::ConservativeFullRecalc,
         }
     }
 
@@ -452,6 +502,10 @@ impl Engine {
         F3ePrepareContext::default()
     }
 
+    fn sync_fec_coordinator_epoch(&mut self) {
+        self.fec_host.set_coordinator_epoch(self.committed_epoch);
+    }
+
     fn evaluate_cell_via_f3e(
         &mut self,
         evaluator: &mut EvalContext<'_>,
@@ -468,7 +522,9 @@ impl Engine {
         let session_id =
             self.fec_host
                 .open_session(&formula_id, Some(expected_token), self.committed_epoch);
-        let capability_view = self.fec_host.capability_view(&formula_id, &required);
+        let capability_view = self
+            .fec_host
+            .capability_view(session_id, &formula_id, &required);
         let tx = self.f3e.execute(
             evaluator,
             EvalRequest {
@@ -483,9 +539,12 @@ impl Engine {
         let mut runtime = tx.runtime.clone();
         let result_kind = result_kind_name(tx.result_kind).to_string();
         let commit = self.fec_host.commit(tx);
-        self.apply_runtime_dependency_delta(&formula_id, &commit.dependency_delta);
-        self.recalc_spill_shape_changed |=
-            !matches!(commit.spill_shape_delta, SpillShapeDelta::None);
+        self.apply_runtime_dependency_delta(&formula_id, &commit.topology_delta.dependency_delta);
+        if let Some(spill_hint) =
+            spill_optimization_hint_from_shape_delta(&commit.shape_delta.spill_event)
+        {
+            self.recalc_spill_scheduler_hints.push(spill_hint);
+        }
         if commit.new_token != expected_token {
             if let Some(CellEntry::Formula(formula)) = self.cells.get_mut(&cell) {
                 formula.formula_token = commit.new_token;
@@ -505,11 +564,51 @@ impl Engine {
                 ("required_caps", required_caps),
                 ("result_kind", result_kind),
                 ("commit_status", format!("{:?}", commit.status)),
+                (
+                    "commit_reject_code",
+                    commit
+                        .reject_detail
+                        .as_ref()
+                        .map(|detail| format!("{:?}", detail.code))
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
+                (
+                    "commit_reject_snapshot",
+                    commit
+                        .reject_detail
+                        .as_ref()
+                        .map(|detail| {
+                            format!(
+                                "expected:{} actual:{} coordinator:{}",
+                                detail
+                                    .expected_snapshot_epoch
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                detail
+                                    .actual_snapshot_epoch
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                detail
+                                    .coordinator_snapshot_epoch
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                            )
+                        })
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
                 ("token", expected_token.to_string()),
                 ("new_token", commit.new_token.to_string()),
                 (
+                    "topology_impacted_cells",
+                    commit.topology_delta.impacted_cells.len().to_string(),
+                ),
+                (
+                    "topology_impacted_names",
+                    commit.topology_delta.impacted_names.len().to_string(),
+                ),
+                (
                     "spill_shape_delta",
-                    spill_shape_name(&commit.spill_shape_delta).to_string(),
+                    spill_shape_name(&commit.shape_delta).to_string(),
                 ),
                 ("duration_us", boundary_duration_us(trace_start).to_string()),
             ],
@@ -519,7 +618,8 @@ impl Engine {
 
     fn evaluate_name_via_f3e(&mut self, evaluator: &mut EvalContext<'_>, name: &str) -> Value {
         let trace_start = boundary_trace_start();
-        let formula_id = FecFormulaId::Name(name.to_string());
+        let name_id = FecNameId::from_canonical_name(name);
+        let formula_id = FecFormulaId::Name(name_id);
         let required: Vec<FecCapabilityTag> = self
             .fec_host
             .required_capabilities_for(&formula_id)
@@ -529,13 +629,18 @@ impl Engine {
         let session_id =
             self.fec_host
                 .open_session(&formula_id, Some(expected_token), self.committed_epoch);
-        let capability_view = self.fec_host.capability_view(&formula_id, &required);
+        let capability_view = self
+            .fec_host
+            .capability_view(session_id, &formula_id, &required);
         let tx = self.f3e.execute(
             evaluator,
             EvalRequest {
                 session_id,
                 formula_id: formula_id.clone(),
-                target: F3eEvalTarget::Name(name),
+                target: F3eEvalTarget::Name {
+                    id: name_id,
+                    label: name,
+                },
                 token: expected_token,
                 snapshot_epoch: self.committed_epoch,
                 capability_view,
@@ -553,10 +658,43 @@ impl Engine {
             "engine.evaluate_name_via_f3e",
             &[
                 ("formula_id", format_formula_id(&formula_id)),
+                ("name_label", name.to_ascii_uppercase()),
                 ("session_id", session_id.to_string()),
                 ("required_caps", required_caps),
                 ("result_kind", result_kind),
                 ("commit_status", format!("{:?}", commit.status)),
+                (
+                    "commit_reject_code",
+                    commit
+                        .reject_detail
+                        .as_ref()
+                        .map(|detail| format!("{:?}", detail.code))
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
+                (
+                    "commit_reject_snapshot",
+                    commit
+                        .reject_detail
+                        .as_ref()
+                        .map(|detail| {
+                            format!(
+                                "expected:{} actual:{} coordinator:{}",
+                                detail
+                                    .expected_snapshot_epoch
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                detail
+                                    .actual_snapshot_epoch
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                detail
+                                    .coordinator_snapshot_epoch
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                            )
+                        })
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
                 ("token", expected_token.to_string()),
                 ("new_token", commit.new_token.to_string()),
                 ("duration_us", boundary_duration_us(trace_start).to_string()),
@@ -603,11 +741,28 @@ impl Engine {
                 .or_default()
                 .insert(*formula_cell);
         }
+
+        for name_id in &delta.removed_names {
+            if let Some(dependents) = self.runtime_name_reverse_deps.get_mut(name_id) {
+                dependents.remove(formula_cell);
+                if dependents.is_empty() {
+                    self.runtime_name_reverse_deps.remove(name_id);
+                }
+            }
+        }
+        for name_id in &delta.added_names {
+            self.runtime_name_reverse_deps
+                .entry(*name_id)
+                .or_default()
+                .insert(*formula_cell);
+        }
     }
 
     fn refresh_fec_dependency_registrations(&mut self) {
         self.fec_host.clear();
+        self.sync_fec_coordinator_epoch();
         self.runtime_reverse_deps.clear();
+        self.runtime_name_reverse_deps.clear();
 
         let mut cell_updates: Vec<(CellRef, Vec<FecCapabilityTag>, FormulaToken)> = Vec::new();
         for (cell, entry) in &self.cells {
@@ -628,7 +783,7 @@ impl Engine {
                     .prepare_bound_expr(&formula.source, Rc::clone(&formula.expr));
                 let token = self
                     .fec_host
-                    .install_plan(FecFormulaId::Name(name.clone()), &plan);
+                    .install_plan(FecFormulaId::from_name(name), &plan);
                 name_updates.push((name.clone(), plan.required_capabilities, token));
             }
         }
@@ -654,6 +809,30 @@ impl Engine {
 
     pub fn set_dynamic_array_strategy(&mut self, strategy: DynamicArrayStrategy) {
         self.dynamic_array_strategy = strategy;
+    }
+
+    pub fn spill_optimization_policy(&self) -> SpillOptimizationPolicy {
+        self.spill_optimization_policy
+    }
+
+    pub fn set_spill_optimization_policy(&mut self, policy: SpillOptimizationPolicy) {
+        self.spill_optimization_policy = policy;
+    }
+
+    pub fn spill_scheduler_hints(&self) -> &[SpillOptimizationHint] {
+        &self.recalc_spill_scheduler_hints
+    }
+
+    pub fn take_spill_scheduler_hints(&mut self) -> Vec<SpillOptimizationHint> {
+        std::mem::take(&mut self.recalc_spill_scheduler_hints)
+    }
+
+    pub fn fec_seam_perf_snapshot(&self) -> FecSeamPerfSnapshot {
+        map_fec_perf_counters(self.fec_host.perf_counters())
+    }
+
+    pub fn reset_fec_seam_perf_counters(&mut self) {
+        self.fec_host.reset_perf_counters();
     }
 
     pub fn iteration_config(&self) -> IterationConfig {
@@ -686,6 +865,7 @@ impl Engine {
         self.full_recalc_needed = true;
         self.reverse_deps.clear();
         self.runtime_reverse_deps.clear();
+        self.runtime_name_reverse_deps.clear();
         self.eval_formulas.clear();
         self.eval_literals.clear();
         self.eval_text_literals.clear();
@@ -693,7 +873,7 @@ impl Engine {
         self.eval_name_literals.clear();
         self.eval_name_text_literals.clear();
         self.fec_host.clear();
-        self.recalc_spill_shape_changed = false;
+        self.recalc_spill_scheduler_hints.clear();
         self.controls.clear();
         self.charts.clear();
         self.chart_outputs.clear();
@@ -1029,13 +1209,14 @@ impl Engine {
             .map(|stored| stored.value.clone())
             .unwrap_or(Value::Blank);
         self.dirty_names.insert(key.clone());
-        self.full_recalc_needed = true; // names affect all formulas referencing them
+        self.full_recalc_needed =
+            self.full_recalc_needed || self.name_change_requires_full_recalc(&key);
         self.eval_name_formulas.remove(&key);
         self.eval_name_text_literals.remove(&key);
         self.eval_name_literals.insert(key.clone(), number);
         if was_formula {
             self.fec_host
-                .unregister_formula(&FecFormulaId::Name(key.clone()));
+                .unregister_formula(&FecFormulaId::from_name(&key));
         }
         self.names.insert(key.clone(), NameEntry::Number(number));
         self.committed_epoch += 1;
@@ -1070,7 +1251,8 @@ impl Engine {
             .map(|stored| stored.value.clone())
             .unwrap_or(Value::Blank);
         self.dirty_names.insert(key.clone());
-        self.full_recalc_needed = true;
+        self.full_recalc_needed =
+            self.full_recalc_needed || self.name_change_requires_full_recalc(&key);
         let text = text.into();
         self.eval_name_formulas.remove(&key);
         self.eval_name_literals.remove(&key);
@@ -1078,7 +1260,7 @@ impl Engine {
             .insert(key.clone(), text.clone());
         if was_formula {
             self.fec_host
-                .unregister_formula(&FecFormulaId::Name(key.clone()));
+                .unregister_formula(&FecFormulaId::from_name(&key));
         }
         self.names
             .insert(key.clone(), NameEntry::Text(text.clone()));
@@ -1115,7 +1297,7 @@ impl Engine {
         let expr = Rc::clone(&plan.expr);
         self.eval_name_literals.remove(&key);
         self.eval_name_text_literals.remove(&key);
-        let formula_id = FecFormulaId::Name(key.clone());
+        let formula_id = FecFormulaId::from_name(&key);
         let token = self.fec_host.install_plan(formula_id.clone(), &plan);
         self.eval_name_formulas
             .insert(key.clone(), Rc::clone(&expr));
@@ -1134,6 +1316,7 @@ impl Engine {
             "engine.set_name_formula",
             &[
                 ("formula_id", format_formula_id(&formula_id)),
+                ("name_label", name.to_ascii_uppercase()),
                 ("dep_count", dep_count.to_string()),
                 ("required_caps", required_caps),
                 ("dependency_profile", dependency_profile),
@@ -1170,13 +1353,14 @@ impl Engine {
             .map(|stored| stored.value.clone())
             .unwrap_or(Value::Blank);
         self.dirty_names.insert(key.clone());
-        self.full_recalc_needed = true;
+        self.full_recalc_needed =
+            self.full_recalc_needed || self.name_change_requires_full_recalc(&key);
         self.eval_name_formulas.remove(&key);
         self.eval_name_literals.remove(&key);
         self.eval_name_text_literals.remove(&key);
         if was_formula {
             self.fec_host
-                .unregister_formula(&FecFormulaId::Name(key.clone()));
+                .unregister_formula(&FecFormulaId::from_name(&key));
         }
         self.names.remove(&key);
         self.name_values.remove(&key);
@@ -1368,6 +1552,7 @@ impl Engine {
         self.calc_tree = None;
         self.reverse_deps.clear();
         self.runtime_reverse_deps.clear();
+        self.runtime_name_reverse_deps.clear();
         self.dirty_cells.clear();
         self.dirty_names.clear();
         self.full_recalc_needed = true;
@@ -1379,13 +1564,15 @@ impl Engine {
     }
 
     pub fn recalculate(&mut self) -> Result<(), EngineError> {
+        self.sync_fec_coordinator_epoch();
         // Determine whether we can use incremental recalc.
         // Incremental is possible when:
         // 1. The dependency graph structure hasn't changed (no new/removed formulas)
         // 2. We have a cached CalcTree and reverse_deps
-        // 3. There are dirty cells to propagate
-        let use_incremental =
-            !self.full_recalc_needed && self.calc_tree.is_some() && !self.dirty_cells.is_empty();
+        // 3. There are dirty cells or names to propagate
+        let use_incremental = !self.full_recalc_needed
+            && self.calc_tree.is_some()
+            && (!self.dirty_cells.is_empty() || !self.dirty_names.is_empty());
 
         if use_incremental {
             self.recalculate_incremental()
@@ -1398,7 +1585,7 @@ impl Engine {
     fn recalculate_full(&mut self) -> Result<(), EngineError> {
         let trace_start = boundary_trace_start();
         let baseline = self.capture_change_baseline();
-        self.recalc_spill_shape_changed = false;
+        self.recalc_spill_scheduler_hints.clear();
         // Take cached eval maps (O(1) pointer swaps) instead of rebuilding them.
         let formulas = std::mem::take(&mut self.eval_formulas);
         let literals = std::mem::take(&mut self.eval_literals);
@@ -1453,6 +1640,24 @@ impl Engine {
         for (cell, text) in &text_literals {
             new_values.insert(
                 *cell,
+                StoredValue {
+                    value: Value::Text(text.clone()),
+                    value_epoch: self.committed_epoch,
+                },
+            );
+        }
+        for (name, number) in &name_literals {
+            new_name_values.insert(
+                name.clone(),
+                StoredValue {
+                    value: Value::Number(*number),
+                    value_epoch: self.committed_epoch,
+                },
+            );
+        }
+        for (name, text) in &name_text_literals {
+            new_name_values.insert(
+                name.clone(),
                 StoredValue {
                     value: Value::Text(text.clone()),
                     value_epoch: self.committed_epoch,
@@ -1556,7 +1761,7 @@ impl Engine {
             }
         }
 
-        let mut sorted_names: Vec<String> = self.names.keys().cloned().collect();
+        let mut sorted_names: Vec<String> = name_formulas.keys().cloned().collect();
         sorted_names.sort();
         for name in sorted_names {
             let value = self.evaluate_name_via_f3e(&mut evaluator, &name);
@@ -1688,7 +1893,7 @@ impl Engine {
     fn recalculate_incremental(&mut self) -> Result<(), EngineError> {
         let trace_start = boundary_trace_start();
         let baseline = self.capture_change_baseline();
-        self.recalc_spill_shape_changed = false;
+        self.recalc_spill_scheduler_hints.clear();
         // Compute dirty closure: all formula cells transitively dependent on dirty cells.
         let (dirty_bitset, dirty_vec) = self.compute_dirty_closure();
 
@@ -1875,7 +2080,7 @@ impl Engine {
         // Re-evaluate names if any are dirty.
         let mut updated_names: Vec<(String, StoredValue)> = Vec::new();
         if !self.dirty_names.is_empty() {
-            let mut sorted_names: Vec<String> = self.names.keys().cloned().collect();
+            let mut sorted_names: Vec<String> = name_formulas.keys().cloned().collect();
             sorted_names.sort();
             for name in sorted_names {
                 evaluator.evict_name_cache(&name);
@@ -2029,7 +2234,7 @@ impl Engine {
         let dirty_name_count = self.dirty_names.len();
         self.dirty_cells.clear();
         self.dirty_names.clear();
-        let spill_shape_changed = self.recalc_spill_shape_changed;
+        let spill_hint_count = self.recalc_spill_scheduler_hints.len();
         if let Some(baseline) = baseline {
             self.record_changes_from_baseline(baseline);
         }
@@ -2040,12 +2245,31 @@ impl Engine {
                 ("dirty_closure_count", dirty_vec.len().to_string()),
                 ("dirty_name_count", dirty_name_count.to_string()),
                 ("eval_count", eval_count.to_string()),
-                ("spill_shape_changed", spill_shape_changed.to_string()),
+                ("spill_hint_count", spill_hint_count.to_string()),
+                (
+                    "spill_policy",
+                    spill_policy_name(self.spill_optimization_policy).to_string(),
+                ),
                 ("duration_us", boundary_duration_us(trace_start).to_string()),
             ],
         );
 
-        if spill_shape_changed {
+        if spill_hint_count > 0
+            && matches!(
+                self.spill_optimization_policy,
+                SpillOptimizationPolicy::ConservativeFullRecalc
+            )
+        {
+            boundary_trace_event(
+                "engine.incremental_spill_fallback",
+                &[
+                    ("spill_hint_count", spill_hint_count.to_string()),
+                    (
+                        "policy",
+                        spill_policy_name(self.spill_optimization_policy).to_string(),
+                    ),
+                ],
+            );
             self.full_recalc_needed = true;
             return self.recalculate_full();
         }
@@ -2737,6 +2961,19 @@ impl Engine {
                 }
             }
         }
+        let dynamic_name_sources: Vec<FecNameId> = self
+            .runtime_name_reverse_deps
+            .iter()
+            .filter_map(|(source, dependents)| dependents.contains(&cell).then_some(*source))
+            .collect();
+        for source in dynamic_name_sources {
+            if let Some(set) = self.runtime_name_reverse_deps.get_mut(&source) {
+                set.remove(&cell);
+                if set.is_empty() {
+                    self.runtime_name_reverse_deps.remove(&source);
+                }
+            }
+        }
     }
 
     /// Rebuild the cached eval maps from scratch (used after structural ops).
@@ -2792,6 +3029,18 @@ impl Engine {
             stack.push(source);
         }
 
+        for name in &self.dirty_names {
+            let name_id = FecNameId::from_canonical_name(name);
+            if let Some(dependents) = self.runtime_name_reverse_deps.get(&name_id) {
+                for dep in dependents {
+                    if dirty.insert(*dep) {
+                        dirty_vec.push(*dep);
+                        stack.push(*dep);
+                    }
+                }
+            }
+        }
+
         while let Some(cell) = stack.pop() {
             if let Some(dependents) = self.reverse_deps.get(&cell) {
                 for dep in dependents {
@@ -2835,6 +3084,7 @@ impl Engine {
     }
 
     fn maybe_recalculate(&mut self) -> Result<(), EngineError> {
+        self.sync_fec_coordinator_epoch();
         match self.mode {
             RecalcMode::Automatic => self.recalculate(),
             RecalcMode::Manual => Ok(()),
@@ -2898,6 +3148,11 @@ impl Engine {
             )));
         }
         Ok(upper)
+    }
+
+    fn name_change_requires_full_recalc(&self, key: &str) -> bool {
+        let _ = key;
+        false
     }
 
     fn apply_spills_overlay_inline(
@@ -3203,6 +3458,81 @@ fn recalc_mode_name(mode: RecalcMode) -> &'static str {
     match mode {
         RecalcMode::Automatic => "automatic",
         RecalcMode::Manual => "manual",
+    }
+}
+
+fn spill_policy_name(policy: SpillOptimizationPolicy) -> &'static str {
+    match policy {
+        SpillOptimizationPolicy::ConservativeFullRecalc => "conservative_full_recalc",
+        SpillOptimizationPolicy::ExternalScheduler => "external_scheduler",
+    }
+}
+
+fn spill_optimization_hint_from_shape_delta(
+    event: &SpillDeltaEvent,
+) -> Option<SpillOptimizationHint> {
+    match event {
+        SpillDeltaEvent::None => None,
+        SpillDeltaEvent::SpillTakeover {
+            anchor,
+            old_range,
+            new_range,
+            entered_cells,
+            exited_cells,
+            ..
+        } => Some(SpillOptimizationHint {
+            anchor: *anchor,
+            old_range: *old_range,
+            new_range: Some(*new_range),
+            entered_cells: entered_cells.clone(),
+            exited_cells: exited_cells.clone(),
+        }),
+        SpillDeltaEvent::SpillClearance {
+            anchor,
+            old_range,
+            exited_cells,
+            ..
+        } => Some(SpillOptimizationHint {
+            anchor: *anchor,
+            old_range: Some(*old_range),
+            new_range: None,
+            entered_cells: Vec::new(),
+            exited_cells: exited_cells.clone(),
+        }),
+        SpillDeltaEvent::SpillBlocked { .. } => None,
+    }
+}
+
+fn map_fec_perf_counters(counters: crate::fec_f3e::FecSeamPerfCounters) -> FecSeamPerfSnapshot {
+    FecSeamPerfSnapshot {
+        install_plan_count: counters.install_plan_count,
+        open_session_count: counters.open_session_count,
+        capability_view_count: counters.capability_view_count,
+        commit_count: counters.commit_count,
+        commit_applied_count: counters.commit_applied_count,
+        commit_rejected_count: counters.commit_rejected_count,
+        token_rotation_count: counters.token_rotation_count,
+        dep_delta_cells_total: counters.dep_delta_cells_total,
+        dep_delta_names_total: counters.dep_delta_names_total,
+        dep_delta_spill_children_total: counters.dep_delta_spill_children_total,
+        spill_hint_count: counters.spill_hint_count,
+        spill_entered_total: counters.spill_entered_total,
+        spill_exited_total: counters.spill_exited_total,
+        spill_takeover_count: counters.spill_takeover_count,
+        spill_clearance_count: counters.spill_clearance_count,
+        spill_blocked_count: counters.spill_blocked_count,
+        reject_session_not_found_count: counters.reject_session_not_found_count,
+        reject_formula_not_registered_count: counters.reject_formula_not_registered_count,
+        reject_formula_mismatch_count: counters.reject_formula_mismatch_count,
+        reject_expected_token_mismatch_count: counters.reject_expected_token_mismatch_count,
+        reject_transaction_token_mismatch_count: counters.reject_transaction_token_mismatch_count,
+        reject_capability_not_bound_count: counters.reject_capability_not_bound_count,
+        reject_capability_decision_mismatch_count: counters
+            .reject_capability_decision_mismatch_count,
+        reject_capability_denied_count: counters.reject_capability_denied_count,
+        reject_snapshot_mismatch_count: counters.reject_snapshot_mismatch_count,
+        reject_coordinator_snapshot_mismatch_count: counters
+            .reject_coordinator_snapshot_mismatch_count,
     }
 }
 

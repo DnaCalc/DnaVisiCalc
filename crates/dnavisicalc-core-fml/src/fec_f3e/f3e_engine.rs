@@ -95,8 +95,8 @@ impl F3eKernel for CoreF3eEngine {
                 super::contracts::F3eEvalTarget::Cell(cell) => {
                     evaluator.evaluate_cell_runtime(*cell)
                 }
-                super::contracts::F3eEvalTarget::Name(name) => {
-                    evaluator.evaluate_name_runtime(name)
+                super::contracts::F3eEvalTarget::Name { label, .. } => {
+                    evaluator.evaluate_name_runtime(label)
                 }
             },
             FecCapabilityDecision::Denied(tag) => crate::eval::RuntimeValue::scalar(Value::Error(
@@ -157,7 +157,9 @@ fn observations_from_accesses(mut accesses: ObservedAccesses) -> Vec<EvalObserva
     let mut names: Vec<String> = accesses.names.drain().collect();
     names.sort();
     for name in names {
-        observations.push(EvalObservation::ReadName(name));
+        observations.push(EvalObservation::ReadName(
+            super::contracts::FecNameId::from_canonical_name(&name),
+        ));
     }
 
     let mut spill_children: Vec<CellRef> = accesses.spill_children.drain().collect();

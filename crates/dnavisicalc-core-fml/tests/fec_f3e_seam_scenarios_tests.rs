@@ -1,4 +1,4 @@
-use dnavisicalc_core::{Engine, RecalcMode, Value};
+use dnavisicalc_core::{Engine, RecalcMode, SpillOptimizationPolicy, Value};
 
 fn assert_number(value: &Value, expected: f64) {
     match value {
@@ -212,6 +212,27 @@ fn seam_dynamic_reference_retargeting_flows() {
 }
 
 #[test]
+fn seam_name_delta_incremental_routing_skips_unrelated_name_updates() {
+    let mut engine = Engine::new();
+    engine.set_name_number("NX", 10.0).expect("NX");
+    engine.set_name_number("NY", 20.0).expect("NY");
+    engine.set_formula_a1("A1", "=NX+1").expect("A1 formula");
+    assert_number(&engine.cell_state_a1("A1").expect("A1").value, 11.0);
+
+    engine
+        .set_name_number("NY", 22.0)
+        .expect("unrelated name update");
+    assert_number(&engine.cell_state_a1("A1").expect("A1").value, 11.0);
+    assert_eq!(engine.last_eval_count(), 0);
+
+    engine
+        .set_name_number("NX", 15.0)
+        .expect("dependent name update");
+    assert_number(&engine.cell_state_a1("A1").expect("A1").value, 16.0);
+    assert_eq!(engine.last_eval_count(), 1);
+}
+
+#[test]
 fn seam_spill_takeover_and_clearance_on_referenced_spill_child() {
     let mut engine = Engine::new();
 
@@ -236,4 +257,137 @@ fn seam_spill_takeover_and_clearance_on_referenced_spill_child() {
         .expect("A1 shrunk spill");
     assert_eq!(engine.cell_state_a1("A2").expect("A2").value, Value::Blank);
     assert_number(&engine.cell_state_a1("B1").expect("B1").value, -1.0);
+}
+
+#[test]
+fn seam_spill_blocked_and_recovery_flow_updates_dependents() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A2", 99.0).expect("blocking input");
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(2,1,1,1)")
+        .expect("blocked spill formula");
+    engine
+        .set_formula_a1("B1", "=A2")
+        .expect("spill child observer");
+    assert_number(&engine.cell_state_a1("B1").expect("B1").value, 99.0);
+
+    engine.clear_cell_a1("A2").expect("remove blocker");
+    assert!(matches!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Error(_)
+    ));
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(2,1,1,1)")
+        .expect("re-evaluate anchor");
+    assert_number(&engine.cell_state_a1("A1").expect("A1").value, 1.0);
+    assert_number(&engine.cell_state_a1("A2").expect("A2").value, 2.0);
+    assert_number(&engine.cell_state_a1("B1").expect("B1").value, 2.0);
+}
+
+#[test]
+fn seam_end_to_end_spill_fail_and_recovery_with_dynamic_extent() {
+    let mut engine = Engine::new();
+    engine.set_number_a1("A3", 99.0).expect("blocking input");
+    engine.set_number_a1("C1", 3.0).expect("rows selector");
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(C1,1,1,1)")
+        .expect("dynamic spill formula");
+    engine
+        .set_formula_a1("B1", "=IF(ISBLANK(A2),-1,A2)")
+        .expect("observer");
+
+    assert!(matches!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Error(_)
+    ));
+    assert_number(&engine.cell_state_a1("B1").expect("B1").value, -1.0);
+
+    engine.set_number_a1("C1", 2.0).expect("shrink spill to clear blocker");
+    assert_number(&engine.cell_state_a1("A1").expect("A1").value, 1.0);
+    assert_number(&engine.cell_state_a1("B1").expect("B1").value, 2.0);
+
+    engine.set_number_a1("C1", 3.0).expect("expand into blocker again");
+    assert!(matches!(
+        engine.cell_state_a1("A1").expect("A1").value,
+        Value::Error(_)
+    ));
+    assert_number(&engine.cell_state_a1("B1").expect("B1").value, -1.0);
+}
+
+#[test]
+fn seam_external_scheduler_policy_emits_spill_handoff_hints() {
+    let mut engine = Engine::new();
+    engine.set_spill_optimization_policy(SpillOptimizationPolicy::ExternalScheduler);
+
+    engine.set_number_a1("C1", 0.0).expect("selector");
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(IF(C1=0,1,3),1,1,1)")
+        .expect("A1 dynamic spill");
+    engine
+        .set_formula_a1("B1", "=IF(ISBLANK(A2),-1,A2*10)")
+        .expect("B1 spill child consumer");
+    engine.take_spill_scheduler_hints();
+
+    engine.set_number_a1("C1", 1.0).expect("expand spill");
+    let hints = engine.take_spill_scheduler_hints();
+    assert_eq!(hints.len(), 1);
+
+    let hint = &hints[0];
+    assert_eq!(hint.anchor.to_a1(), "A1");
+    assert!(
+        hint.old_range.is_none(),
+        "old spill should be non-spill/none"
+    );
+    assert_eq!(
+        hint.new_range.expect("new range").end.to_a1(),
+        "A3",
+        "new spill should be 3x1"
+    );
+    assert!(hint.entered_cells.iter().any(|cell| cell.to_a1() == "A2"));
+    assert!(hint.entered_cells.iter().any(|cell| cell.to_a1() == "A3"));
+}
+
+#[test]
+fn seam_conservative_spill_policy_keeps_safe_full_fallback() {
+    let mut engine = Engine::new();
+
+    engine.set_number_a1("C1", 0.0).expect("selector");
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(IF(C1=0,1,3),1,1,1)")
+        .expect("A1 dynamic spill");
+    engine
+        .set_formula_a1("B1", "=IF(ISBLANK(A2),-1,A2*10)")
+        .expect("B1 spill child consumer");
+    engine.take_spill_scheduler_hints();
+
+    engine.set_number_a1("C1", 1.0).expect("expand spill");
+    assert!(engine.spill_scheduler_hints().is_empty());
+    assert_number(&engine.cell_state_a1("B1").expect("B1").value, 20.0);
+}
+
+#[test]
+fn seam_perf_snapshot_exposes_commit_and_spill_scaffolding() {
+    let mut engine = Engine::new();
+    engine.reset_fec_seam_perf_counters();
+    engine.set_spill_optimization_policy(SpillOptimizationPolicy::ExternalScheduler);
+
+    engine.set_number_a1("C1", 0.0).expect("selector");
+    engine
+        .set_formula_a1("A1", "=SEQUENCE(IF(C1=0,1,3),1,1,1)")
+        .expect("A1 dynamic spill");
+    engine
+        .set_formula_a1("B1", "=IF(ISBLANK(A2),-1,A2*10)")
+        .expect("B1 spill child consumer");
+    engine.take_spill_scheduler_hints();
+
+    engine.set_number_a1("C1", 1.0).expect("expand spill");
+
+    let perf = engine.fec_seam_perf_snapshot();
+    assert!(perf.open_session_count > 0);
+    assert!(perf.capability_view_count > 0);
+    assert!(perf.commit_count > 0);
+    assert!(perf.commit_applied_count > 0);
+    assert_eq!(perf.commit_rejected_count, 0);
+    assert!(perf.spill_hint_count > 0);
+    assert!(perf.spill_entered_total > 0);
 }

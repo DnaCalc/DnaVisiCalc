@@ -14,7 +14,7 @@ if (-not (Test-Path -Path $TraceLogPath)) {
 
 $events = @()
 foreach ($line in Get-Content -Path $TraceLogPath) {
-    if ($line -match '^fec_f3e\s+seq=(\d+)\s+event=([^\s]+)') {
+    if ($line -match '^fec_f3e\s+(?:trace_version=[^\s]+\s+)?seq=(\d+)\s+event=([^\s]+)') {
         $events += [pscustomobject]@{
             Seq = [int64]$matches[1]
             Event = $matches[2]

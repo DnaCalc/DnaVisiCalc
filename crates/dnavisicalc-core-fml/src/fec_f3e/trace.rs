@@ -3,11 +3,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use super::contracts::{
-    F3eEvalTarget, F3eResultKind, FecCapabilityTag, FecFormulaId, SpillShapeDelta,
+    F3eEvalTarget, F3eResultKind, FecCapabilityTag, FecFormulaId, FecShapeDelta, SpillDeltaEvent,
 };
 
 static TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 static TRACE_SEQ: AtomicU64 = AtomicU64::new(0);
+pub const FEC_F3E_TRACE_SCHEMA_VERSION: &str = "fec-f3e-trace/b4";
 
 pub fn boundary_trace_enabled() -> bool {
     *TRACE_ENABLED.get_or_init(|| {
@@ -30,7 +31,11 @@ pub fn boundary_trace_event(event: &str, fields: &[(&str, String)]) {
         return;
     }
     let seq = TRACE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-    let mut line = format!("fec_f3e seq={seq} event={event}");
+    let schema_valid = validate_trace_fields(fields);
+    let mut line = format!(
+        "fec_f3e trace_version={} seq={seq} event={} schema_valid={}",
+        FEC_F3E_TRACE_SCHEMA_VERSION, event, schema_valid
+    );
     for (key, value) in fields {
         line.push(' ');
         line.push_str(key);
@@ -43,14 +48,14 @@ pub fn boundary_trace_event(event: &str, fields: &[(&str, String)]) {
 pub fn format_formula_id(formula_id: &FecFormulaId) -> String {
     match formula_id {
         FecFormulaId::Cell(cell) => format!("cell:{cell}"),
-        FecFormulaId::Name(name) => format!("name:{name}"),
+        FecFormulaId::Name(name_id) => format!("name_id:{name_id}"),
     }
 }
 
 pub fn format_eval_target(target: &F3eEvalTarget<'_>) -> String {
     match target {
         F3eEvalTarget::Cell(cell) => format!("cell:{cell}"),
-        F3eEvalTarget::Name(name) => format!("name:{name}"),
+        F3eEvalTarget::Name { id, .. } => format!("name_id:{id}"),
     }
 }
 
@@ -73,12 +78,12 @@ pub fn result_kind_name(kind: F3eResultKind) -> &'static str {
     }
 }
 
-pub fn spill_shape_name(delta: &SpillShapeDelta) -> &'static str {
-    match delta {
-        SpillShapeDelta::None => "none",
-        SpillShapeDelta::Created { .. } => "created",
-        SpillShapeDelta::Resized { .. } => "resized",
-        SpillShapeDelta::Cleared { .. } => "cleared",
+pub fn spill_shape_name(delta: &FecShapeDelta) -> &'static str {
+    match &delta.spill_event {
+        SpillDeltaEvent::None => "none",
+        SpillDeltaEvent::SpillTakeover { .. } => "spill_takeover",
+        SpillDeltaEvent::SpillClearance { .. } => "spill_clearance",
+        SpillDeltaEvent::SpillBlocked { .. } => "spill_blocked",
     }
 }
 
@@ -103,4 +108,17 @@ fn sanitize_trace_value(input: &str) -> String {
         .chars()
         .map(|c| if c.is_whitespace() { '_' } else { c })
         .collect()
+}
+
+fn validate_trace_fields(fields: &[(&str, String)]) -> bool {
+    if fields.is_empty() {
+        return false;
+    }
+    let mut keys = std::collections::BTreeSet::new();
+    for (key, _) in fields {
+        if key.trim().is_empty() || !keys.insert(*key) {
+            return false;
+        }
+    }
+    true
 }

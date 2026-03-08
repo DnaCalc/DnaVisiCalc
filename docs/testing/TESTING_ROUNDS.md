@@ -479,3 +479,117 @@
 - Open questions:
   - Commit-level snapshot conflict behavior is implemented but not yet stressed under synthetic epoch-race harness cases.
   - Name-level runtime dependency deltas are captured but not yet used for selective name invalidation policy.
+
+## Round 28
+- Status: completed
+- Scope: FEC/F3E redesign b2 hardening from review synthesis, with spill-policy handoff and structured reject semantics.
+- Suites:
+  - `cargo test -p dnavisicalc-core-fml --test fec_f3e_seam_scenarios_tests`
+  - `cargo test -p dnavisicalc-core-fml`
+  - targeted recorded runs:
+    - `seam_dynamic_reference_retargeting_flows`
+    - `seam_spill_takeover_and_clearance_on_referenced_spill_child`
+    - `seam_external_scheduler_policy_emits_spill_handoff_hints`
+    - `seam_conservative_spill_policy_keeps_safe_full_fallback`
+- Result:
+  - Split `commit` rejection taxonomy and added structured reject detail payload (`CommitRejectDetail` + `CommitRejectCode`).
+  - Added spill scheduler hint payload (`old/new/entered/exited`) to `CommitResult`.
+  - Removed nominal non-formula name transactional rejects by evaluating only formula names through seam.
+  - Added engine spill optimization policy seam:
+    - `ConservativeFullRecalc` (default safe fallback),
+    - `ExternalScheduler` (hints only, no automatic full fallback).
+  - Added explicit trace fields for reject and spill policy diagnostics.
+- Artifacts:
+  - refreshed main seam trace:
+    - `artifacts/fec_f3e/seam_trace.log`
+    - `artifacts/fec_f3e/seam_trace.event_counts.tsv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.edges.csv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.dot`
+  - redesign b2 examinations:
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/EXAM_SUMMARY.md`
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/dynamic_retargeting_trace.log`
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/spill_takeover_clearance_trace.log`
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/external_scheduler_spill_handoff_trace.log`
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/conservative_spill_fallback_trace.log`
+- Open questions:
+  - Add coordinator-global snapshot fencing for async/concurrent scheduler scenarios.
+  - Wire name dependency deltas into selective incremental scheduling policy.
+  - Add contention/race replay harness for commit conflict branches.
+
+## Round 29
+- Status: completed
+- Scope: coordinator snapshot fence, session-bound capability authority, trace enrichment, and seam performance scaffolding.
+- Suites:
+  - `cargo test -p dnavisicalc-core-fml --lib`
+  - `cargo test -p dnavisicalc-core-fml`
+  - targeted recorded runs:
+    - `seam_dynamic_reference_retargeting_flows`
+    - `seam_spill_takeover_and_clearance_on_referenced_spill_child`
+    - `seam_external_scheduler_policy_emits_spill_handoff_hints`
+    - `seam_conservative_spill_policy_keeps_safe_full_fallback`
+- Result:
+  - Added coordinator epoch fence in `commit` (`CoordinatorSnapshotMismatch` reject code path).
+  - Bound capability decisions to sessions at `capability_view`; commit now validates tx-vs-session capability decisions.
+  - Added split capability reject statuses (`CapabilityNotBound`, `CapabilityDecisionMismatch`).
+  - Added seam performance counters and engine-facing snapshot/reset APIs.
+  - Expanded trace payload with coordinator/snapshot/capability fields and typed reject detail.
+- Artifacts:
+  - refreshed main seam trace:
+    - `artifacts/fec_f3e/seam_trace.log`
+    - `artifacts/fec_f3e/seam_trace.event_counts.tsv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.edges.csv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.dot`
+  - refreshed b2 exam set:
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/EXAM_SUMMARY.md`
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/*.log`
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/*.event_counts.tsv`
+    - `artifacts/fec_f3e/exams_20260308_redesign_b2/*.callgraph.edges.csv`
+- Open questions:
+  - Route observed name deltas into selective incremental scheduler invalidation.
+  - Add concurrency primitives/`Arc` strategy for future multi-threaded seam coordinator adoption.
+  - Add deterministic contention replay pack for fence/capability conflict cases.
+
+## Round 30
+- Status: completed
+- Scope: FEC/F3E redesign b4 contract upgrade (stable IDs, split deltas, explicit spill events, trace schema versioning, name-delta incremental routing).
+- Suites:
+  - `cargo test -p dnavisicalc-core-fml --test fec_f3e_seam_scenarios_tests`
+  - `cargo test -p dnavisicalc-core-fml`
+  - traced seam run:
+    - `DNAVISICALC_FEC_F3E_TRACE=1 cargo test -p dnavisicalc-core-fml --test fec_f3e_seam_scenarios_tests -- --nocapture`
+- Result:
+  - Seam identity upgraded to stable ids (`FecNameId`, `FecRangeId`, formula stable ids).
+  - `CommitResult` upgraded to `value_delta` + `shape_delta` + `topology_delta`.
+  - Spill metadata promoted to explicit events (`SpillTakeover`, `SpillClearance`, `SpillBlocked`).
+  - Trace schema version marker added (`fec-f3e-trace/b4`) with field-key validation.
+  - Incremental path now admits dirty-name updates; name-id runtime deltas route into dirty closure.
+  - Added targeted seam scenarios for:
+    - unrelated name update skip behavior,
+    - spill blocked -> anchor re-evaluation -> spill recovery.
+- Artifacts:
+  - refreshed seam trace:
+    - `artifacts/fec_f3e/seam_trace.log`
+    - `artifacts/fec_f3e/seam_trace.event_counts.tsv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.edges.csv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.dot`
+- Open questions:
+  - Move coordinator host storage to thread-safe primitives for concurrent scheduler pilots.
+  - Add deterministic contention replay pack for commit conflict interleavings.
+
+## Round 31
+- Status: completed
+- Scope: end-to-end spill scenario addition for b4 seam flow coverage.
+- Suites:
+  - `cargo test -p dnavisicalc-core-fml seam_end_to_end_spill_fail_and_recovery_with_dynamic_extent -- --nocapture`
+- Result:
+  - Added explicit end-to-end spill fail/recovery/re-fail scenario:
+    - anchor spill blocked by occupied cell,
+    - spill recovers after dynamic shrink,
+    - spill re-blocks on re-expand.
+  - Included dependent observer formula assertions to verify spill-child invalidation and spill-clearance behavior.
+  - Targeted scenario passes.
+- Artifacts:
+  - scenario integrated in:
+    - `crates/dnavisicalc-core-fml/tests/fec_f3e_seam_scenarios_tests.rs`
+- Open questions:
+  - Whether to add trace-derived invariant checks for spill transition ordering (blocked -> clearance -> blocked) in automated artifact analysis.
