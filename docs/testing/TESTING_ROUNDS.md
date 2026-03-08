@@ -444,3 +444,38 @@
     - `docs/ENGINE_FEC_F3E_API_EXAMINATION_PLAN.md`
 - Open questions:
   - What is the minimal, stable vNext payload for runtime dependency deltas and spill-shape change signals on the internal seam.
+
+## Round 27
+- Status: completed
+- Scope: FEC/F3E transactional redesign (Plan B) implementation, test rework, and fresh examination artifacts.
+- Suites:
+  - `cargo test -p dnavisicalc-core-fml --test fec_f3e_seam_scenarios_tests`
+  - `cargo test -p dnavisicalc-core-fml`
+  - `DNAVISICALC_FEC_F3E_TRACE=1 cargo test -p dnavisicalc-core-fml --test fec_f3e_seam_scenarios_tests -- --nocapture`
+  - targeted recorded runs:
+    - `seam_dynamic_reference_retargeting_flows`
+    - `seam_spill_takeover_and_clearance_on_referenced_spill_child`
+- Result:
+  - Replaced internal seam call shape with transactional `prepare/open_session/capability_view/execute/commit`.
+  - Added runtime observation capture (`ReadCell`, `ReadName`, `ReadSpillChild`, volatile/external markers).
+  - Added host-side dependency delta and spill-shape delta publication (`created`/`resized`/`cleared`).
+  - Integrated runtime dependency deltas into incremental dirty-closure traversal.
+  - Dynamic retargeting scenario now reflects calc-time target changes without forced selector toggles.
+- Artifacts:
+  - active redesign matrix trace:
+    - `artifacts/fec_f3e/seam_trace.log`
+    - `artifacts/fec_f3e/seam_trace.event_counts.tsv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.edges.csv`
+    - `artifacts/fec_f3e/seam_trace.callgraph.dot`
+  - redesign examinations:
+    - `artifacts/fec_f3e/exams_20260308_redesign/EXAM_SUMMARY.md`
+    - `artifacts/fec_f3e/exams_20260308_redesign/dynamic_retargeting_trace.log`
+    - `artifacts/fec_f3e/exams_20260308_redesign/spill_takeover_clearance_trace.log`
+- Archival housekeeping:
+  - previous seam specs archived under:
+    - `docs/archive/fec_f3e/pre_redesign_20260308/`
+  - previous seam output set archived under:
+    - `artifacts/fec_f3e/archive/pre_redesign_20260308/`
+- Open questions:
+  - Commit-level snapshot conflict behavior is implemented but not yet stressed under synthetic epoch-race harness cases.
+  - Name-level runtime dependency deltas are captured but not yet used for selective name invalidation policy.

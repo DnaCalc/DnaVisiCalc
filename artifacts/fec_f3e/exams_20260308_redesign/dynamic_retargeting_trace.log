@@ -1,0 +1,73 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests\fec_f3e_seam_scenarios_tests.rs (target\debug\deps\fec_f3e_seam_scenarios_tests-d4e603d7f65a4ed0.exe)
+
+running 1 test
+fec_f3e seq=1 event=engine.recalculate_full recalc_mode=full formula_count=0 name_formula_count=0 eval_count=0 duration_us=1343
+fec_f3e seq=2 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 spill_shape_changed=false duration_us=835
+fec_f3e seq=3 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 spill_shape_changed=false duration_us=829
+fec_f3e seq=4 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 spill_shape_changed=false duration_us=798
+fec_f3e seq=5 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 spill_shape_changed=false duration_us=772
+fec_f3e seq=6 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 spill_shape_changed=false duration_us=836
+fec_f3e seq=7 event=f3e.prepare dep_count=1 required_caps=reference_resolution dependency_profile=RefOnly token=167915041555908740633552892054872978684 duration_us=164
+fec_f3e seq=8 event=fec.install_plan formula_id=cell:D1 dep_count=1 required_caps=reference_resolution dependency_profile=RefOnly token=167915041555908740633552892054872978684 duration_us=23
+fec_f3e seq=9 event=fec.open_session formula_id=cell:D1 session_id=1 expected_token=167915041555908740633552892054872978684 snapshot_epoch=7 duration_us=11
+fec_f3e seq=10 event=fec.capability_view formula_id=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=6
+fec_f3e seq=11 event=f3e.execute formula_id=cell:D1 target=cell:D1 session_id=1 token=167915041555908740633552892054872978684 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=58
+fec_f3e seq=12 event=fec.commit formula_id=cell:D1 session_id=1 token=167915041555908740633552892054872978684 result_kind=scalar status=Applied new_token=167915041555908740644058252215894182121 dep_delta_cells=3 dep_delta_names=0 spill_shape_delta=none duration_us=12
+fec_f3e seq=13 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 session_id=1 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=167915041555908740633552892054872978684 new_token=167915041555908740644058252215894182121 spill_shape_delta=none duration_us=202
+fec_f3e seq=14 event=engine.recalculate_full recalc_mode=full formula_count=1 name_formula_count=0 eval_count=1 duration_us=1600
+fec_f3e seq=15 event=engine.set_formula formula_id=cell:D1 dep_count=1 required_caps=reference_resolution dependency_profile=RefOnly token=167915041555908740633552892054872978684 engine_mode=automatic status=ok duration_us=2180
+fec_f3e seq=16 event=f3e.prepare dep_count=2 required_caps=reference_resolution dependency_profile=RefOnly token=157518641434706427636935502774389091117 duration_us=38
+fec_f3e seq=17 event=fec.install_plan formula_id=cell:D2 dep_count=2 required_caps=reference_resolution dependency_profile=RefOnly token=157518641434706427636935502774389091117 duration_us=4
+fec_f3e seq=18 event=fec.open_session formula_id=cell:D2 session_id=2 expected_token=157518641434706427636935502774389091117 snapshot_epoch=8 duration_us=7
+fec_f3e seq=19 event=fec.capability_view formula_id=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=3
+fec_f3e seq=20 event=f3e.execute formula_id=cell:D2 target=cell:D2 session_id=2 token=157518641434706427636935502774389091117 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=34
+fec_f3e seq=21 event=fec.commit formula_id=cell:D2 session_id=2 token=157518641434706427636935502774389091117 result_kind=scalar status=Applied new_token=157518641434706427645440770069506348856 dep_delta_cells=3 dep_delta_names=0 spill_shape_delta=none duration_us=9
+fec_f3e seq=22 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 session_id=2 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=157518641434706427636935502774389091117 new_token=157518641434706427645440770069506348856 spill_shape_delta=none duration_us=146
+fec_f3e seq=23 event=fec.open_session formula_id=cell:D1 session_id=3 expected_token=167915041555908740644058252215894182121 snapshot_epoch=8 duration_us=1
+fec_f3e seq=24 event=fec.capability_view formula_id=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=2
+fec_f3e seq=25 event=f3e.execute formula_id=cell:D1 target=cell:D1 session_id=3 token=167915041555908740644058252215894182121 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=21
+fec_f3e seq=26 event=fec.commit formula_id=cell:D1 session_id=3 token=167915041555908740644058252215894182121 result_kind=scalar status=Applied new_token=167915041555908740644058252215894182121 dep_delta_cells=0 dep_delta_names=0 spill_shape_delta=none duration_us=6
+fec_f3e seq=27 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 session_id=3 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=167915041555908740644058252215894182121 new_token=167915041555908740644058252215894182121 spill_shape_delta=none duration_us=99
+fec_f3e seq=28 event=engine.recalculate_full recalc_mode=full formula_count=2 name_formula_count=0 eval_count=2 duration_us=1605
+fec_f3e seq=29 event=engine.set_formula formula_id=cell:D2 dep_count=2 required_caps=reference_resolution dependency_profile=RefOnly token=157518641434706427636935502774389091117 engine_mode=automatic status=ok duration_us=2012
+fec_f3e seq=30 event=fec.open_session formula_id=cell:D1 session_id=4 expected_token=167915041555908740644058252215894182121 snapshot_epoch=9 duration_us=10
+fec_f3e seq=31 event=fec.capability_view formula_id=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=4
+fec_f3e seq=32 event=f3e.execute formula_id=cell:D1 target=cell:D1 session_id=4 token=167915041555908740644058252215894182121 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=39
+fec_f3e seq=33 event=fec.commit formula_id=cell:D1 session_id=4 token=167915041555908740644058252215894182121 result_kind=scalar status=Applied new_token=167915041555908740644058252215894182121 dep_delta_cells=0 dep_delta_names=0 spill_shape_delta=none duration_us=10
+fec_f3e seq=34 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 session_id=4 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=167915041555908740644058252215894182121 new_token=167915041555908740644058252215894182121 spill_shape_delta=none duration_us=188
+fec_f3e seq=35 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 spill_shape_changed=false duration_us=1127
+fec_f3e seq=36 event=fec.open_session formula_id=cell:D1 session_id=5 expected_token=167915041555908740644058252215894182121 snapshot_epoch=10 duration_us=11
+fec_f3e seq=37 event=fec.capability_view formula_id=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=4
+fec_f3e seq=38 event=f3e.execute formula_id=cell:D1 target=cell:D1 session_id=5 token=167915041555908740644058252215894182121 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=43
+fec_f3e seq=39 event=fec.commit formula_id=cell:D1 session_id=5 token=167915041555908740644058252215894182121 result_kind=scalar status=Applied new_token=167915041555908740633552892063462913276 dep_delta_cells=2 dep_delta_names=0 spill_shape_delta=none duration_us=13
+fec_f3e seq=40 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 session_id=5 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=167915041555908740644058252215894182121 new_token=167915041555908740633552892063462913276 spill_shape_delta=none duration_us=184
+fec_f3e seq=41 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 spill_shape_changed=false duration_us=1145
+fec_f3e seq=42 event=fec.open_session formula_id=cell:D1 session_id=6 expected_token=167915041555908740633552892063462913276 snapshot_epoch=11 duration_us=18
+fec_f3e seq=43 event=fec.capability_view formula_id=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=6
+fec_f3e seq=44 event=f3e.execute formula_id=cell:D1 target=cell:D1 session_id=6 token=167915041555908740633552892063462913276 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=46
+fec_f3e seq=45 event=fec.commit formula_id=cell:D1 session_id=6 token=167915041555908740633552892063462913276 result_kind=scalar status=Applied new_token=167915041555908740633552892063462913276 dep_delta_cells=0 dep_delta_names=0 spill_shape_delta=none duration_us=14
+fec_f3e seq=46 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 session_id=6 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=167915041555908740633552892063462913276 new_token=167915041555908740633552892063462913276 spill_shape_delta=none duration_us=213
+fec_f3e seq=47 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 spill_shape_changed=false duration_us=1416
+fec_f3e seq=48 event=fec.open_session formula_id=cell:D2 session_id=7 expected_token=157518641434706427645440770069506348856 snapshot_epoch=12 duration_us=12
+fec_f3e seq=49 event=fec.capability_view formula_id=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=4
+fec_f3e seq=50 event=f3e.execute formula_id=cell:D2 target=cell:D2 session_id=7 token=157518641434706427645440770069506348856 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=31
+fec_f3e seq=51 event=fec.commit formula_id=cell:D2 session_id=7 token=157518641434706427645440770069506348856 result_kind=scalar status=Applied new_token=157518641434706427645440770069506348856 dep_delta_cells=0 dep_delta_names=0 spill_shape_delta=none duration_us=11
+fec_f3e seq=52 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 session_id=7 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=157518641434706427645440770069506348856 new_token=157518641434706427645440770069506348856 spill_shape_delta=none duration_us=170
+fec_f3e seq=53 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 spill_shape_changed=false duration_us=1259
+fec_f3e seq=54 event=fec.open_session formula_id=cell:D2 session_id=8 expected_token=157518641434706427645440770069506348856 snapshot_epoch=13 duration_us=11
+fec_f3e seq=55 event=fec.capability_view formula_id=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=4
+fec_f3e seq=56 event=f3e.execute formula_id=cell:D2 target=cell:D2 session_id=8 token=157518641434706427645440770069506348856 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=41
+fec_f3e seq=57 event=fec.commit formula_id=cell:D2 session_id=8 token=157518641434706427645440770069506348856 result_kind=scalar status=Applied new_token=157518641434706427636935502765799156525 dep_delta_cells=2 dep_delta_names=0 spill_shape_delta=none duration_us=12
+fec_f3e seq=58 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 session_id=8 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=157518641434706427645440770069506348856 new_token=157518641434706427636935502765799156525 spill_shape_delta=none duration_us=167
+fec_f3e seq=59 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 spill_shape_changed=false duration_us=1090
+fec_f3e seq=60 event=fec.open_session formula_id=cell:D2 session_id=9 expected_token=157518641434706427636935502765799156525 snapshot_epoch=14 duration_us=11
+fec_f3e seq=61 event=fec.capability_view formula_id=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 decision=allowed duration_us=5
+fec_f3e seq=62 event=f3e.execute formula_id=cell:D2 target=cell:D2 session_id=9 token=157518641434706427636935502765799156525 required_caps=reference_resolution supports_required=true decision=allowed result_kind=scalar observation_count=3 duration_us=30
+fec_f3e seq=63 event=fec.commit formula_id=cell:D2 session_id=9 token=157518641434706427636935502765799156525 result_kind=scalar status=Applied new_token=157518641434706427636935502765799156525 dep_delta_cells=0 dep_delta_names=0 spill_shape_delta=none duration_us=11
+fec_f3e seq=64 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 session_id=9 required_caps=reference_resolution result_kind=scalar commit_status=Applied token=157518641434706427636935502765799156525 new_token=157518641434706427636935502765799156525 spill_shape_delta=none duration_us=150
+fec_f3e seq=65 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 spill_shape_changed=false duration_us=1152
+test seam_dynamic_reference_retargeting_flows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.02s
+

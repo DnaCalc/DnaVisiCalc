@@ -15,10 +15,10 @@ use crate::eval::{
 use crate::experiments::spill_overlay::{SpillOverlayError, SpillOverlayPlanner};
 use crate::experiments::spill_rewrite::{RewriteError, materialize_array_values};
 use crate::fec_f3e::{
-    CoreF3eEngine, DefaultFecHost, F3eCompileContext, F3eDeclaredDependencies,
-    F3eDependencyDeclContext, F3eEngine, F3eEvalContext as F3eRuntimeContext, F3eEvalTarget,
-    FecCapabilityTag, FecFormulaId, FecHost, boundary_duration_us, boundary_trace_event,
-    boundary_trace_start, format_capabilities, format_formula_id, runtime_result_kind,
+    CommitStatus, CoreF3eEngine, DefaultFecHost, EvalRequest, F3eEvalTarget, F3eKernel,
+    F3ePrepareContext, FecCapabilityTag, FecCoordinator, FecFormulaId, FormulaToken,
+    SpillShapeDelta, boundary_duration_us, boundary_trace_event, boundary_trace_start,
+    format_capabilities, format_formula_id, result_kind_name, spill_shape_name,
 };
 use crate::parser::ParseError;
 
@@ -303,6 +303,7 @@ struct FormulaEntry {
     source: String,
     expr: Rc<Expr>,
     required_fec_capabilities: Vec<FecCapabilityTag>,
+    formula_token: FormulaToken,
 }
 
 #[derive(Debug, Clone)]
@@ -353,6 +354,8 @@ pub struct Engine {
     /// Reverse dependency map: maps a cell to the set of formula cells that reference it.
     /// Maintained incrementally as formulas are added/removed.
     reverse_deps: FxHashMap<CellRef, FxHashSet<CellRef>>,
+    /// Runtime-observed reverse dependency map from transactional FEC commits.
+    runtime_reverse_deps: FxHashMap<CellRef, FxHashSet<CellRef>>,
     /// Number of formula cells evaluated in the last recalculation.
     last_eval_count: usize,
     /// Registered user-defined functions.
@@ -377,6 +380,7 @@ pub struct Engine {
     eval_name_text_literals: FxHashMap<String, String>,
     f3e: CoreF3eEngine,
     fec_host: DefaultFecHost,
+    recalc_spill_shape_changed: bool,
 }
 
 impl Default for Engine {
@@ -412,6 +416,7 @@ impl Engine {
             dirty_names: FxHashSet::default(),
             full_recalc_needed: true,
             reverse_deps: FxHashMap::default(),
+            runtime_reverse_deps: FxHashMap::default(),
             last_eval_count: 0,
             udfs: FxHashMap::default(),
             controls: FxHashMap::default(),
@@ -427,6 +432,7 @@ impl Engine {
             eval_name_text_literals: FxHashMap::default(),
             f3e: CoreF3eEngine,
             fec_host: DefaultFecHost::default(),
+            recalc_spill_shape_changed: false,
         }
     }
 
@@ -442,109 +448,202 @@ impl Engine {
         self.mode = mode;
     }
 
-    fn f3e_compile_context(&self) -> F3eCompileContext {
-        F3eCompileContext::default()
+    fn f3e_prepare_context(&self) -> F3ePrepareContext {
+        F3ePrepareContext::default()
     }
 
     fn evaluate_cell_via_f3e(
-        &self,
+        &mut self,
         evaluator: &mut EvalContext<'_>,
         cell: CellRef,
     ) -> (RuntimeValue, Value) {
         let trace_start = boundary_trace_start();
         let formula_id = FecFormulaId::Cell(cell);
-        let required = self.fec_host.required_capabilities_for(&formula_id);
-        let required_caps = format_capabilities(required);
-        let eval_ctx = F3eRuntimeContext {
-            capabilities: self.fec_host.capability_view(required),
+        let required: Vec<FecCapabilityTag> = self
+            .fec_host
+            .required_capabilities_for(&formula_id)
+            .to_vec();
+        let required_caps = format_capabilities(&required);
+        let expected_token = self.fec_host.expected_token_for(&formula_id).unwrap_or(0);
+        let session_id =
+            self.fec_host
+                .open_session(&formula_id, Some(expected_token), self.committed_epoch);
+        let capability_view = self.fec_host.capability_view(&formula_id, &required);
+        let tx = self.f3e.execute(
+            evaluator,
+            EvalRequest {
+                session_id,
+                formula_id: formula_id.clone(),
+                target: F3eEvalTarget::Cell(cell),
+                token: expected_token,
+                snapshot_epoch: self.committed_epoch,
+                capability_view,
+            },
+        );
+        let mut runtime = tx.runtime.clone();
+        let result_kind = result_kind_name(tx.result_kind).to_string();
+        let commit = self.fec_host.commit(tx);
+        self.apply_runtime_dependency_delta(&formula_id, &commit.dependency_delta);
+        self.recalc_spill_shape_changed |=
+            !matches!(commit.spill_shape_delta, SpillShapeDelta::None);
+        if commit.new_token != expected_token {
+            if let Some(CellEntry::Formula(formula)) = self.cells.get_mut(&cell) {
+                formula.formula_token = commit.new_token;
+            }
+        }
+        let value = if matches!(commit.status, CommitStatus::Applied) {
+            commit.value.clone()
+        } else {
+            runtime = RuntimeValue::scalar(commit.value.clone());
+            commit.value.clone()
         };
-        let eval_result = self
-            .f3e
-            .evaluate(evaluator, F3eEvalTarget::Cell(cell), &eval_ctx);
-        let runtime = eval_result.runtime.clone();
-        let published = self.fec_host.publish_result(&formula_id, &eval_result);
         boundary_trace_event(
             "engine.evaluate_cell_via_f3e",
             &[
                 ("formula_id", format_formula_id(&formula_id)),
+                ("session_id", session_id.to_string()),
                 ("required_caps", required_caps),
-                ("result_kind", runtime_result_kind(&runtime).to_string()),
+                ("result_kind", result_kind),
+                ("commit_status", format!("{:?}", commit.status)),
+                ("token", expected_token.to_string()),
+                ("new_token", commit.new_token.to_string()),
+                (
+                    "spill_shape_delta",
+                    spill_shape_name(&commit.spill_shape_delta).to_string(),
+                ),
                 ("duration_us", boundary_duration_us(trace_start).to_string()),
             ],
         );
-        (runtime, published.value)
+        (runtime, value)
     }
 
-    fn evaluate_name_via_f3e(&self, evaluator: &mut EvalContext<'_>, name: &str) -> Value {
+    fn evaluate_name_via_f3e(&mut self, evaluator: &mut EvalContext<'_>, name: &str) -> Value {
         let trace_start = boundary_trace_start();
         let formula_id = FecFormulaId::Name(name.to_string());
-        let required = self.fec_host.required_capabilities_for(&formula_id);
-        let required_caps = format_capabilities(required);
-        let eval_ctx = F3eRuntimeContext {
-            capabilities: self.fec_host.capability_view(required),
-        };
-        let eval_result = self
-            .f3e
-            .evaluate(evaluator, F3eEvalTarget::Name(name), &eval_ctx);
-        let result_kind = runtime_result_kind(&eval_result.runtime).to_string();
-        let published = self
+        let required: Vec<FecCapabilityTag> = self
             .fec_host
-            .publish_result(&formula_id, &eval_result)
-            .value;
+            .required_capabilities_for(&formula_id)
+            .to_vec();
+        let required_caps = format_capabilities(&required);
+        let expected_token = self.fec_host.expected_token_for(&formula_id).unwrap_or(0);
+        let session_id =
+            self.fec_host
+                .open_session(&formula_id, Some(expected_token), self.committed_epoch);
+        let capability_view = self.fec_host.capability_view(&formula_id, &required);
+        let tx = self.f3e.execute(
+            evaluator,
+            EvalRequest {
+                session_id,
+                formula_id: formula_id.clone(),
+                target: F3eEvalTarget::Name(name),
+                token: expected_token,
+                snapshot_epoch: self.committed_epoch,
+                capability_view,
+            },
+        );
+        let result_kind = result_kind_name(tx.result_kind).to_string();
+        let commit = self.fec_host.commit(tx);
+        if commit.new_token != expected_token {
+            if let Some(NameEntry::Formula(formula)) = self.names.get_mut(name) {
+                formula.formula_token = commit.new_token;
+            }
+        };
+        let value = commit.value.clone();
         boundary_trace_event(
             "engine.evaluate_name_via_f3e",
             &[
                 ("formula_id", format_formula_id(&formula_id)),
+                ("session_id", session_id.to_string()),
                 ("required_caps", required_caps),
                 ("result_kind", result_kind),
+                ("commit_status", format!("{:?}", commit.status)),
+                ("token", expected_token.to_string()),
+                ("new_token", commit.new_token.to_string()),
                 ("duration_us", boundary_duration_us(trace_start).to_string()),
             ],
         );
-        published
+        value
+    }
+
+    fn apply_runtime_dependency_delta(
+        &mut self,
+        formula_id: &FecFormulaId,
+        delta: &crate::fec_f3e::F3eDependencyDelta,
+    ) {
+        let FecFormulaId::Cell(formula_cell) = formula_id else {
+            return;
+        };
+
+        for cell in &delta.removed_cells {
+            if let Some(dependents) = self.runtime_reverse_deps.get_mut(cell) {
+                dependents.remove(formula_cell);
+                if dependents.is_empty() {
+                    self.runtime_reverse_deps.remove(cell);
+                }
+            }
+        }
+        for cell in &delta.added_cells {
+            self.runtime_reverse_deps
+                .entry(*cell)
+                .or_default()
+                .insert(*formula_cell);
+        }
+
+        for cell in &delta.removed_spill_children {
+            if let Some(dependents) = self.runtime_reverse_deps.get_mut(cell) {
+                dependents.remove(formula_cell);
+                if dependents.is_empty() {
+                    self.runtime_reverse_deps.remove(cell);
+                }
+            }
+        }
+        for cell in &delta.added_spill_children {
+            self.runtime_reverse_deps
+                .entry(*cell)
+                .or_default()
+                .insert(*formula_cell);
+        }
     }
 
     fn refresh_fec_dependency_registrations(&mut self) {
         self.fec_host.clear();
+        self.runtime_reverse_deps.clear();
 
-        let mut cell_updates: Vec<(CellRef, Vec<FecCapabilityTag>)> = Vec::new();
-        let mut cell_decls: Vec<(FecFormulaId, F3eDeclaredDependencies)> = Vec::new();
+        let mut cell_updates: Vec<(CellRef, Vec<FecCapabilityTag>, FormulaToken)> = Vec::new();
         for (cell, entry) in &self.cells {
             if let CellEntry::Formula(formula) = entry {
-                let compiled = self.f3e.compile_bound_expr(Rc::clone(&formula.expr));
-                let declared = self
+                let plan = self
                     .f3e
-                    .declare_dependencies(&compiled, &F3eDependencyDeclContext::default());
-                cell_decls.push((FecFormulaId::Cell(*cell), declared.clone()));
-                cell_updates.push((*cell, declared.required_capabilities));
+                    .prepare_bound_expr(&formula.source, Rc::clone(&formula.expr));
+                let token = self.fec_host.install_plan(FecFormulaId::Cell(*cell), &plan);
+                cell_updates.push((*cell, plan.required_capabilities, token));
             }
         }
 
-        let mut name_updates: Vec<(String, Vec<FecCapabilityTag>)> = Vec::new();
-        let mut name_decls: Vec<(FecFormulaId, F3eDeclaredDependencies)> = Vec::new();
+        let mut name_updates: Vec<(String, Vec<FecCapabilityTag>, FormulaToken)> = Vec::new();
         for (name, entry) in &self.names {
             if let NameEntry::Formula(formula) = entry {
-                let compiled = self.f3e.compile_bound_expr(Rc::clone(&formula.expr));
-                let declared = self
+                let plan = self
                     .f3e
-                    .declare_dependencies(&compiled, &F3eDependencyDeclContext::default());
-                name_decls.push((FecFormulaId::Name(name.clone()), declared.clone()));
-                name_updates.push((name.clone(), declared.required_capabilities));
+                    .prepare_bound_expr(&formula.source, Rc::clone(&formula.expr));
+                let token = self
+                    .fec_host
+                    .install_plan(FecFormulaId::Name(name.clone()), &plan);
+                name_updates.push((name.clone(), plan.required_capabilities, token));
             }
         }
 
-        for (formula_id, declared) in cell_decls.into_iter().chain(name_decls) {
-            self.fec_host.register_dependencies(formula_id, &declared);
-        }
-
-        for (cell, required) in cell_updates {
+        for (cell, required, token) in cell_updates {
             if let Some(CellEntry::Formula(formula)) = self.cells.get_mut(&cell) {
                 formula.required_fec_capabilities = required;
+                formula.formula_token = token;
             }
         }
 
-        for (name, required) in name_updates {
+        for (name, required, token) in name_updates {
             if let Some(NameEntry::Formula(formula)) = self.names.get_mut(&name) {
                 formula.required_fec_capabilities = required;
+                formula.formula_token = token;
             }
         }
     }
@@ -586,6 +685,7 @@ impl Engine {
         self.dirty_names.clear();
         self.full_recalc_needed = true;
         self.reverse_deps.clear();
+        self.runtime_reverse_deps.clear();
         self.eval_formulas.clear();
         self.eval_literals.clear();
         self.eval_text_literals.clear();
@@ -593,6 +693,7 @@ impl Engine {
         self.eval_name_literals.clear();
         self.eval_name_text_literals.clear();
         self.fec_host.clear();
+        self.recalc_spill_shape_changed = false;
         self.controls.clear();
         self.charts.clear();
         self.chart_outputs.clear();
@@ -836,33 +937,29 @@ impl Engine {
     pub fn set_formula(&mut self, cell: CellRef, formula: &str) -> Result<(), EngineError> {
         let trace_start = boundary_trace_start();
         self.ensure_in_bounds(cell)?;
-        let compiled = self
+        let plan = self
             .f3e
-            .compile(formula, self.bounds, &self.f3e_compile_context())?;
-        let declared = self
-            .f3e
-            .declare_dependencies(&compiled, &F3eDependencyDeclContext::default());
-        let dep_count = declared.static_dependencies.len();
-        let required_caps = format_capabilities(&declared.required_capabilities);
-        let dependency_profile = format!("{:?}", declared.dependency_profile);
+            .prepare(formula, self.bounds, &self.f3e_prepare_context())?;
+        let dep_count = plan.static_dependencies.len();
+        let required_caps = format_capabilities(&plan.required_capabilities);
+        let dependency_profile = format!("{:?}", plan.dependency_profile);
         // Remove old reverse deps if this cell had a formula.
         if matches!(self.cells.get(&cell), Some(CellEntry::Formula(_))) {
             self.remove_reverse_deps_for(cell);
         }
         self.eval_literals.remove(&cell);
         self.eval_text_literals.remove(&cell);
-        let expr = compiled.expr;
+        let expr = Rc::clone(&plan.expr);
         let formula_id = FecFormulaId::Cell(cell);
-        let token = self
-            .fec_host
-            .register_dependencies(FecFormulaId::Cell(cell), &declared);
+        let token = self.fec_host.install_plan(formula_id.clone(), &plan);
         self.eval_formulas.insert(cell, Rc::clone(&expr));
         self.cells.insert(
             cell,
             CellEntry::Formula(FormulaEntry {
                 source: formula.to_string(),
                 expr,
-                required_fec_capabilities: declared.required_capabilities,
+                required_fec_capabilities: plan.required_capabilities,
+                formula_token: token,
             }),
         );
         self.dirty_cells.insert(cell);
@@ -1009,22 +1106,17 @@ impl Engine {
         let key = self.normalize_name(name)?;
         self.dirty_names.insert(key.clone());
         self.full_recalc_needed = true;
-        let compiled = self
+        let plan = self
             .f3e
-            .compile(formula, self.bounds, &self.f3e_compile_context())?;
-        let declared = self
-            .f3e
-            .declare_dependencies(&compiled, &F3eDependencyDeclContext::default());
-        let dep_count = declared.static_dependencies.len();
-        let required_caps = format_capabilities(&declared.required_capabilities);
-        let dependency_profile = format!("{:?}", declared.dependency_profile);
-        let expr = compiled.expr;
+            .prepare(formula, self.bounds, &self.f3e_prepare_context())?;
+        let dep_count = plan.static_dependencies.len();
+        let required_caps = format_capabilities(&plan.required_capabilities);
+        let dependency_profile = format!("{:?}", plan.dependency_profile);
+        let expr = Rc::clone(&plan.expr);
         self.eval_name_literals.remove(&key);
         self.eval_name_text_literals.remove(&key);
         let formula_id = FecFormulaId::Name(key.clone());
-        let token = self
-            .fec_host
-            .register_dependencies(FecFormulaId::Name(key.clone()), &declared);
+        let token = self.fec_host.install_plan(formula_id.clone(), &plan);
         self.eval_name_formulas
             .insert(key.clone(), Rc::clone(&expr));
         self.names.insert(
@@ -1032,7 +1124,8 @@ impl Engine {
             NameEntry::Formula(FormulaEntry {
                 source: formula.to_string(),
                 expr,
-                required_fec_capabilities: declared.required_capabilities,
+                required_fec_capabilities: plan.required_capabilities,
+                formula_token: token,
             }),
         );
         self.committed_epoch += 1;
@@ -1215,6 +1308,7 @@ impl Engine {
                             source: new_source,
                             expr: Rc::new(new_expr),
                             required_fec_capabilities: Vec::new(),
+                            formula_token: 0,
                         }),
                     );
                 } else {
@@ -1250,6 +1344,7 @@ impl Engine {
                             source: new_source,
                             expr: Rc::new(new_expr),
                             required_fec_capabilities: Vec::new(),
+                            formula_token: 0,
                         }),
                     );
                 } else {
@@ -1272,6 +1367,7 @@ impl Engine {
         self.spill_ranges.clear();
         self.calc_tree = None;
         self.reverse_deps.clear();
+        self.runtime_reverse_deps.clear();
         self.dirty_cells.clear();
         self.dirty_names.clear();
         self.full_recalc_needed = true;
@@ -1302,6 +1398,7 @@ impl Engine {
     fn recalculate_full(&mut self) -> Result<(), EngineError> {
         let trace_start = boundary_trace_start();
         let baseline = self.capture_change_baseline();
+        self.recalc_spill_shape_changed = false;
         // Take cached eval maps (O(1) pointer swaps) instead of rebuilding them.
         let formulas = std::mem::take(&mut self.eval_formulas);
         let literals = std::mem::take(&mut self.eval_literals);
@@ -1309,6 +1406,7 @@ impl Engine {
         let name_formulas = std::mem::take(&mut self.eval_name_formulas);
         let name_literals = std::mem::take(&mut self.eval_name_literals);
         let name_text_literals = std::mem::take(&mut self.eval_name_text_literals);
+        let udfs = std::mem::take(&mut self.udfs);
         let formula_count = formulas.len();
         let name_formula_count = name_formulas.len();
 
@@ -1332,7 +1430,7 @@ impl Engine {
             self.recalc_serial,
             now_timestamp,
             &stream_counters,
-            &self.udfs,
+            &udfs,
         );
         let total_names = name_formulas.len() + name_literals.len() + name_text_literals.len();
         let mut new_values: CellGrid<StoredValue> =
@@ -1565,6 +1663,7 @@ impl Engine {
         self.eval_name_formulas = name_formulas;
         self.eval_name_literals = name_literals;
         self.eval_name_text_literals = name_text_literals;
+        self.udfs = udfs;
         self.dirty_cells.clear();
         self.dirty_names.clear();
         self.full_recalc_needed = false;
@@ -1589,6 +1688,7 @@ impl Engine {
     fn recalculate_incremental(&mut self) -> Result<(), EngineError> {
         let trace_start = boundary_trace_start();
         let baseline = self.capture_change_baseline();
+        self.recalc_spill_shape_changed = false;
         // Compute dirty closure: all formula cells transitively dependent on dirty cells.
         let (dirty_bitset, dirty_vec) = self.compute_dirty_closure();
 
@@ -1599,6 +1699,7 @@ impl Engine {
         let name_formulas = std::mem::take(&mut self.eval_name_formulas);
         let name_literals = std::mem::take(&mut self.eval_name_literals);
         let name_text_literals = std::mem::take(&mut self.eval_name_text_literals);
+        let udfs = std::mem::take(&mut self.udfs);
 
         // We still need the CalcTree for evaluation order.
         // Use the cached tree (we know it exists since we checked in recalculate()).
@@ -1622,7 +1723,7 @@ impl Engine {
             self.recalc_serial,
             now_timestamp,
             &stream_counters,
-            &self.udfs,
+            &udfs,
         );
 
         // Take committed values out so evaluator can hold an immutable reference
@@ -1924,8 +2025,11 @@ impl Engine {
         self.eval_name_formulas = name_formulas;
         self.eval_name_literals = name_literals;
         self.eval_name_text_literals = name_text_literals;
+        self.udfs = udfs;
+        let dirty_name_count = self.dirty_names.len();
         self.dirty_cells.clear();
         self.dirty_names.clear();
+        let spill_shape_changed = self.recalc_spill_shape_changed;
         if let Some(baseline) = baseline {
             self.record_changes_from_baseline(baseline);
         }
@@ -1934,11 +2038,17 @@ impl Engine {
             &[
                 ("recalc_mode", "incremental".to_string()),
                 ("dirty_closure_count", dirty_vec.len().to_string()),
-                ("dirty_name_count", self.dirty_names.len().to_string()),
+                ("dirty_name_count", dirty_name_count.to_string()),
                 ("eval_count", eval_count.to_string()),
+                ("spill_shape_changed", spill_shape_changed.to_string()),
                 ("duration_us", boundary_duration_us(trace_start).to_string()),
             ],
         );
+
+        if spill_shape_changed {
+            self.full_recalc_needed = true;
+            return self.recalculate_full();
+        }
 
         Ok(())
     }
@@ -2614,6 +2724,19 @@ impl Engine {
                 }
             }
         }
+        let dynamic_sources: Vec<CellRef> = self
+            .runtime_reverse_deps
+            .iter()
+            .filter_map(|(source, dependents)| dependents.contains(&cell).then_some(*source))
+            .collect();
+        for source in dynamic_sources {
+            if let Some(set) = self.runtime_reverse_deps.get_mut(&source) {
+                set.remove(&cell);
+                if set.is_empty() {
+                    self.runtime_reverse_deps.remove(&source);
+                }
+            }
+        }
     }
 
     /// Rebuild the cached eval maps from scratch (used after structural ops).
@@ -2671,6 +2794,14 @@ impl Engine {
 
         while let Some(cell) = stack.pop() {
             if let Some(dependents) = self.reverse_deps.get(&cell) {
+                for dep in dependents {
+                    if dirty.insert(*dep) {
+                        dirty_vec.push(*dep);
+                        stack.push(*dep);
+                    }
+                }
+            }
+            if let Some(dependents) = self.runtime_reverse_deps.get(&cell) {
                 for dep in dependents {
                     if dirty.insert(*dep) {
                         dirty_vec.push(*dep);

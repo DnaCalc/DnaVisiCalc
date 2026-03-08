@@ -6,28 +6,28 @@ pub struct SpecClause {
     pub summary: &'static str,
 }
 
-pub const FEC_F3E_INTERFACE_VERSION: &str = "fec-f3e-draft/v0";
+pub const FEC_F3E_INTERFACE_VERSION: &str = "fec-f3e-redesign/b1";
 
 pub const FEC_F3E_CLAUSES: &[SpecClause] = &[
     SpecClause {
-        id: "FEC-F3E-OWN-001",
-        summary: "F3E owns value/type semantics; FEC must not reinterpret them.",
+        id: "FEC-F3E-TXN-001",
+        summary: "F3E exposes prepare/execute transactional semantic calls.",
     },
     SpecClause {
-        id: "FEC-F3E-CALL-001",
-        summary: "F3E compile/declare/evaluate calls are explicit and host-routed.",
+        id: "FEC-F3E-TXN-002",
+        summary: "FEC coordinates open-session/capability/commit atomically.",
     },
     SpecClause {
-        id: "FEC-F3E-CAP-001",
-        summary: "FEC exposes capability views scoped to declared requirements.",
+        id: "FEC-F3E-TXN-003",
+        summary: "Commit status is explicit: applied/token/capability/snapshot outcomes.",
     },
     SpecClause {
-        id: "FEC-F3E-DEP-001",
-        summary: "Dependency declaration and registration are tokenized and host-managed.",
+        id: "FEC-F3E-TXN-004",
+        summary: "Observed dependency deltas are first-class commit metadata.",
     },
     SpecClause {
-        id: "FEC-F3E-PUB-001",
-        summary: "Evaluation publication is a FEC concern after F3E evaluation.",
+        id: "FEC-F3E-TXN-005",
+        summary: "Spill shape transitions are first-class commit metadata.",
     },
 ];
 

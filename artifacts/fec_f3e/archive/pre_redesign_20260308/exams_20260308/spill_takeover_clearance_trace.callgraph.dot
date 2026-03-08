@@ -1,0 +1,13 @@
+digraph fec_f3e_call_graph {
+  rankdir=LR;
+  "f3e.evaluate" -> "fec.publish_result" [label="7"];
+  "fec.capability_view" -> "f3e.evaluate" [label="7"];
+  "fec.publish_result" -> "engine.evaluate_cell_via_f3e" [label="7"];
+  "engine.evaluate_cell_via_f3e" -> "engine.recalculate_full" [label="4"];
+  "engine.recalculate_full" -> "engine.set_formula" [label="4"];
+  "f3e.compile" -> "f3e.declare_dependencies" [label="4"];
+  "f3e.declare_dependencies" -> "fec.register_dependencies" [label="4"];
+  "fec.register_dependencies" -> "fec.capability_view" [label="4"];
+  "engine.evaluate_cell_via_f3e" -> "fec.capability_view" [label="3"];
+  "engine.set_formula" -> "f3e.compile" [label="3"];
+}

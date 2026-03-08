@@ -365,11 +365,25 @@ pub struct EvalContext<'a> {
     max_eval_depth: usize,
     /// Registered user-defined functions.
     udfs: &'a FxHashMap<String, Box<dyn UdfHandler>>,
+    observed_cells: FxHashSet<CellRef>,
+    observed_names: FxHashSet<String>,
+    observed_spill_children: FxHashSet<CellRef>,
+    observed_volatile_read: bool,
+    observed_external_read: bool,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct StreamRegistration {
     pub period_secs: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ObservedAccesses {
+    pub cells: FxHashSet<CellRef>,
+    pub names: FxHashSet<String>,
+    pub spill_children: FxHashSet<CellRef>,
+    pub volatile_read: bool,
+    pub external_read: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -421,6 +435,11 @@ impl<'a> EvalContext<'a> {
             expr_eval_depth: 0,
             max_eval_depth: 4096,
             udfs,
+            observed_cells: FxHashSet::default(),
+            observed_names: FxHashSet::default(),
+            observed_spill_children: FxHashSet::default(),
+            observed_volatile_read: false,
+            observed_external_read: false,
         }
     }
 
@@ -432,6 +451,16 @@ impl<'a> EvalContext<'a> {
         let detected = self.cycle_detected;
         self.cycle_detected = false;
         detected
+    }
+
+    pub(crate) fn take_observed_accesses(&mut self) -> ObservedAccesses {
+        ObservedAccesses {
+            cells: std::mem::take(&mut self.observed_cells),
+            names: std::mem::take(&mut self.observed_names),
+            spill_children: std::mem::take(&mut self.observed_spill_children),
+            volatile_read: std::mem::take(&mut self.observed_volatile_read),
+            external_read: std::mem::take(&mut self.observed_external_read),
+        }
     }
 
     /// Sets committed cell values for lazy cache lookup during incremental
@@ -460,6 +489,26 @@ impl<'a> EvalContext<'a> {
         let upper = name.to_ascii_uppercase();
         self.name_cache.remove(&upper);
         self.committed_evicted_names.insert(upper);
+    }
+
+    fn observe_cell_read(&mut self, cell: CellRef) {
+        self.observed_cells.insert(cell);
+    }
+
+    fn observe_name_read(&mut self, name: &str) {
+        self.observed_names.insert(name.to_ascii_uppercase());
+    }
+
+    fn observe_spill_child_read(&mut self, cell: CellRef) {
+        self.observed_spill_children.insert(cell);
+    }
+
+    fn observe_volatile_read(&mut self) {
+        self.observed_volatile_read = true;
+    }
+
+    fn observe_external_read(&mut self) {
+        self.observed_external_read = true;
     }
 
     /// Prepares for iterative evaluation of a cyclic SCC. Seeds the cache with
@@ -507,6 +556,7 @@ impl<'a> EvalContext<'a> {
     }
 
     pub(crate) fn evaluate_cell_runtime(&mut self, cell: CellRef) -> RuntimeValue {
+        self.observe_cell_read(cell);
         self.cell_eval_depth += 1;
         if self.cell_eval_depth > self.max_eval_depth {
             self.cell_eval_depth -= 1;
@@ -574,6 +624,7 @@ impl<'a> EvalContext<'a> {
     }
 
     pub(crate) fn evaluate_name_runtime(&mut self, name: &str) -> RuntimeValue {
+        self.observe_name_read(name);
         if let Some(local) = self.lookup_local(name) {
             return local;
         }
@@ -848,6 +899,7 @@ impl<'a> EvalContext<'a> {
 
             let row = (target.row - anchor.row) as usize;
             let col = (target.col - anchor.col) as usize;
+            self.observe_spill_child_read(target);
             return Some(array.value_at(row, col));
         }
 
@@ -1027,6 +1079,12 @@ fn evaluate_function(name: &str, args: &[Expr], ctx: &mut EvalContext<'_>) -> Ru
         return RuntimeValue::scalar(Value::Error(CellError::Value(format!(
             "{name} is not callable"
         ))));
+    }
+
+    match name {
+        "NOW" | "RAND" | "RANDARRAY" => ctx.observe_volatile_read(),
+        "STREAM" => ctx.observe_external_read(),
+        _ => {}
     }
 
     match name {

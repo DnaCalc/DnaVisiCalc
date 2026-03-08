@@ -188,39 +188,26 @@ fn seam_dynamic_reference_retargeting_flows() {
     assert_number(&engine.cell_state_a1("D2").expect("D2").value, 100.0);
 
     engine.set_number_a1("A1", 11.0).expect("A1 update");
-    // Current seam behavior: runtime INDIRECT target is not tracked as a static dep.
-    assert_number(&engine.cell_state_a1("D1").expect("D1").value, 10.0);
+    assert_number(&engine.cell_state_a1("D1").expect("D1").value, 11.0);
 
-    engine.set_number_a1("C1", 1.0).expect("flip INDIRECT selector");
+    engine
+        .set_number_a1("C1", 1.0)
+        .expect("flip INDIRECT selector");
     assert_number(&engine.cell_state_a1("D1").expect("D1").value, 20.0);
 
     engine.set_number_a1("A2", 21.0).expect("A2 update");
-    assert_number(&engine.cell_state_a1("D1").expect("D1").value, 20.0);
-    engine
-        .set_number_a1("C1", 0.0)
-        .expect("force INDIRECT re-evaluation path");
-    assert_number(&engine.cell_state_a1("D1").expect("D1").value, 11.0);
-    engine
-        .set_number_a1("C1", 1.0)
-        .expect("return INDIRECT selector to A2 path");
     assert_number(&engine.cell_state_a1("D1").expect("D1").value, 21.0);
 
     // OFFSET keeps static dependency on anchor B1.
     engine.set_number_a1("B1", 101.0).expect("B1 update");
     assert_number(&engine.cell_state_a1("D2").expect("D2").value, 101.0);
 
-    engine.set_number_a1("C2", 1.0).expect("flip OFFSET selector");
+    engine
+        .set_number_a1("C2", 1.0)
+        .expect("flip OFFSET selector");
     assert_number(&engine.cell_state_a1("D2").expect("D2").value, 200.0);
 
     engine.set_number_a1("B2", 205.0).expect("B2 update");
-    assert_number(&engine.cell_state_a1("D2").expect("D2").value, 200.0);
-    engine
-        .set_number_a1("C2", 0.0)
-        .expect("force OFFSET re-evaluation path");
-    assert_number(&engine.cell_state_a1("D2").expect("D2").value, 101.0);
-    engine
-        .set_number_a1("C2", 1.0)
-        .expect("return OFFSET selector to B2 path");
     assert_number(&engine.cell_state_a1("D2").expect("D2").value, 205.0);
 }
 

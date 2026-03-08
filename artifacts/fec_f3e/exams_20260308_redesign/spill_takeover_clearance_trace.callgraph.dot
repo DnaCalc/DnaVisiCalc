@@ -1,0 +1,12 @@
+﻿digraph fec_f3e {
+  "engine.evaluate_cell_via_f3e" -> "engine.recalculate_full" [label="4"];
+  "engine.evaluate_cell_via_f3e" -> "fec.open_session" [label="3"];
+  "engine.recalculate_full" -> "engine.set_formula" [label="4"];
+  "engine.set_formula" -> "f3e.prepare" [label="3"];
+  "f3e.execute" -> "fec.commit" [label="7"];
+  "f3e.prepare" -> "fec.install_plan" [label="4"];
+  "fec.capability_view" -> "f3e.execute" [label="7"];
+  "fec.commit" -> "engine.evaluate_cell_via_f3e" [label="7"];
+  "fec.install_plan" -> "fec.open_session" [label="4"];
+  "fec.open_session" -> "fec.capability_view" [label="7"];
+}

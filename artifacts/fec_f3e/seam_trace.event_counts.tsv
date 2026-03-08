@@ -1,0 +1,13 @@
+﻿event	count
+f3e.execute	61
+fec.open_session	61
+fec.commit	61
+fec.capability_view	61
+engine.evaluate_cell_via_f3e	52
+engine.recalculate_full	35
+fec.install_plan	27
+f3e.prepare	26
+engine.set_formula	24
+engine.recalculate_incremental	22
+engine.evaluate_name_via_f3e	9
+engine.set_name_formula	2

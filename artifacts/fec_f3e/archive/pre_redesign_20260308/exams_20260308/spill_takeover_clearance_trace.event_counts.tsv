@@ -1,0 +1,9 @@
+engine.evaluate_cell_via_f3e	7
+f3e.evaluate	7
+fec.capability_view	7
+fec.publish_result	7
+engine.recalculate_full	4
+engine.set_formula	4
+f3e.compile	4
+f3e.declare_dependencies	4
+fec.register_dependencies	4

@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::eval::{RuntimeValue, Value};
-
-use super::contracts::{F3eEvalTarget, FecCapabilityTag, FecFormulaId};
+use super::contracts::{
+    F3eEvalTarget, F3eResultKind, FecCapabilityTag, FecFormulaId, SpillShapeDelta,
+};
 
 static TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 static TRACE_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -63,18 +63,22 @@ pub fn format_capabilities(capabilities: &[FecCapabilityTag]) -> String {
     names.join("|")
 }
 
-pub fn runtime_result_kind(runtime: &RuntimeValue) -> &'static str {
-    match runtime {
-        RuntimeValue::Scalar(Value::Error(_)) => "error",
-        RuntimeValue::Scalar(_) => "scalar",
-        RuntimeValue::Array(array) => {
-            if array.is_spill() {
-                "array_spill"
-            } else {
-                "array"
-            }
-        }
-        RuntimeValue::Lambda(_) => "lambda",
+pub fn result_kind_name(kind: F3eResultKind) -> &'static str {
+    match kind {
+        F3eResultKind::Scalar => "scalar",
+        F3eResultKind::Array => "array",
+        F3eResultKind::ArraySpill => "array_spill",
+        F3eResultKind::Error => "error",
+        F3eResultKind::Lambda => "lambda",
+    }
+}
+
+pub fn spill_shape_name(delta: &SpillShapeDelta) -> &'static str {
+    match delta {
+        SpillShapeDelta::None => "none",
+        SpillShapeDelta::Created { .. } => "created",
+        SpillShapeDelta::Resized { .. } => "resized",
+        SpillShapeDelta::Cleared { .. } => "cleared",
     }
 }
 

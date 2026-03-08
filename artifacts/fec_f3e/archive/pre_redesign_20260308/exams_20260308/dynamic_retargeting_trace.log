@@ -1,0 +1,74 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running tests\fec_f3e_seam_scenarios_tests.rs (target\debug\deps\fec_f3e_seam_scenarios_tests-d4e603d7f65a4ed0.exe)
+
+running 1 test
+fec_f3e seq=1 event=engine.recalculate_full recalc_mode=full formula_count=0 name_formula_count=0 eval_count=0 duration_us=1481
+fec_f3e seq=2 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1185
+fec_f3e seq=3 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1264
+fec_f3e seq=4 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1368
+fec_f3e seq=5 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1332
+fec_f3e seq=6 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1293
+fec_f3e seq=7 event=f3e.compile dep_count=1 required_caps=reference_resolution dependency_profile=RefOnly duration_us=115
+fec_f3e seq=8 event=f3e.declare_dependencies dep_count=1 required_caps=reference_resolution dependency_profile=RefOnly prior_token=none duration_us=7
+fec_f3e seq=9 event=fec.register_dependencies formula_id=cell:D1 dep_count=1 required_caps=reference_resolution dependency_profile=RefOnly token=1 duration_us=13
+fec_f3e seq=10 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=8
+fec_f3e seq=11 event=f3e.evaluate target=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=74
+fec_f3e seq=12 event=fec.publish_result formula_id=cell:D1 result_kind=scalar duration_us=2
+fec_f3e seq=13 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 required_caps=reference_resolution result_kind=scalar duration_us=204
+fec_f3e seq=14 event=engine.recalculate_full recalc_mode=full formula_count=1 name_formula_count=0 eval_count=1 duration_us=1832
+fec_f3e seq=15 event=engine.set_formula formula_id=cell:D1 dep_count=1 required_caps=reference_resolution dependency_profile=RefOnly token=1 engine_mode=automatic status=ok duration_us=2510
+fec_f3e seq=16 event=f3e.compile dep_count=2 required_caps=reference_resolution dependency_profile=RefOnly duration_us=47
+fec_f3e seq=17 event=f3e.declare_dependencies dep_count=2 required_caps=reference_resolution dependency_profile=RefOnly prior_token=none duration_us=4
+fec_f3e seq=18 event=fec.register_dependencies formula_id=cell:D2 dep_count=2 required_caps=reference_resolution dependency_profile=RefOnly token=2 duration_us=6
+fec_f3e seq=19 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=7
+fec_f3e seq=20 event=f3e.evaluate target=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=44
+fec_f3e seq=21 event=fec.publish_result formula_id=cell:D2 result_kind=scalar duration_us=1
+fec_f3e seq=22 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 required_caps=reference_resolution result_kind=scalar duration_us=147
+fec_f3e seq=23 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=1
+fec_f3e seq=24 event=f3e.evaluate target=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=21
+fec_f3e seq=25 event=fec.publish_result formula_id=cell:D1 result_kind=scalar duration_us=1
+fec_f3e seq=26 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 required_caps=reference_resolution result_kind=scalar duration_us=58
+fec_f3e seq=27 event=engine.recalculate_full recalc_mode=full formula_count=2 name_formula_count=0 eval_count=2 duration_us=1880
+fec_f3e seq=28 event=engine.set_formula formula_id=cell:D2 dep_count=2 required_caps=reference_resolution dependency_profile=RefOnly token=2 engine_mode=automatic status=ok duration_us=2377
+fec_f3e seq=29 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1338
+fec_f3e seq=30 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=8
+fec_f3e seq=31 event=f3e.evaluate target=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=47
+fec_f3e seq=32 event=fec.publish_result formula_id=cell:D1 result_kind=scalar duration_us=2
+fec_f3e seq=33 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 required_caps=reference_resolution result_kind=scalar duration_us=188
+fec_f3e seq=34 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 duration_us=1595
+fec_f3e seq=35 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1473
+fec_f3e seq=36 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=5
+fec_f3e seq=37 event=f3e.evaluate target=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=39
+fec_f3e seq=38 event=fec.publish_result formula_id=cell:D1 result_kind=scalar duration_us=2
+fec_f3e seq=39 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 required_caps=reference_resolution result_kind=scalar duration_us=158
+fec_f3e seq=40 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 duration_us=1411
+fec_f3e seq=41 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=5
+fec_f3e seq=42 event=f3e.evaluate target=cell:D1 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=35
+fec_f3e seq=43 event=fec.publish_result formula_id=cell:D1 result_kind=scalar duration_us=3
+fec_f3e seq=44 event=engine.evaluate_cell_via_f3e formula_id=cell:D1 required_caps=reference_resolution result_kind=scalar duration_us=145
+fec_f3e seq=45 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 duration_us=1736
+fec_f3e seq=46 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=5
+fec_f3e seq=47 event=f3e.evaluate target=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=27
+fec_f3e seq=48 event=fec.publish_result formula_id=cell:D2 result_kind=scalar duration_us=2
+fec_f3e seq=49 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 required_caps=reference_resolution result_kind=scalar duration_us=125
+fec_f3e seq=50 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 duration_us=1210
+fec_f3e seq=51 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=5
+fec_f3e seq=52 event=f3e.evaluate target=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=27
+fec_f3e seq=53 event=fec.publish_result formula_id=cell:D2 result_kind=scalar duration_us=2
+fec_f3e seq=54 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 required_caps=reference_resolution result_kind=scalar duration_us=140
+fec_f3e seq=55 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 duration_us=1250
+fec_f3e seq=56 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=0 dirty_name_count=0 eval_count=0 duration_us=1086
+fec_f3e seq=57 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=5
+fec_f3e seq=58 event=f3e.evaluate target=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=23
+fec_f3e seq=59 event=fec.publish_result formula_id=cell:D2 result_kind=scalar duration_us=1
+fec_f3e seq=60 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 required_caps=reference_resolution result_kind=scalar duration_us=102
+fec_f3e seq=61 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 duration_us=1087
+fec_f3e seq=62 event=fec.capability_view required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true duration_us=4
+fec_f3e seq=63 event=f3e.evaluate target=cell:D2 required_caps=reference_resolution required_caps_count=1 provided_caps_count=6 supports_required=true result_kind=scalar duration_us=20
+fec_f3e seq=64 event=fec.publish_result formula_id=cell:D2 result_kind=scalar duration_us=1
+fec_f3e seq=65 event=engine.evaluate_cell_via_f3e formula_id=cell:D2 required_caps=reference_resolution result_kind=scalar duration_us=89
+fec_f3e seq=66 event=engine.recalculate_incremental recalc_mode=incremental dirty_closure_count=1 dirty_name_count=0 eval_count=1 duration_us=1003
+test seam_dynamic_reference_retargeting_flows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.03s
+
