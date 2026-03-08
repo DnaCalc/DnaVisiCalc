@@ -437,19 +437,13 @@ impl<'a> EvalContext<'a> {
     /// Sets committed cell values for lazy cache lookup during incremental
     /// recalc. Cache misses on formula cells will fall through to this map,
     /// avoiding the need to pre-seed all ~8,800 formula values.
-    pub(crate) fn set_committed_cell_values(
-        &mut self,
-        values: &'a CellGrid<StoredValue>,
-    ) {
+    pub(crate) fn set_committed_cell_values(&mut self, values: &'a CellGrid<StoredValue>) {
         self.committed_cell_values = Some(values);
     }
 
     /// Sets committed name values for lazy cache lookup during incremental
     /// recalc.
-    pub(crate) fn set_committed_name_values(
-        &mut self,
-        values: &'a FxHashMap<String, StoredValue>,
-    ) {
+    pub(crate) fn set_committed_name_values(&mut self, values: &'a FxHashMap<String, StoredValue>) {
         self.committed_name_values = Some(values);
     }
 

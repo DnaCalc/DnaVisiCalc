@@ -814,7 +814,8 @@ impl Engine {
         let text = text.into();
         self.eval_name_formulas.remove(&key);
         self.eval_name_literals.remove(&key);
-        self.eval_name_text_literals.insert(key.clone(), text.clone());
+        self.eval_name_text_literals
+            .insert(key.clone(), text.clone());
         self.names
             .insert(key.clone(), NameEntry::Text(text.clone()));
         self.committed_epoch += 1;
@@ -843,7 +844,8 @@ impl Engine {
         let expr = Rc::new(parse_formula(formula, self.bounds)?);
         self.eval_name_literals.remove(&key);
         self.eval_name_text_literals.remove(&key);
-        self.eval_name_formulas.insert(key.clone(), Rc::clone(&expr));
+        self.eval_name_formulas
+            .insert(key.clone(), Rc::clone(&expr));
         self.names.insert(
             key,
             NameEntry::Formula(FormulaEntry {
@@ -1119,9 +1121,12 @@ impl Engine {
             &self.udfs,
         );
         let total_names = name_formulas.len() + name_literals.len() + name_text_literals.len();
-        let mut new_values: CellGrid<StoredValue> = CellGrid::new(self.bounds.max_columns, self.bounds.max_rows);
-        let mut new_name_values: FxHashMap<String, StoredValue> = FxHashMap::with_capacity_and_hasher(total_names, Default::default());
-        let mut runtime_values: FxHashMap<CellRef, RuntimeValue> = FxHashMap::with_capacity_and_hasher(formulas.len(), Default::default());
+        let mut new_values: CellGrid<StoredValue> =
+            CellGrid::new(self.bounds.max_columns, self.bounds.max_rows);
+        let mut new_name_values: FxHashMap<String, StoredValue> =
+            FxHashMap::with_capacity_and_hasher(total_names, Default::default());
+        let mut runtime_values: FxHashMap<CellRef, RuntimeValue> =
+            FxHashMap::with_capacity_and_hasher(formulas.len(), Default::default());
         let mut eval_count: usize = 0;
 
         for (cell, number) in &literals {
@@ -1436,9 +1441,7 @@ impl Engine {
                 for cell in &scc.cells {
                     if dirty_bitset.contains(cell) {
                         let runtime = evaluator.evaluate_cell_runtime(*cell);
-                        let is_spill = runtime
-                            .as_array()
-                            .is_some_and(|array| array.is_spill());
+                        let is_spill = runtime.as_array().is_some_and(|array| array.is_spill());
                         if is_spill {
                             any_spill_array = true;
                         }
@@ -1499,14 +1502,10 @@ impl Engine {
 
                         let mut converged = true;
                         for cell in &scc.cells {
-                            let old_value = iter_values
-                                .get(cell)
-                                .cloned()
-                                .unwrap_or(Value::Number(0.0));
+                            let old_value =
+                                iter_values.get(cell).cloned().unwrap_or(Value::Number(0.0));
                             let runtime = evaluator.evaluate_cell_runtime(*cell);
-                            let is_spill = runtime
-                                .as_array()
-                                .is_some_and(|array| array.is_spill());
+                            let is_spill = runtime.as_array().is_some_and(|array| array.is_spill());
                             if is_spill {
                                 any_spill_array = true;
                             }
@@ -2230,7 +2229,8 @@ impl Engine {
     ) -> FxHashMap<String, ChartOutput> {
         let mut chart_names: Vec<String> = self.charts.keys().cloned().collect();
         chart_names.sort();
-        let mut outputs = FxHashMap::with_capacity_and_hasher(chart_names.len(), Default::default());
+        let mut outputs =
+            FxHashMap::with_capacity_and_hasher(chart_names.len(), Default::default());
         for name in chart_names {
             if let Some(def) = self.charts.get(&name) {
                 outputs.insert(name, self.compute_chart_output_from_values(def, values));

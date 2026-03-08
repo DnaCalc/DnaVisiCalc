@@ -88,15 +88,12 @@ impl<T> CellGrid<T> {
 
     pub fn iter(&self) -> impl Iterator<Item = (CellRef, &T)> {
         let max_rows = self.max_rows;
-        self.data
-            .iter()
-            .enumerate()
-            .filter_map(move |(idx, slot)| {
-                let value = slot.as_ref()?;
-                let col = (idx / max_rows as usize) as u16 + 1;
-                let row = (idx % max_rows as usize) as u16 + 1;
-                Some((CellRef { col, row }, value))
-            })
+        self.data.iter().enumerate().filter_map(move |(idx, slot)| {
+            let value = slot.as_ref()?;
+            let col = (idx / max_rows as usize) as u16 + 1;
+            let row = (idx % max_rows as usize) as u16 + 1;
+            Some((CellRef { col, row }, value))
+        })
     }
 
     pub fn values(&self) -> impl Iterator<Item = &T> {
@@ -109,15 +106,12 @@ impl<T> CellGrid<T> {
 
     pub fn keys(&self) -> impl Iterator<Item = CellRef> + '_ {
         let max_rows = self.max_rows;
-        self.data
-            .iter()
-            .enumerate()
-            .filter_map(move |(idx, slot)| {
-                slot.as_ref()?;
-                let col = (idx / max_rows as usize) as u16 + 1;
-                let row = (idx % max_rows as usize) as u16 + 1;
-                Some(CellRef { col, row })
-            })
+        self.data.iter().enumerate().filter_map(move |(idx, slot)| {
+            slot.as_ref()?;
+            let col = (idx / max_rows as usize) as u16 + 1;
+            let row = (idx % max_rows as usize) as u16 + 1;
+            Some(CellRef { col, row })
+        })
     }
 }
 

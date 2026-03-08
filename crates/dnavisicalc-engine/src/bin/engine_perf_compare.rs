@@ -194,7 +194,10 @@ fn main() {
         workload.fill_full_grid_with_data, workload.formula_cols, workload.formula_rows
     );
     if workload.force_iteration_enabled {
-        let _ = writeln!(lines, "Iteration config override: enabled=true (benchmark probe mode).");
+        let _ = writeln!(
+            lines,
+            "Iteration config override: enabled=true (benchmark probe mode)."
+        );
     }
     if workload.simple_formula {
         let _ = writeln!(lines, "Formula override: simple (=up+left+diag).");

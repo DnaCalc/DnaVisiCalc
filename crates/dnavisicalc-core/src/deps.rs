@@ -1,5 +1,5 @@
-use std::collections::BTreeSet;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::rc::Rc;
 
@@ -66,7 +66,9 @@ impl std::error::Error for DependencyError {}
 
 /// Builds the calculation tree with cycle detection. Returns an error if any
 /// circular dependency is found. This is the original strict-mode behaviour.
-pub fn build_calc_tree(formulas: &FxHashMap<CellRef, Rc<Expr>>) -> Result<CalcTree, DependencyError> {
+pub fn build_calc_tree(
+    formulas: &FxHashMap<CellRef, Rc<Expr>>,
+) -> Result<CalcTree, DependencyError> {
     let (nodes, formula_edges) = build_nodes_and_edges(formulas);
     let sccs = tarjan_sccs(&nodes, &formula_edges);
 
@@ -128,7 +130,8 @@ fn build_nodes_and_edges(
     FxHashMap<CellRef, CalcNode>,
     FxHashMap<CellRef, FxHashSet<CellRef>>,
 ) {
-    let mut nodes: FxHashMap<CellRef, CalcNode> = FxHashMap::with_capacity_and_hasher(formulas.len(), Default::default());
+    let mut nodes: FxHashMap<CellRef, CalcNode> =
+        FxHashMap::with_capacity_and_hasher(formulas.len(), Default::default());
     for (cell, expr) in formulas {
         let dependencies = dependencies_for_expr(expr);
         nodes.insert(
@@ -232,7 +235,8 @@ fn build_reverse_edges(
     nodes: &[CellRef],
     edges: &FxHashMap<CellRef, FxHashSet<CellRef>>,
 ) -> FxHashMap<CellRef, FxHashSet<CellRef>> {
-    let mut reverse_edges: FxHashMap<CellRef, FxHashSet<CellRef>> = FxHashMap::with_capacity_and_hasher(nodes.len(), Default::default());
+    let mut reverse_edges: FxHashMap<CellRef, FxHashSet<CellRef>> =
+        FxHashMap::with_capacity_and_hasher(nodes.len(), Default::default());
     for node in nodes {
         reverse_edges.entry(*node).or_default();
     }
@@ -250,7 +254,8 @@ fn kosaraju_components_iterative(
     reverse_edges: &FxHashMap<CellRef, FxHashSet<CellRef>>,
 ) -> Vec<Vec<CellRef>> {
     // Pass 1: finish order on original graph.
-    let mut visited: FxHashSet<CellRef> = FxHashSet::with_capacity_and_hasher(nodes.len(), Default::default());
+    let mut visited: FxHashSet<CellRef> =
+        FxHashSet::with_capacity_and_hasher(nodes.len(), Default::default());
     let mut finish_order: Vec<CellRef> = Vec::with_capacity(nodes.len());
     for start in nodes {
         if visited.contains(start) {
@@ -280,7 +285,8 @@ fn kosaraju_components_iterative(
     }
 
     // Pass 2: DFS on transpose graph, following reverse finish order.
-    let mut assigned: FxHashSet<CellRef> = FxHashSet::with_capacity_and_hasher(nodes.len(), Default::default());
+    let mut assigned: FxHashSet<CellRef> =
+        FxHashSet::with_capacity_and_hasher(nodes.len(), Default::default());
     let mut components: Vec<Vec<CellRef>> = Vec::new();
     for start in finish_order.iter().rev() {
         if assigned.contains(start) {

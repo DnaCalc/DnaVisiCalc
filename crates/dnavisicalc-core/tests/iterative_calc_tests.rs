@@ -172,8 +172,8 @@ fn mixed_acyclic_and_cyclic_cells() {
 
 #[test]
 fn calc_tree_reports_cycles() {
-    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use dnavisicalc_core::FxHashMap;
+    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::rc::Rc;
 
     let bounds = SheetBounds {
@@ -196,8 +196,8 @@ fn calc_tree_reports_cycles() {
 
 #[test]
 fn calc_tree_no_cycles_for_dag() {
-    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use dnavisicalc_core::FxHashMap;
+    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::rc::Rc;
 
     let bounds = SheetBounds {
@@ -217,8 +217,8 @@ fn calc_tree_no_cycles_for_dag() {
 
 #[test]
 fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
-    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use dnavisicalc_core::FxHashMap;
+    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::rc::Rc;
 
     let bounds = SheetBounds {
@@ -239,7 +239,10 @@ fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
 
     formulas.insert(cells[0], Rc::new(Expr::Number(1.0)));
     for i in 1..total {
-        formulas.insert(cells[i], Rc::new(Expr::Cell(cells[i - 1], RefFlags::RELATIVE)));
+        formulas.insert(
+            cells[i],
+            Rc::new(Expr::Cell(cells[i - 1], RefFlags::RELATIVE)),
+        );
     }
 
     let tree = build_calc_tree_allow_cycles(&formulas);
@@ -252,8 +255,8 @@ fn calc_tree_handles_deep_dependency_chain_without_stack_overflow() {
 
 #[test]
 fn calc_tree_order_respects_dependencies_on_dense_grid() {
-    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use dnavisicalc_core::FxHashMap;
+    use dnavisicalc_core::{CellRef, Expr, RefFlags, SheetBounds, build_calc_tree_allow_cycles};
     use std::rc::Rc;
 
     let bounds = SheetBounds {
